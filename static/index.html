@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>H3-slides · Studio</title><link rel="stylesheet" href="/static/style.css"></head>
+<body>
+<header><a class="brand" href="/">H3<span>slides</span><small>STUDIO</small></a>
+<nav><button id="new" class="quiet">＋ Nuovo progetto</button><select id="project-list" aria-label="Progetti salvati"><option value="">I tuoi progetti</option></select></nav>
+<span id="connection" class="muted">Connessione…</span></header>
+<main>
+<aside class="settings">
+  <div class="eyebrow">01 / IL TUO BRIEF</div><h2>Dalle fonti<br>alla presentazione.</h2>
+  <label>Titolo<input id="title" value="Nuova presentazione" maxlength="140"></label>
+  <label>Cosa vuoi raccontare?<textarea id="prompt" rows="5" placeholder="Indica pubblico, obiettivo, tono e contenuti da mettere in risalto."></textarea></label>
+  <div class="row"><label>Slide<input id="count" type="number" min="1" max="30" value="6"></label>
+  <label>Tema<select id="theme"><option value="ink">Inchiostro</option><option value="paper">Carta</option><option value="forest">Foresta</option></select></label></div>
+  <button id="save-project" class="secondary">Salva brief</button>
+  <label class="dropzone">＋ Aggiungi documenti<input id="files" type="file" accept=".pdf,.md,.txt,.png,.jpg,.jpeg,.webp" multiple><small>PDF, Markdown, immagini · max 30 MB/file</small></label>
+  <div id="sources"></div>
+  <details class="model-panel" open><summary>02 / MODELLO AI</summary>
+  <label>Provider<select id="provider"><option value="local">llama.cpp integrato</option><option value="remote">API remota (compatibile OpenAI)</option></select></label>
+  <div id="local-fields"><label>Modello GGUF<select id="model"><option value="">Caricamento catalogo…</option></select></label>
+  <div class="row"><button id="refresh-models" class="quiet">Aggiorna</button><button id="unload" class="quiet">Scarica LLM</button></div><small id="llama-status"></small></div>
+  <div id="remote-fields" hidden><label>Base URL API<input id="api-url" type="url" placeholder="https://provider.example/v1"></label>
+  <label>Modello<input id="api-model" placeholder="Identificativo del modello"></label>
+  <label>API key<input id="api-key" type="password" autocomplete="off" placeholder="Solo in memoria, mai salvata"></label>
+  <label class="check"><input id="consent" type="checkbox">Autorizzo l'invio delle fonti a questo provider.</label></div>
+  <label class="check"><input id="vision" type="checkbox" checked>Vision per immagini e PDF scansionati</label>
+  </details>
+  <button id="generate" class="primary">Genera presentazione <span>→</span></button>
+  <p class="muted hint">Le slide compaiono una alla volta. Puoi modificarle senza aspettare la fine.</p>
+</aside>
+<section class="workspace">
+  <div class="workspace-head"><div><div class="eyebrow">LA TUA PRESENTAZIONE</div><h1 id="deck-title">Spazio alle idee.</h1></div><span id="save-status" class="muted"></span></div>
+  <div id="job-panel" hidden><div class="job-line"><strong id="job-status"></strong><span id="job-percent"></span></div>
+  <progress id="progress" max="1" value="0"></progress><div class="row"><button id="pause" class="quiet">Pausa</button><button id="cancel" class="quiet danger">Annulla</button></div>
+  <details><summary>Log della generazione</summary><pre id="events"></pre></details></div>
+  <div class="toolbar"><span id="slide-count">0 slide</span><div class="export-group">
+  <button data-export="pptx" class="secondary">↓ PPTX modificabile</button><button data-export="pdf" class="secondary">↓ PDF</button>
+  <button id="open-slidev" class="quiet">Apri Slidev live</button><button data-export="slidev" class="quiet">Sorgenti Slidev</button><button data-export="manim" class="quiet">Manim video + slide</button></div></div>
+  <div id="empty"><div class="empty-mark">H3 /</div><h2>Un documento.<br>Una storia da presentare.</h2><p>Carica le fonti, scegli il modello e descrivi il risultato.<br>Qui vedrai crescere il tuo deck, slide dopo slide.</p></div>
+  <div id="slides"></div>
+  <p class="muted hint">PPTX: testi modificabili. PDF: statico. Slidev: sorgenti web. Manim: preset animato, video e HTML.</p>
+</section>
+</main>
+<dialog id="editor"><form id="edit-form"><div class="editor-head"><h2>Modifica slide</h2><button type="button" id="close-editor" class="quiet">Chiudi</button></div>
+<label>Titolo<input id="edit-title" maxlength="110" required></label><label>Sottotitolo<textarea id="edit-subtitle" maxlength="220" rows="2"></textarea></label>
+<label>Contenuto · un punto per riga, massimo 5<textarea id="edit-bullets" rows="6"></textarea></label>
+<div class="row"><label>Layout<select id="edit-layout"><option value="cover">Copertina</option><option value="content">Contenuto</option><option value="split">Testo + immagine</option><option value="statement">Messaggio</option></select></label>
+<label>Animazione Manim<select id="edit-animation"><option value="none">Una pausa per slide</option><option value="reveal">Una pausa per punto</option></select></label></div>
+<label>Immagine dalla fonte<select id="edit-image"></select></label>
+<label>Note del relatore<textarea id="edit-notes" rows="4"></textarea></label>
+<label>Fonti · una per riga<textarea id="edit-sources" rows="2"></textarea></label>
+<p class="muted">La tua modifica è protetta anche se l'LLM sta lavorando su questa slide.</p>
+<button class="primary" type="submit">Salva modifica</button><p id="edit-error" role="alert"></p></form></dialog>
+<div id="toast" role="status" hidden></div>
+<script type="module" src="/static/app.mjs"></script></body></html>

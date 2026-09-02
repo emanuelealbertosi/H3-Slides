@@ -1,0 +1,9 @@
+aiohttp>=3.12,<4
+pydantic>=2.11,<3
+pypdf>=6,<7
+pymupdf>=1.26,<2
+pillow>=11,<13
+manim>=0.19,<0.22
+manim-slides[pyside6]>=5,<6
+pytest>=8,<10
+pytest-asyncio>=1,<2

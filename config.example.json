@@ -1,0 +1,10 @@
+{
+  "host": "127.0.0.1",
+  "port": 8766,
+  "llama_port": 8096,
+  "llama_executable": "runtime/llama/llama-server.exe",
+  "model_roots": ["models"],
+  "context_size": 16384,
+  "gpu_layers": -1,
+  "idle_unload_seconds": 300
+}

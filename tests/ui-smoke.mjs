@@ -1,0 +1,31 @@
+import assert from 'node:assert/strict';
+import {chromium} from 'playwright-chromium';
+const [url,pid]=process.argv.slice(2);
+const browser=await chromium.launch({headless:true});
+const page=await browser.newPage({viewport:{width:1440,height:1000}});
+const errors=[];
+page.on('pageerror',error=>errors.push(error.message));
+try{
+  await page.goto(url);
+  await page.locator('#project-list option[value="'+pid+'"]').waitFor({state:'attached'});
+  await page.locator('#project-list').selectOption(pid);
+  await page.locator('.slide-card').waitFor();
+  await page.getByRole('button',{name:'Modifica',exact:true}).click();
+  await page.locator('#edit-title').fill('Modifica verificata nel browser');
+  await page.getByRole('button',{name:'Salva modifica',exact:true}).click();
+  await page.locator('#editor').waitFor({state:'hidden'});
+  await page.reload();
+  await page.getByRole('heading',{name:'Modifica verificata nel browser'}).waitFor();
+  await page.locator('#prompt').fill('Una modifica al brief ancora non salvata');
+  await page.waitForTimeout(1800);
+  assert.equal(await page.locator('#prompt').inputValue(),'Una modifica al brief ancora non salvata');
+  await page.locator('#provider').selectOption('remote');
+  assert.ok(await page.locator('#remote-fields').isVisible());
+  await page.locator('#provider').selectOption('local');
+  assert.ok(await page.locator('#local-fields').isVisible());
+  assert.equal(await page.locator('.slide-card').count(),1);
+  const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth);
+  assert.equal(overflow,false);
+  assert.deepEqual(errors,[]);
+  console.log('Browser: editor, persistenza, refresh, brief e provider verificati.');
+}finally{await browser.close()}

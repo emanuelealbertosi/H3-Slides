@@ -1,0 +1,16 @@
+{
+  "name": "h3-slides",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "slidev": "slidev examples/slides.md --port 3031 --bind 127.0.0.1",
+    "test": "node --test tests/export.test.mjs"
+  },
+  "dependencies": {
+    "@slidev/cli": "52.19.1",
+    "@slidev/theme-default": "^0.25.0",
+    "playwright-chromium": "1.62.1",
+    "pptxgenjs": "4.0.1"
+  }
+}
