@@ -18,6 +18,8 @@ from .models import Generation, ProjectInput, SlideContent, SlideEdit
 from .storage import Store, uid
 from .worker import Worker
 from .slidev import write_slidev
+from .local_models import choose_model_file
+from .composition import split_content
 
 
 def public_project(project):
@@ -43,8 +45,10 @@ async def errors(request, handler):
         return web.json_response({"error": exc.text}, status=exc.status)
     except KeyError:
         return web.json_response({"error": "Risorsa non trovata"}, status=404)
-    except ValidationError:
-        return web.json_response({"error": "Dati non validi: controlla lunghezze, numero slide e campi richiesti"}, status=400)
+    except ValidationError as exc:
+        details = "; ".join(".".join(map(str, e["loc"])) + ": " + e["msg"]
+                            for e in exc.errors(include_input=False, include_url=False)[:3])
+        return web.json_response({"error": "Dati non validi: " + details[:500]}, status=400)
     except (ValueError, json.JSONDecodeError) as exc:
         return web.json_response({"error": str(exc)[:600]}, status=400)
     except Exception:
@@ -71,19 +75,20 @@ async def run_child(app, args, cwd, log_path, env=None, timeout=1200):
 
 def create_app(root=None, data_root=None):
     root = Path(root or Path(__file__).resolve().parents[1])
-    config = json.loads((root / "config.example.json").read_text(encoding="utf-8"))
+    config = json.loads((root / "config.example.json").read_text(encoding="utf-8-sig"))
     local = root / "config.local.json"
     if local.exists():
-        config.update(json.loads(local.read_text(encoding="utf-8")))
+        config.update(json.loads(local.read_text(encoding="utf-8-sig")))
     (root / "logs").mkdir(exist_ok=True)
     app = web.Application(middlewares=[errors], client_max_size=MAX_BYTES + 1024*1024)
     app["root"], app["config"] = root, config
     app["store"] = store = Store(Path(data_root or root / "data"))
     app["guard"] = guard = ChildGuard()
-    app["manager"] = manager = LlamaManager(root, config, guard)
+    app["manager"] = manager = LlamaManager(root, config, guard, profile_root=store.root)
     app["worker"] = worker = Worker(store, manager)
     app["export_lock"] = asyncio.Lock()
     app["stop_event"] = asyncio.Event()
+    picker_lock = asyncio.Lock()
     slidev_state = {"process": None, "project_id": None, "log": None}
 
     def sync_slidev(p):
@@ -132,13 +137,38 @@ def create_app(root=None, data_root=None):
         return web.FileResponse(root / "static" / "index.html")
 
     async def health(request):
-        return web.json_response({"app": "H3-slides", "version": "0.1.0", "llama": manager.status()})
+        return web.json_response({"app": "H3-slides", "version": "0.2.0", "llama": manager.status()})
 
     async def models(request):
-        return web.json_response({"models": manager.catalog(), "status": manager.status(),
+        catalog = manager.catalog()
+        return web.json_response({"models": catalog, "status": manager.status(),
+                                  "default_model": manager.local_files.read().get("default_model", ""),
+                                  "runtime_available": manager.executable_path().is_file(),
                                   "gpu_layers": config["gpu_layers"], "context_size": config["context_size"]})
 
+    async def local_model(request):
+        if worker.active() or manager.lock.locked():
+            raise ValueError("Attendi o annulla la generazione prima di cambiare la configurazione dei modelli")
+        if picker_lock.locked():
+            raise ValueError("Una selezione del modello e gia aperta")
+        async with picker_lock:
+            if request.match_info["action"] == "pick":
+                path = await choose_model_file(root, guard)
+                if not path:
+                    return web.json_response({"cancelled": True})
+            elif request.match_info["action"] == "register":
+                body = await request.json()
+                path = body.get("path") if isinstance(body, dict) else None
+            else:
+                raise ValueError("Azione non valida")
+            if worker.active():
+                raise ValueError("Generazione avviata durante la scelta: riprova quando termina")
+            model_id = manager.local_files.register(path)
+            return web.json_response({"model": model_id, "cancelled": False})
+
     async def llm_control(request):
+        if manager.lock.locked():
+            raise ValueError("Caricamento del modello in corso: attendi il completamento")
         if worker.active():
             raise ValueError("Attendi o annulla il job attivo prima di cambiare il runtime LLM")
         body = await request.json()
@@ -150,6 +180,34 @@ def create_app(root=None, data_root=None):
             raise ValueError("Azione non valida")
         return web.json_response(manager.status())
 
+    async def admin_llm(request):
+        from .runtime_settings import LoadingSettings, InferenceSettings
+        if request.method == "POST":
+            if manager.lock.locked():
+                raise ValueError("Attendi il completamento del caricamento prima di salvare un profilo")
+            if worker.active():
+                raise ValueError("Attendi o annulla la generazione prima di modificare i profili LLM")
+            return web.json_response(manager.save_profile(await request.json()))
+        catalog = manager.catalog()
+        return web.json_response({"models": catalog, "profiles": {m["id"]: manager.profile(m["id"]) for m in catalog},
+                                  "status": manager.status(),
+                                  "loading_schema": LoadingSettings.model_json_schema(),
+                                  "inference_schema": InferenceSettings.model_json_schema()})
+
+    async def search_settings(request):
+        if request.method == "POST":
+            if worker.active():
+                raise ValueError("Attendi o annulla la generazione prima di modificare la ricerca")
+            return web.json_response(worker.search_config.save(await request.json()))
+        return web.json_response(worker.search_config.read())
+
+    async def themes(request):
+        from .themes import ThemeLibrary
+        library = ThemeLibrary(store.root)
+        if request.method == "POST":
+            return web.json_response(library.save(await request.json()))
+        return web.json_response(library.list())
+
     async def projects(request):
         if request.method == "POST":
             project = store.create(ProjectInput.model_validate(await request.json()).model_dump())
@@ -160,7 +218,7 @@ def create_app(root=None, data_root=None):
     async def project(request):
         p = store.project(request.match_info["pid"])
         if request.method == "PATCH":
-            values = ProjectInput.model_validate(await request.json()).model_dump()
+            values = ProjectInput.model_validate(await request.json()).model_dump(exclude_unset=True)
             p.update(values)
             p["revision"] += 1
             store.save_project(p)
@@ -180,7 +238,7 @@ def create_app(root=None, data_root=None):
             while chunk := await part.read_chunk():
                 raw.extend(chunk)
                 if len(raw) > MAX_BYTES:
-                    raise ValueError("Massimo 30 MB per file")
+                    raise ValueError("Massimo 250 MB per file")
             source = ingest(store, pid, part.filename, bytes(raw))
             p = store.project(pid)
             p["sources"].append(source)
@@ -205,6 +263,28 @@ def create_app(root=None, data_root=None):
         item.update(content=edit.content.model_dump(), revision=item["revision"] + 1, status="ready")
         store.save_project(p)
         return web.json_response(item)
+
+    async def split_slide(request):
+        p = store.project(request.match_info["pid"])
+        item = next((s for s in p["slides"] if s["id"] == request.match_info["sid"]), None)
+        if item is None:
+            raise KeyError()
+        body = await request.json()
+        if body.get("revision") != item["revision"]:
+            return web.json_response({"error": "Slide aggiornata altrove: ricarica prima di dividere"}, status=409)
+        if item["status"] != "ready":
+            raise ValueError("Attendi che la slide sia pronta")
+        pieces = split_content(item["content"])
+        if len(p["slides"])+len(pieces)-1 > 30:
+            raise ValueError("La divisione supera il limite di 30 slide per progetto")
+        at = p["slides"].index(item)
+        new = [{**item, "id": item["id"] if i == 0 else uid(),
+                "revision": item["revision"]+1 if i == 0 else 1, "content": content}
+               for i, content in enumerate(pieces)]
+        p["slides"][at:at+1] = new
+        p["count"] = len(p["slides"])
+        store.save_project(p)
+        return web.json_response(public_project(p))
 
     async def reorder(request):
         p = store.project(request.match_info["pid"])
@@ -270,12 +350,13 @@ def create_app(root=None, data_root=None):
                                      snapshot, assets, output, fmt], root, output / "export.log", env)
                 filename = "presentazione." + fmt
             elif fmt == "slidev":
-                write_slidev(p, assets, output)
+                write_slidev(p, assets, output, strict=True)
                 filename = "slidev.zip"
                 with zipfile.ZipFile(output / filename, "w", zipfile.ZIP_DEFLATED) as archive:
                     archive.write(output / "slides.md", "slides.md")
-                    for image_id in {s["content"]["image_id"] for s in p["slides"] if s["content"]["image_id"]}:
-                        archive.write(assets / image_id, "assets/" + image_id)
+                    archive.write(output / "style.css", "style.css")
+                    for image in (output / "assets").glob("*.jpg"):
+                        archive.write(image, "assets/" + image.name)
             else:
                 await run_child(app, [sys.executable, "-m", "manim", "-ql", "--disable_caching",
                                      str(root / "scripts/manim_deck.py"), "H3Deck"], output,
@@ -332,6 +413,13 @@ def create_app(root=None, data_root=None):
     app.router.add_get("/", index)
     app.router.add_get("/api/health", health)
     app.router.add_get("/api/models", models)
+    app.router.add_post("/api/local-models/{action}", local_model)
+    app.router.add_get("/api/admin/llm", admin_llm)
+    app.router.add_post("/api/admin/llm", admin_llm)
+    app.router.add_get("/api/admin/search", search_settings)
+    app.router.add_post("/api/admin/search", search_settings)
+    app.router.add_get("/api/themes", themes)
+    app.router.add_post("/api/themes", themes)
     app.router.add_post("/api/llm/{action}", llm_control)
     app.router.add_get("/api/projects", projects)
     app.router.add_post("/api/projects", projects)
@@ -340,6 +428,7 @@ def create_app(root=None, data_root=None):
     app.router.add_post("/api/projects/{pid}/sources", upload)
     app.router.add_patch("/api/projects/{pid}/slides/{sid}", slide)
     app.router.add_post("/api/projects/{pid}/reorder", reorder)
+    app.router.add_post("/api/projects/{pid}/slides/{sid}/split", split_slide)
     app.router.add_post("/api/projects/{pid}/generate", generate)
     app.router.add_post("/api/projects/{pid}/slidev", slidev_preview)
     app.router.add_get("/api/jobs", jobs)

@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'process-control.ps1')
 $config = Get-Content -LiteralPath (Join-Path $projectRoot 'config.example.json') -Raw | ConvertFrom-Json
 if (Test-Path -LiteralPath (Join-Path $projectRoot 'config.local.json')) {
     $override = Get-Content -LiteralPath (Join-Path $projectRoot 'config.local.json') -Raw | ConvertFrom-Json
@@ -9,6 +10,7 @@ $url = "http://127.0.0.1:$($config.port)"
 try {
     $health = Invoke-RestMethod "$url/api/health" -TimeoutSec 2
     if ($health.app -ne 'H3-slides') { throw "La porta non appartiene a H3-slides" }
+    if (-not (Get-OwnedAppListener $projectRoot $config.port)) { throw 'La porta appartiene a un altra cartella: non la arresto.' }
     Invoke-RestMethod "$url/api/shutdown" -Method Post -Headers @{'X-H3-Slides'='1'} -ContentType 'application/json' -Body '{}' | Out-Null
 } catch { Write-Host "Arresto HTTP non disponibile. Verifico solo i processi di questa cartella." }
 Start-Sleep -Seconds 2

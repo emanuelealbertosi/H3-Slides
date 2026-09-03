@@ -5,14 +5,85 @@ Progetto indipendente da H3-Comics: non ne modifica file, processi o configurazi
 
 ## Avvio
 
-- Aprire **Avvia-H3-slides.bat**, quindi http://127.0.0.1:8766.
+1. Scaricare lo ZIP **H3-Slides-windows-x64** dalle [release GitHub](https://github.com/emanuelealbertosi/H3-Slides/releases) e **estrarlo tutto**
+   in una cartella scrivibile, per esempio F:\H3-Slides. Non eseguire i BAT dentro lo ZIP.
+2. Aprire **Avvia-H3-slides.bat**. Al primo avvio esegue automaticamente
+   l'installazione, poi apre http://127.0.0.1:8766. Per installare senza avviare
+   usare **Installa-H3-slides.bat**.
+3. Scegliere un modello GGUF dal disco, oppure configurare un'API remota.
+
+L'installer Windows x64 scarica un **Python 3.12 privato**, Node con npm,
+Slidev, Manim/Manim Slides, Chromium e llama.cpp. Non richiede Python, Node,
+Git o LM Studio preinstallati, non cambia PATH/registro di Windows e non
+richiede normalmente privilegi amministrativi. Richiede Internet e diversi GB
+liberi, oltre allo spazio e alla RAM/VRAM dei modelli. La prima installazione
+puo richiedere diversi minuti; quelle successive riusano i componenti locali.
+Runtime uv/llama.cpp sono fissati nel manifest con SHA256; Node e verificato
+contro il file checksum ufficiale. Dipendenze Python/Node hanno versioni bloccate.
+
+Con una GPU NVIDIA viene scelto llama.cpp CUDA 12.4; sugli altri PC viene
+installato il motore CPU (piu lento). I driver GPU devono essere gia funzionanti:
+l'app non li installa o modifica. Il supporto AMD/Intel e CPU, non accelerazione GPU.
+Il controllo iniziale del binario non garantisce che ogni GGUF entri in memoria.
+Per forzare una prima installazione CPU: **Installa-H3-slides.bat -LlamaBackend cpu**.
+Per non scaricare il motore locale: **Installa-H3-slides.bat -LlamaBackend skip**.
+Un motore locale esistente funzionante viene conservato; questi parametri non
+sono un aggiornamento automatico di una distribuzione llama.cpp gia presente.
+I **modelli, documenti, progetti e credenziali non sono inclusi** nello ZIP/Git.
+L'uso di API remote puo avere costi secondo il proprio provider.
+
 - Per chiudere: **Ferma-H3-slides.bat**. Arresta l'app e i processi figli gestiti
   (llama.cpp, Slidev e renderer). Non ferma ComfyUI, H3-Comics o LM Studio.
-- Il launcher controlla la porta per evitare copie duplicate.
+- Il launcher controlla porta e cartella per evitare copie duplicate o arrestare
+  un'altra installazione. Avvii/installazioni simultanei nella stessa cartella sono bloccati.
+
+Installazione e verifiche dettagliate: [INSTALLAZIONE.md](INSTALLAZIONE.md).
+
+### Primo avvio e scelta del modello
+
+Se il catalogo locale e vuoto, l'app apre **Configura il modello locale**:
+
+1. Premere **Sfoglia file GGUF** e scegliere il modello sul disco, oppure
+   incollare il percorso completo e premere **Usa questo file**.
+2. Il file viene collegato senza copiarlo, scaricarlo o trasferirlo nel browser.
+   La scelta resta in data/model_files.json, escluso da Git, ed e riutilizzata
+   al prossimo avvio. Si puo aggiungere un altro file da **Scegli GGUF dal disco**.
+3. Se si preferisce un provider remoto, scegliere **Uso un'API remota**.
+   **Configura dopo** permette di usare l'editor senza caricare alcun modello.
+
+Il selettore nativo si apre sul PC che esegue l'app (Windows); da una sessione
+remota usare il percorso sul server. La selezione annullata non cambia nulla.
+Il controllo rifiuta file mancanti, intestazioni GGUF non valide, proiettori
+mmproj scelti come modello principale e modelli suddivisi privi di una parte.
+Per un GGUF suddiviso scegliere 00001-of-xxxxx e tenere tutte le parti insieme.
+Un'intestazione valida non garantisce integrita completa, compatibilita con
+llama.cpp, qualita instruction/vision o memoria GPU sufficiente.
+Se il file viene spostato o il disco scollegato, l'app avvisa e richiede una
+nuova scelta; non passa silenziosamente a un modello diverso.
+
+L'assenza di llama-server.exe viene segnalata separatamente: scegliere i pesi
+non installa il motore. Rilanciare l'installer senza -LlamaBackend skip, oppure
+usare un'API remota. Nessun download di modelli automatico.
+
+### Controllo e riparazione dell'installazione
+
+- **Verifica-H3-slides.bat** verifica Python, librerie, Node, Slidev, PPTX e
+  l'avvio headless di Chromium. Non carica GGUF e non modifica i progetti.
+- L'installer prepara Python 3.12 x64, controlla i conflitti Python e ripara
+  Node incompleto (anche quando manca npm). Prima di sostituirlo conserva il
+  vecchio runtime in una cartella node-backup sotto runtime.
+- Facoltativamente passare -PythonExecutable seguito dal percorso di un proprio
+  Python 3.12 x64; altrimenti viene usato il Python privato della cartella runtime.
+- L'installer non aggiorna dipendenze mentre l'app di quella cartella e attiva:
+  usare prima **Ferma-H3-slides.bat**. Gli altri progetti non sono arrestati.
+- Lo stato finale distingue componenti applicativi mancanti (errore) da
+  modello/motore locale da configurare (avviso; la modalita remota resta possibile).
+- All'avvio viene ripetuto un controllo rapido delle dipendenze fondamentali:
+  eventuali errori indicano come riparare l'installazione prima di avviare un server.
 
 ## Flusso di lavoro
 
-1. Inserisci titolo, istruzioni, numero slide e tema, poi aggiungi le fonti.
+1. Scrivi un argomento o istruzioni, scegli numero slide e tema. Le fonti sono facoltative.
 2. Scegli **llama.cpp integrato** e un GGUF, oppure **API remota compatibile OpenAI**.
 3. Genera: la scaletta compare prima, poi ogni slide viene salvata e mostrata.
 4. Modifica testo, note, immagine, layout e animazione dal pulsante della slide.
@@ -26,24 +97,136 @@ Un nuovo clic su Genera completa le slide ancora mancanti; per rifare una slide 
 usa Rigenera. Non elimina o sovrascrive automaticamente una presentazione già terminata.
 Per un progetto interamente nuovo usa Nuovo progetto.
 
-## Runtime installati
+### Solo argomento, senza documenti
+
+Puoi scrivere semplicemente «La rivoluzione francese» e premere Genera.
+Senza allegati e con Ricerca web disattivata il modello usa la propria conoscenza generale: non naviga sul web,
+non consulta bibliografie e non garantisce informazioni aggiornate. Il percorso
+salta indicizzazione e RAG; l'origine è indicata nei log e nelle note delle slide.
+Non vengono create citazioni a file inesistenti. Testi, diagrammi, modifica,
+rigenerazione ed export restano disponibili con modello locale o API remota.
+
+### Ricerca web facoltativa e gratuita
+
+Attivare **Ricerca web**, scrivere una query dedicata, scegliere 3–5 fonti e
+confermare esplicitamente l'invio. Al motore viene inviata solo la query:
+non il documento, il prompt completo o le credenziali del modello.
+Questa conferma è distinta da quella per inviare fonti a un LLM remoto.
+La ricerca funziona anche con il modello locale, senza API di ricerca a pagamento.
+
+- **SearXNG locale** (predefinito): indicare l'indirizzo del proprio servizio.
+  Il JSON deve essere abilitato. Configurazione e launcher opzionali indipendenti
+  dal PC sono in [deploy/searxng](deploy/searxng/README.md).
+- **DuckDuckGo HTML**: non richiede un'app aggiuntiva, ma può bloccare richieste
+  automatiche. CAPTCHA, rifiuti e limiti vengono segnalati; non sono aggirati.
+  Non c'è passaggio automatico a un altro provider, gratuito o a pagamento.
+
+L'app legge pagine pubbliche rispettando robots.txt, scarta URL locali/privati,
+non esegue script delle pagine e usa gli estratti come dati non attendibili,
+non come istruzioni. Limiti di tempo, redirect e dimensione proteggono il recupero.
+Le fonti effettivamente lette, gli URL e la data di consultazione restano nel
+progetto e nelle note delle slide; il testo integrale della cache resta locale.
+La cache vale un'ora per progetto e query; **Aggiorna ricerca** la esclude.
+Se il motore fallisce o non si leggono pagine utilizzabili il job si ferma:
+non presenta conoscenza interna del modello come ricerca effettuata.
+
+La ricerca precede il caricamento del LLM e appare nei log del job. Non aggiorna
+da sola slide già pronte: usare Rigenera per una slide o creare un nuovo progetto.
+I risultati vanno verificati dall'utente; il recupero di fonti non elimina
+allucinazioni, errori o incompletezza. Le immagini del web non sono importate
+automaticamente: questa funzione riguarda solo fonti testuali.
+
+SearXNG non viene avviato con H3-slides. Il servizio container opzionale richiede
+un motore compatibile (per esempio Podman con Compose) e, su Windows, virtualizzazione
+funzionante. L'app non cambia impostazioni di sistema e non dipende da una
+distribuzione WSL personale o da percorsi di altre applicazioni.
+
+Gli allegati non devono essere libri: puoi usare report PDF, appunti Markdown,
+schermate o foto leggibili. Per un PDF generico scegli **Documento intero**:
+non richiede indice né numerazione stampata e legge tutte le pagine.
+Per estrarre una sezione specifica scegli **Cerca le pagine pertinenti dal prompt**.
+Le immagini richiedono un modello vision; PDF protetti vanno sbloccati dall'utente
+e scansioni lunghe senza testo richiedono OCR (oltre 60 pagine).
+
+## Admin · Modelli
+
+Il pulsante in alto apre i profili dei GGUF locali. Per ogni modello si salvano:
+
+- caricamento: contesto, layer GPU (-1 massimo offload, 0 CPU), thread, batch,
+  micro-batch, Flash Attention, cache K/V, mmap e layer MoE da tenere su CPU;
+- inferenza: temperatura, top-p, top-k, min-p, penalità ripetizione,
+  token massimi, seed e thinking.
+
+**Salva profilo** non interrompe né riavvia un processo. **Carica / riavvia**
+applica il profilo immediatamente; altrimenti sarà usato dalla prossima generazione.
+Le modifiche al runtime sono bloccate mentre un job è attivo. I profili persistono
+in data/llm_profiles.json; le API key remote non vengono salvate lì.
+I default rimangono Gemma 12B Q6, massimo offload GPU, contesto 16K e thinking
+disattivato. La compatibilità effettiva di cache, contesto e offload dipende dal
+modello e dalla VRAM disponibile. Admin è un pannello locale, non un sistema
+di autenticazione o gestione utenti.
+
+## Editor e materiale visivo
+
+Composer adattivo con 12 famiglie: copertina, editoriale asimmetrico, confronto,
+griglia, passaggi, cronologia, idea/approfondimento, citazione, immagine a
+sinistra/destra/panoramica e paragrafi a fasce. Il planner propone la composizione
+già nella scaletta. Il renderer misura il testo e prova disposizioni alternative
+e spaziature più compatte senza cancellare parole o cambiare i font manuali.
+La scelta automatica varia in modo deterministico, stabile al ricaricamento.
+La tendina su ogni slide imposta la composizione preferita; l'etichetta indica
+quella effettiva dopo il controllo dello spazio. **Ricomponi** salva una nuova
+variante senza chiamare l'LLM. **Dividi** distribuisce paragrafi/punti su più
+slide conservando letteralmente testo, citazioni, fonti, immagini e note;
+richiede conferma e rispetta il limite totale di 30 slide.
+Funziona anche sui progetti precedenti, senza rigenerare i contenuti.
+Sfondo, accento e sei font configurabili. Anteprima immediata,
+salvataggio nel progetto ed esportazioni coerenti (non identiche al pixel).
+Nel **Creatore di temi** sono disponibili Prisma, Aurora, Notte, Editoriale e Laboratorio:
+combinano sfondo, accento, font, box colorati, bordi e angoli. Personalizzare
+colori del testo/titoli, riempimenti dei quattro tipi di box, bordi, raggio e
+dimensioni. Il testo automatico sceglie un colore con contrasto almeno 4,5:1;
+le combinazioni manuali insufficienti producono un avviso, senza cambiare
+silenziosamente la scelta. Ogni box calcola il contrasto sul proprio sfondo.
+Dimensione 0 significa automatica; aumentarla può far sforare testi lunghi.
+**Salva tema** crea un preset personale riutilizzabile (stesso nome: aggiornamento).
+**Salva brief** conserva lo stile del progetto, anche se già prodotto:
+non occorre rigenerare i testi. Esportare di nuovo per aggiornare i file.
+I temi personali sono in data/themes.json; i preset distribuiti sono in
+static/theme-presets.json. Non contengono codice, URL remoti o percorsi del PC.
+Accenni / approfondito / completo guidano i prossimi testi generati senza
+cancellare quelli già presenti. Doppio clic sui testi per modificarli nella
+scheda, oppure Modifica per note, fonti, immagini e diagrammi.
+
+Le immagini delle fonti sono facoltative anche nei progetti esistenti: disattivarle
+le nasconde dagli export, non elimina gli originali. L'opzione Manim permette
+al planner di scegliere flussi, cicli e confronti con 2–5 etichette modificabili.
+Anteprima SVG immediata, forme native nel PPTX, render Manim solo all'esportazione.
+Un diagramma attivo ha priorità sulla figura della stessa slide.
+Il renderer Manim conserva un layout animato proprio e non riproduce tutti i
+template web. Non è ancora un clone completo di Gamma né un esecutore di
+codice Python libero generato dall'LLM.
+
+## Runtime distribuiti dall'installer
 
 - Node.js 24.19.0 dedicato in runtime/node.
 - Slidev 52.19.1 e tema default in node_modules.
 - Chromium per gli export PDF in runtime/browsers.
-- Python 3.12 e dipendenze isolate in .venv.
+- Python 3.12.14 privato in runtime/python e dipendenze isolate in .venv.
 - Manim Community 0.21.0; Manim Slides 5.6.0, compreso il player Qt.
-- llama.cpp build 10497, binari e DLL in runtime/llama.
+- llama.cpp build b10778, binari e DLL in runtime/llama.
+  Le installazioni precedenti conservano il loro motore funzionante.
 
 llama.cpp viene avviato **dall'app**, in un processo dedicato su 127.0.0.1:8096,
 solo quando serve generare. Non richiede LM Studio in esecuzione.
-Il catalogo legge i GGUF già presenti in models
-e nella cartella locale models: il primo è soltanto un percorso dei pesi,
-non una dipendenza dal programma LM Studio. I grandi pesi non sono duplicati.
+Il catalogo predefinito legge i GGUF nella cartella locale models.
+Percorsi aggiuntivi si impostano in model_roots di config.local.json,
+ignorato da Git: possono puntare a pesi già presenti senza duplicarli.
+Nessun percorso personale è necessario nel codice o nella configurazione esempio.
 I file mmproj accanto al GGUF abilitano i modelli vision.
 
-Per le presentazioni usare un modello instruction/vision, per esempio il Gemma
-presente nel catalogo; i GPT-2 personali sono visibili ma non sono planner chat adeguati.
+Per le presentazioni usare un modello instruction/vision compatibile con il
+formato chat e JSON; un modello base come GPT-2 non è un planner adeguato.
 L'app non scarica/termina i modelli delle altre applicazioni per liberare VRAM.
 Il modello di H3-slides viene scaricato dopo 5 minuti di inattività oppure con
 Scarica LLM. La chiusura dell'app termina esclusivamente i suoi figli tramite
@@ -72,16 +255,61 @@ di scene Python, grafici specialistici, formule LaTeX e animazioni complesse
 non è ancora implementata: richiede renderer/sandbox dedicati. L'LLM non può
 eseguire Python/JavaScript arbitrario sul computer.
 
-Importazione: PDF fino a 60 pagine e 30 MB/file; Markdown fino a 240.000 caratteri;
-PNG/JPG/WEBP fino a 40 megapixel. Le pagine PDF vengono conservate come riferimenti
-visivi e il testo viene estratto. Per immagini e pagine scansionate serve un modello
-vision: non viene simulato un OCR con un modello solo testo.
-I documenti lunghi vengono sintetizzati a blocchi: la sintesi può perdere dettagli,
-quindi va sempre rivista per presentazioni dove la completezza è essenziale.
-La prima versione non estrae separatamente ogni grafico/figura da PDF complessi.
+Importazione: PDF completi fino a 1.500 pagine, 250 MB/file e 12 milioni di
+caratteri; Markdown fino a 240.000 caratteri; PNG/JPG/WEBP fino a 40 megapixel.
 
-Una generazione alla volta, massimo 30 slide, massimo 5 punti da 160 caratteri
-per slide. Editor a campi e riordino, non ancora un canvas PowerPoint libero.
+### Ricerca delle fonti (RAG strutturale locale)
+
+È possibile caricare un libro intero e scrivere, per esempio, «20 slide della
+lezione 1 dell'UDA 1». L'app indicizza tutte le pagine, trova l'indice, chiede
+al modello di individuare la sezione e verifica i confini sui titoli reali.
+I numeri stampati sono distinti dalle pagine fisiche del PDF: l'offset non è
+preimpostato. La selezione, la motivazione e le pagine compaiono nelle fonti
+e nei log prima della produzione delle slide e restano salvate nel progetto.
+Solo le pagine selezionate vengono lette per la generazione e rasterizzate;
+le figure raster native abbastanza grandi sono disponibili separatamente.
+Il file originale resta integro sul PC. La selezione viene ricalcolata quando
+cambia il brief.
+
+Per ogni slide un recupero lessicale BM25 seleziona anche i passaggi originali
+più pertinenti all'interno della sezione, con i loro riferimenti di pagina.
+Questo è retrieval strutturale e lessicale, non ricerca semantica con embeddings:
+per un libro lungo serve un indice testuale e una numerazione verificabile.
+Se la sezione è ambigua l'app si ferma senza inventare intervalli. Per un PDF
+testuale breve senza indice usa una mappa sintetica delle pagine. Un libro
+scansionato richiede OCR preventivo; documenti scansionati brevi (fino a 60
+pagine) e immagini possono essere letti tramite un modello vision.
+Le figure vettoriali non sono estratte separatamente. La sintesi a blocchi
+può perdere dettagli: la revisione rimane necessaria per materiali accurati.
+
+Una generazione alla volta, massimo 30 slide. Accenni genera fino a 3 punti
+essenziali; Approfondito e Completo scelgono da 1 a 4 paragrafi in box.
+Budget complessivo rispettivamente 1300/1600 caratteri e massimo 650/800 per
+paragrafo. Con immagini/diagrammi diventano 740/960 complessivi e 370/480 per
+paragrafo. Più box significa distribuire il budget, non moltiplicare il testo.
+I testi importanti rimangono sulla slide, non soltanto nelle note.
+Titoli in grassetto; box differenziati per spiegazione, esempio, concetto chiave
+e citazione. Un brano citato deve corrispondere a un passaggio originale
+recuperato da un allegato: fonte e pagina vengono ricavate dal passaggio.
+Le fonti web non autorizzano la copia indiscriminata di testi esterni.
+Editor dei box con titolo, paragrafo, tipo/colore e fonte; doppio clic sui testi
+per la modifica diretta. Fino a 4 box manuali. PPTX conserva forme e testi
+modificabili; PDF/Slidev condividono il layout; Manim mostra i box in sequenza.
+Gli export PPTX/PDF/Slidev bloccano lo sforamento dopo il tentativo di ricomposizione.
+PDF e Slidev usano lo stesso HTML misurato; PPTX usa quelle posizioni per testi,
+riquadri, immagini e diagrammi nativi modificabili, incluse ombre e bordi.
+Il formato rimane 16:9: non sono pagine PDF di altezza variabile come le schede Gamma.
+Le metriche tipografiche e le ombre di PowerPoint possono differire leggermente.
+Manim video conserva il proprio renderer animato.
+La scaletta pianifica anche il numero di paragrafi. Il budget viene diviso per
+paragrafo e accompagnato da indicazioni in parole, adatte anche a modelli piccoli.
+La generazione controlla lunghezza e conclusione dei paragrafi e prova fino a due
+correzioni con limiti più stretti se il modello non rispetta il formato. Come ultima misura adatta
+solo spiegazioni generate a frasi complete, mantenendo la versione estesa
+nelle note e segnalando l'adattamento nel log. Le citazioni non vengono tagliate.
+Le slide precedenti restano intatte: per ottenere paragrafi nuovi scegliere
+Approfondito/Completo, salvare il brief e rigenerare la singola slide.
+Editor a campi e riordino, non ancora un canvas PowerPoint libero.
 Un job interrotto da un riavvio mantiene le slide pronte, ma non riparte da solo:
 Genera rilegge le fonti e completa quelle mancanti. Le API key remote non sono
 salvate né nei progetti né nelle preferenze del browser: reinserirle dopo il refresh.
@@ -90,8 +318,11 @@ In modalità remota è richiesta la conferma esplicita dell'invio delle fonti.
 ## Dati e log
 
 - data/projects.sqlite3: progetti, slide, revisioni, fonti ed eventi.
-- data/assets: immagini e pagine PDF rasterizzate.
+- data/assets: PDF originali, indici testuali locali, figure e pagine selezionate.
 - data/slidev: copie derivate per Slidev live, sincronizzate dall'editor.
+- data/search_settings.json: indirizzo del proprio SearXNG, solo locale.
+- data/themes.json: temi personali; le copie applicate sono anche nei progetti.
+- data/model_files.json: collegamenti ai GGUF scelti sul disco e ultima scelta.
 - outputs: esportazioni versionate e snapshot del progetto.
 - logs/app.log: servizio; logs/llama.log: motore locale; logs/slidev.log: vista live.
 
@@ -104,8 +335,8 @@ Il servizio è solo locale: Tailscale non è stato configurato per questo nuovo 
 Eseguire dalla cartella del progetto:
 
     .venv\Scripts\python.exe -m pytest -q
-    runtime\node\node.exe --test tests/export.test.mjs
-    .venv\Scripts\python.exe tests/smoke_llama.py
+    runtime\node\node.exe --test tests/export.test.mjs tests/composer.test.mjs
+    .venv\Scripts\python.exe tests/smoke_llama.py --model "D:\Modelli\piccolo-modello.gguf"
 
 I test della pipeline usano un LLM simulato controllato e verificano salvataggio
 incrementale, modifiche durante la generazione, annullamento, protezione dei percorsi,
@@ -113,8 +344,18 @@ API, browser e veri export PPTX/PDF/Slidev/Manim. Il test smoke separato carica 
 piccolo GGUF già sul PC in CPU: prova l'integrazione llama.cpp, non la qualità
 editoriale del modello instruction/vision.
 
+Per provare quattro slide con un proprio GGUF instruction già installato:
+
+    .venv\Scripts\python.exe tests/smoke_composer_llama.py --model "D:\Modelli\modello.gguf"
+
+Usa una libreria isolata sotto logs/composer-smoke-* e la porta 8097 (configurabile
+con --port); non tocca i progetti né i profili personali, non scarica pesi,
+genera PDF/PPTX di verifica e chiude il proprio processo llama.cpp alla fine.
+
 Dipendenze applicative in requirements.txt, lock Python in requirements.lock,
 lock Node in package-lock.json. Runtime e dati non vanno pubblicati su Git.
+L'installazione standalone attuale è per Windows x64: non è un singolo eseguibile,
+non include modelli e non ha un installer Linux/macOS verificato.
 
 ## Documentazione degli strumenti
 

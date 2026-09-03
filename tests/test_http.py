@@ -1,6 +1,8 @@
 import asyncio
 import io
+import json
 import os
+import struct
 from pathlib import Path
 import zipfile
 import aiohttp
@@ -27,14 +29,46 @@ class SingleSlideLLM:
             return {"slides": [{"title": "Il tuo studio locale", "purpose": "Spiegare il flusso"}]}
         return SlideContent(title="Le fonti diventano slide",
                             subtitle="Un progetto locale, pronto da modificare",
-                            bullets=["Importa il documento.", "Rivedi ogni slide.", "Esporta nel formato che ti serve."],
+                            blocks=[
+                              {"heading":"Dal documento alla slide", "text":"Il documento viene analizzato per selezionare i passaggi pertinenti alla richiesta. I contenuti diventano paragrafi visibili dentro riquadri, che puoi correggere direttamente prima di esportare la presentazione."},
+                              {"heading":"Il controllo resta tuo", "kind":"example", "text":"Per esempio, puoi precisare una spiegazione aggiungendo un caso concreto e la sua conseguenza. La modifica viene salvata nel progetto e si ritrova anche nell’esportazione, senza dover riscrivere la presentazione."}],
                             sources=["fonte.md"], animation="reveal").model_dump()
+
+
+@pytest.mark.asyncio
+async def test_api_generate_without_upload(tmp_path):
+    app = create_app(ROOT, tmp_path / "data")
+    app["worker"].clients = SingleSlideLLM
+    class NoSearch:
+        async def collect(self, *args, **kwargs):
+            pytest.fail("La ricerca disattivata non deve effettuare richieste")
+    app["worker"].researcher = NoSearch()
+    async with TestClient(TestServer(app)) as client:
+        response = await client.post("/api/projects", headers=HEADERS,
+                                     json={"title":"La rivoluzione francese", "prompt":"La rivoluzione francese", "count":1})
+        p = await response.json()
+        response = await client.post(f"/api/projects/{p['id']}/generate", headers=HEADERS,
+                                     json={"prompt":"La rivoluzione francese", "count":1,
+                                           "provider":{"mode":"local", "model":"test"}})
+        assert response.status == 202
+        job = await response.json()
+        await app["worker"].tasks[job["id"]]
+        assert app["store"].job(job["id"])["status"] == "completed"
+        generated = app["store"].project(p["id"])
+        assert generated["sources"] == []
+        assert generated["slides"][0]["content"]["sources"] == []
+        assert generated["slides"][0]["content"]["notes"].startswith("Origine: conoscenza del modello")
 
 
 @pytest.mark.asyncio
 async def test_api_and_real_exports(tmp_path):
     app = create_app(ROOT, tmp_path / "data")
     app["worker"].clients = SingleSlideLLM
+    # Browser/admin checks must work in a clean checkout with no personal GGUFs.
+    model_dir = tmp_path / "test-models"
+    model_dir.mkdir()
+    (model_dir / "test.gguf").write_bytes(struct.pack("<4sIQQ", b"GGUF", 3, 1, 1))
+    app["manager"].config = {**app["manager"].config, "model_roots":[str(model_dir)]}
     async with TestClient(TestServer(app)) as client:
         denied = await client.post("/api/projects", json={"title": "Denied"})
         assert denied.status == 403
@@ -42,6 +76,18 @@ async def test_api_and_real_exports(tmp_path):
         assert response.status == 201
         p = await response.json()
         pid = p["id"]
+        response = await client.patch(f"/api/projects/{pid}", headers=HEADERS,
+                                      json={"use_manim_diagrams": True, "font": "Segoe UI",
+                                            "background_color": "#f7f4ee", "accent_color": "#2c6a59"})
+        assert response.status == 200
+        assert (await response.json())["title"] == "Verifica H3-slides"
+        night = next(p["values"] for p in json.loads((ROOT / "static/theme-presets.json").read_text(encoding="utf-8"))
+                     if p["name"].startswith("Notte"))
+        themed = await client.patch(f"/api/projects/{pid}", headers=HEADERS, json=night)
+        assert themed.status == 200
+        admin = await client.get("/api/admin/llm")
+        assert admin.status == 200
+        assert "context_size" in (await admin.json())["loading_schema"]["properties"]
         form = aiohttp.FormData()
         form.add_field("file", b"# Il flusso\nLe fonti sono salvate sul computer.", filename="fonte.md")
         response = await client.post(f"/api/projects/{pid}/sources", headers=HEADERS, data=form)
@@ -55,11 +101,19 @@ async def test_api_and_real_exports(tmp_path):
         assert app["store"].job(job["id"])["status"] == "completed"
         project = app["store"].project(pid)
         slide = project["slides"][0]
+        slide["content"]["diagram"] = {"kind": "flow", "labels": ["Fonti", "Slide", "Presentazione"]}
+        changed = await client.patch(f"/api/projects/{pid}/slides/{slide['id']}", headers=HEADERS,
+                                      json={"revision": slide["revision"], "content": slide["content"]})
+        assert changed.status == 200
         stale = await client.patch(f"/api/projects/{pid}/slides/{slide['id']}", headers=HEADERS,
                                    json={"revision":0,"content":slide["content"]})
         assert stale.status == 409
         preview = await client.post(f"/api/projects/{pid}/slidev", headers=HEADERS, json={})
         assert preview.status == 200, await preview.json()
+        preview_url = (await preview.json())["url"]
+        env = dict(os.environ, PLAYWRIGHT_BROWSERS_PATH=str(ROOT / "runtime/browsers"))
+        await run_child(app, [ROOT / "runtime/node/node.exe", ROOT / "tests/slidev-smoke.mjs",
+                             preview_url], ROOT, tmp_path / "slidev-browser.log", env, timeout=90)
         for fmt in ("pptx", "pdf", "slidev", "manim"):
             response = await client.post(f"/api/projects/{pid}/export/{fmt}", headers=HEADERS, json={})
             payload = await response.json()
@@ -73,9 +127,17 @@ async def test_api_and_real_exports(tmp_path):
             else:
                 with zipfile.ZipFile(io.BytesIO(raw)) as z:
                     if fmt == "pptx":
-                        assert b"Le fonti diventano slide" in z.read("ppt/slides/slide1.xml")
+                        xml = z.read("ppt/slides/slide1.xml")
+                        assert b"Le fonti diventano slide" in xml
+                        assert b"Il documento viene analizzato" in xml
+                        assert b"Per esempio, puoi precisare" in xml
+                        assert b'b="1"' in xml
+                        assert b'val="213659"' in xml
+                        assert b'val="ffffff"' in xml.lower()
                     if fmt == "slidev":
                         assert b"Le fonti diventano slide" in z.read("slides.md")
+                        assert b"prose-box" in z.read("slides.md")
+                        assert b".slide-frame" in z.read("style.css")
                     if fmt == "manim":
                         assert "presentazione.mp4" in z.namelist()
                         assert "presentazione.html" in z.namelist()

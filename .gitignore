@@ -4,8 +4,12 @@ runtime/
 data/
 logs/
 outputs/
+dist/
 __pycache__/
 .pytest_cache/
 *.pyc
 config.local.json
 .env
+models/*
+!models/.gitkeep
+deploy/searxng/.env

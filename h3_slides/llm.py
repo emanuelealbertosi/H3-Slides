@@ -2,6 +2,7 @@ import asyncio
 import base64
 import ctypes
 import json
+import logging
 import os
 from pathlib import Path
 import socket
@@ -10,6 +11,8 @@ import time
 from urllib.parse import urlparse
 import aiohttp
 from .models import SYSTEM
+from .runtime_settings import LoadingSettings, InferenceSettings, ModelProfile
+from .local_models import LocalModelFiles, validate_model
 
 
 def parse_json(text):
@@ -64,57 +67,103 @@ class ChildGuard:
 
 
 class LlamaManager:
-    def __init__(self, root, config, guard):
+    def __init__(self, root, config, guard, profile_root=None):
         self.root, self.config, self.guard = root, config, guard
         self.process = None
         self.model = None
         self.log = None
         self.last_used = time.time()
         self.lock = asyncio.Lock()
+        self.profile_path = Path(profile_root or root / "data") / "llm_profiles.json"
+        self.local_files = LocalModelFiles(profile_root or root / "data")
+        self.loaded_settings = None
+
+    def profiles(self):
+        if not self.profile_path.exists():
+            return {}
+        return json.loads(self.profile_path.read_text(encoding="utf-8"))
+
+    def profile(self, model):
+        default_loading = LoadingSettings(context_size=self.config["context_size"],
+                                          gpu_layers=self.config["gpu_layers"]).model_dump()
+        saved = self.profiles().get(model, {})
+        return ModelProfile.model_validate({"model": model, "loading": saved.get("loading", default_loading),
+                                           "inference": saved.get("inference", {})}).model_dump()
+
+    def save_profile(self, value):
+        profile = ModelProfile.model_validate(value).model_dump()
+        if not any(m["id"] == profile["model"] for m in self.catalog()):
+            raise ValueError("Il modello deve essere presente nel catalogo locale")
+        profiles = self.profiles()
+        profiles[profile["model"]] = profile
+        self.profile_path.parent.mkdir(parents=True, exist_ok=True)
+        temp = self.profile_path.with_suffix(".tmp")
+        temp.write_text(json.dumps(profiles, ensure_ascii=False, indent=2), encoding="utf-8")
+        temp.replace(self.profile_path)
+        return profile
 
     def catalog(self):
-        models = []
+        models, candidates, seen = [], [], set()
         for folder in self.config["model_roots"]:
             path = Path(folder)
             if not path.is_absolute():
                 path = self.root / path
             if not path.exists():
                 continue
-            for model in path.rglob("*.gguf"):
-                if "mmproj" in model.name.lower():
+            try:
+                candidates.extend(path.rglob("*.gguf"))
+            except OSError:
+                continue
+        candidates.extend(Path(p) for p in self.local_files.read()["files"])
+        for model in candidates:
+            try:
+                key = os.path.normcase(str(model.resolve()))
+                if key in seen or not model.is_file() or "mmproj" in model.name.lower():
                     continue
                 projections = sorted(model.parent.glob("*mmproj*.gguf"))
                 models.append({"id": str(model.resolve()), "name": model.stem,
                                "size_gb": round(model.stat().st_size / 1024**3, 2),
                                "vision": bool(projections),
                                "mmproj": str(projections[0]) if projections else ""})
+                seen.add(key)
+            except OSError:
+                continue  # A disconnected drive must not prevent the app from opening.
         return sorted(models, key=lambda m: (not m["vision"], m["name"]))
+
+    def executable_path(self):
+        path = Path(self.config["llama_executable"])
+        return path if path.is_absolute() else self.root / path
 
     def status(self):
         running = self.process is not None and self.process.poll() is None
         return {"running": running, "model": self.model if running else None,
-                "port": self.config["llama_port"], "managed": True}
+                "port": self.config["llama_port"], "managed": True,
+                "loading": self.loaded_settings if running else None}
 
     async def start(self, model_id):
         async with self.lock:
-            if self.status()["running"] and self.model == model_id:
+            loading = self.profile(model_id)["loading"]
+            if self.status()["running"] and self.model == model_id and self.loaded_settings == loading:
                 self.last_used = time.time()
                 return
             found = next((m for m in self.catalog() if m["id"] == model_id), None)
             if not found:
                 raise ValueError("Seleziona un modello GGUF presente nel catalogo locale")
+            validate_model(found["id"])
             await self.stop()
-            executable = Path(self.config["llama_executable"])
-            if not executable.is_absolute():
-                executable = self.root / executable
+            executable = self.executable_path()
             if not executable.is_file():
-                raise ValueError("llama-server non installato: controlla config.local.json")
+                raise ValueError("Manca il motore llama.cpp: metti llama-server.exe e le sue DLL in runtime/llama, oppure configura un'API remota")
             with socket.socket() as sock:
                 if sock.connect_ex(("127.0.0.1", self.config["llama_port"])) == 0:
                     raise ValueError("Porta llama.cpp occupata da un altro processo; non lo terminerò")
             args = [str(executable), "-m", found["id"], "--host", "127.0.0.1",
-                    "--port", str(self.config["llama_port"]), "-c", str(self.config["context_size"]),
-                    "-ngl", str(self.config["gpu_layers"]), "--parallel", "1",
+                    "--port", str(self.config["llama_port"]), "-c", str(loading["context_size"]),
+                    "-ngl", str(loading["gpu_layers"]), "--parallel", "1",
+                    "--threads", str(loading["threads"]), "--batch-size", str(loading["batch_size"]),
+                    "--ubatch-size", str(loading["ubatch_size"]), "--flash-attn", loading["flash_attention"],
+                    "--cache-type-k", loading["cache_type_k"], "--cache-type-v", loading["cache_type_v"],
+                    "--load-mode", loading["load_mode"], "--n-cpu-moe", str(loading["cpu_moe_layers"]),
                     "--alias", "h3-slides-local", "--jinja", "--no-webui"]
             if found["mmproj"]:
                 args += ["--mmproj", found["mmproj"]]
@@ -124,6 +173,7 @@ class LlamaManager:
                                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
             self.guard.assign(self.process)
             self.model = model_id
+            self.loaded_settings = loading
             try:
                 async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=3)) as session:
                     for _ in range(240):
@@ -156,6 +206,7 @@ class LlamaManager:
             self.log.close()
             self.log = None
         self.model = None
+        self.loaded_settings = None
 
 
 class LLM:
@@ -167,10 +218,11 @@ class LLM:
             await self.manager.start(self.provider.model)
             self.url = f"http://127.0.0.1:{self.manager.config['llama_port']}/v1"
             self.model = "h3-slides-local"
+            self.sampling = self.manager.profile(self.provider.model)["inference"]
         else:
             parsed = urlparse(self.provider.base_url)
             if not self.provider.remote_consent:
-                raise ValueError("Conferma l'invio dei documenti al provider remoto")
+                raise ValueError("Conferma l'invio del prompt e degli eventuali allegati al provider remoto")
             if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
                 raise ValueError("API remota: usa un URL HTTPS senza credenziali, query o frammenti")
             if not self.provider.model:
@@ -179,6 +231,10 @@ class LLM:
             self.model = self.provider.model
 
     async def json(self, prompt, schema=None, images=None):
+        if schema:
+            # Grammar constrains tokens but does not tell the model what the
+            # fields mean. Include the contract in the actual conversation too.
+            prompt = "Schema JSON richiesto:\n" + json.dumps(schema, ensure_ascii=False) + "\n\n" + prompt
         content = [{"type": "text", "text": prompt}]
         if images:
             if not self.provider.vision:
@@ -187,12 +243,21 @@ class LLM:
                 content.append({"type": "text", "text": label})
                 data = base64.b64encode(path.read_bytes()).decode()
                 content.append({"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + data}})
+        sampling = getattr(self, "sampling", InferenceSettings().model_dump())
         body = {"model": self.model, "messages": [{"role": "system", "content": SYSTEM},
-                {"role": "user", "content": content}], "temperature": 0.35,
-                "max_tokens": 3500, "stream": False}
+                {"role": "user", "content": content}], "temperature": sampling["temperature"],
+                "top_p": sampling["top_p"], "max_tokens": sampling["max_tokens"], "stream": False}
         # Local llama.cpp supports constrained JSON decoding. Remote APIs vary.
-        if self.provider.mode == "local" and schema:
-            body["response_format"] = {"type": "json_object", "schema": schema}
+        if self.provider.mode == "local":
+            # Bounded document extraction needs the final JSON, not a long
+            # reasoning channel consuming the entire completion budget.
+            body.update({k: sampling[k] for k in ("top_k", "min_p", "repeat_penalty", "seed")})
+            body["chat_template_kwargs"] = {"enable_thinking": sampling["thinking"]}
+            if not sampling["thinking"]:
+                body["reasoning_effort"] = "none"
+            body["response_format"] = {"type": "json_object"}
+            if schema:
+                body["response_format"]["schema"] = schema
         headers = {"Authorization": "Bearer " + self.provider.api_key} if self.provider.mode == "remote" and self.provider.api_key else {}
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=360)) as session:
             async with session.post(self.url + "/chat/completions", json=body, headers=headers) as response:
@@ -201,6 +266,12 @@ class LLM:
                     raise RuntimeError(f"LLM HTTP {response.status}: verifica modello, supporto vision, contesto e credenziali")
                 result = await response.json()
         self.manager.last_used = time.time()
+        usage = result.get("usage", {})
+        logging.info("LLM completato: input=%s output=%s finish=%s",
+                     usage.get("prompt_tokens"), usage.get("completion_tokens"),
+                     result.get("choices", [{}])[0].get("finish_reason"))
+        if result.get("choices", [{}])[0].get("finish_reason") == "length":
+            raise ValueError("Risposta LLM troncata dal limite di token; riduci il contenuto richiesto")
         try:
             raw = result["choices"][0]["message"]["content"]
             return parse_json(raw)

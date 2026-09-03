@@ -96,11 +96,17 @@ class FakeLLM:
         if "Estrai fatti" in prompt:
             return {"summary": "Fonte: energia."}
         if "Proponi esattamente" in prompt:
+            assert schema["properties"]["slides"]["minItems"] == 2
+            assert schema["properties"]["slides"]["maxItems"] == 2
+            assert schema["properties"]["slides"]["items"]["additionalProperties"] is False
             return {"slides": [{"title": "Introduzione"}, {"title": "Conclusione"}]}
         if self.entered:
             self.entered.set()
             await self.release.wait()
-        return SlideContent(title="Titolo dal modello", bullets=["Un punto documentato"]).model_dump()
+        return SlideContent(title="Titolo dal modello", blocks=[
+            {"heading":"Spiegazione", "text":"Una spiegazione completa presenta il concetto e lo collega alle sue conseguenze. Il lettore può così capire non soltanto che cosa accade, ma anche perché accade, grazie a frasi collegate e a un esempio concreto."},
+            {"heading":"Un esempio", "kind":"example", "text":"Un caso concreto permette di applicare il concetto a una situazione riconoscibile. Si osserva prima la condizione iniziale, poi si descrive il cambiamento e infine si spiega il risultato, senza saltare i passaggi importanti."}
+        ]).model_dump()
 
 
 def request():
@@ -153,3 +159,91 @@ async def test_duplicate_job_rejected_and_cancel(store):
         worker.submit(p["id"], request())
     await worker.close()
     assert store.job(job["id"])["status"] == "interrupted"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["local", "remote"])
+async def test_prompt_only_generation_and_regeneration(store, mode):
+    p = store.create(ProjectInput(prompt="La rivoluzione francese", count=2,
+                                  use_manim_diagrams=True).model_dump())
+    prompts = []
+    class KnowledgeLLM(FakeLLM):
+        async def json(self, prompt, **kwargs):
+            prompts.append(prompt)
+            assert "MODALITÀ CONOSCENZA DEL MODELLO" in prompt
+            assert not kwargs.get("images")
+            if "Proponi esattamente" in prompt:
+                return await super().json(prompt, **kwargs)
+            generated = await super().json(prompt, **kwargs)
+            return SlideContent(title="La rivoluzione francese", blocks=generated["blocks"],
+                                notes="n"*6000, sources=["Un libro mai allegato, p. 42"],
+                                image_id="immagine-inventata.jpg",
+                                diagram={"kind":"flow", "labels":["Crisi", "Rivoluzione"]}).model_dump()
+    worker = Worker(store, SimpleNamespace())
+    worker.clients = KnowledgeLLM
+    req = Generation(provider={"mode":mode, "model":"fake"}, prompt="La rivoluzione francese", count=2)
+    job = worker.submit(p["id"], req)
+    await worker.tasks[job["id"]]
+    assert store.job(job["id"])["status"] == "completed"
+    assert store.job(job["id"])["source_mode"] == "knowledge"
+    generated = store.project(p["id"])
+    assert len(generated["slides"]) == 2
+    for s in generated["slides"]:
+        c = s["content"]
+        assert c["sources"] == [] and c["image_id"] == ""
+        assert c["notes"].startswith("Origine: conoscenza del modello")
+        assert len(c["notes"]) <= 6000
+        assert c["diagram"]["kind"] == "flow"
+    assert len(prompts) == 3  # No document analysis or RAG LLM requests.
+    sid = generated["slides"][0]["id"]
+    req = req.model_copy(update={"slide_id": sid, "prompt": "Spiega meglio le cause"})
+    regenerated = worker.submit(p["id"], req)
+    await worker.tasks[regenerated["id"]]
+    assert store.job(regenerated["id"])["status"] == "completed"
+    assert store.project(p["id"])["slides"][0]["revision"] == 2
+    assert "Spiega meglio le cause" in prompts[-1]
+
+
+def test_blank_topic_is_rejected():
+    with pytest.raises(ValueError, match="Scrivi un argomento"):
+        Generation(provider={"model":"fake"}, prompt=" \n\t ")
+
+
+@pytest.mark.asyncio
+async def test_prose_repair_before_save(store):
+    p = project(store)
+    class RepairLLM(FakeLLM):
+        async def json(self, prompt, **kwargs):
+            result = await super().json(prompt, **kwargs)
+            if "Crea UNA slide" in prompt and "CORREGGI IL TENTATIVO" not in prompt:
+                result["blocks"][0]["text"] = result["blocks"][0]["text"].rstrip(".")
+            return result
+    worker = Worker(store, SimpleNamespace())
+    worker.clients = RepairLLM
+    job = worker.submit(p["id"], request())
+    await worker.tasks[job["id"]]
+    assert store.job(job["id"])["status"] == "completed"
+    assert sum("Correzione del testo" in e["message"] for e in store.job(job["id"])["events"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_standalone_image_uses_vision_without_book_structure(store):
+    p = store.create(ProjectInput(prompt="Spiega il diagramma nell'immagine", count=2).model_dump())
+    raw = io.BytesIO()
+    Image.new("RGB", (100, 100)).save(raw, format="PNG")
+    p["sources"] = [ingest(store, p["id"], "diagramma.png", raw.getvalue())]
+    store.save_project(p)
+    seen = []
+    class ImageLLM(FakeLLM):
+        async def json(self, prompt, **kwargs):
+            if kwargs.get("images"):
+                seen.extend(kwargs["images"])
+                return {"summary":"Nell'immagine è presente un diagramma."}
+            return await super().json(prompt, **kwargs)
+    worker = Worker(store, SimpleNamespace())
+    worker.clients = ImageLLM
+    job = worker.submit(p["id"], request())
+    await worker.tasks[job["id"]]
+    assert store.job(job["id"])["status"] == "completed"
+    assert len(seen) == 1
+    assert seen[0][0] == "diagramma.png"

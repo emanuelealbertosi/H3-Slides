@@ -4,25 +4,65 @@
 <body>
 <header><a class="brand" href="/">H3<span>slides</span><small>STUDIO</small></a>
 <nav><button id="new" class="quiet">＋ Nuovo progetto</button><select id="project-list" aria-label="Progetti salvati"><option value="">I tuoi progetti</option></select></nav>
-<span id="connection" class="muted">Connessione…</span></header>
+<button id="open-admin" class="quiet">Admin · Modelli</button><span id="connection" class="muted">Connessione…</span></header>
 <main>
 <aside class="settings">
-  <div class="eyebrow">01 / IL TUO BRIEF</div><h2>Dalle fonti<br>alla presentazione.</h2>
+  <div class="eyebrow">01 / IL TUO BRIEF</div><h2>Da un’idea o un documento<br>alla presentazione.</h2>
   <label>Titolo<input id="title" value="Nuova presentazione" maxlength="140"></label>
-  <label>Cosa vuoi raccontare?<textarea id="prompt" rows="5" placeholder="Indica pubblico, obiettivo, tono e contenuti da mettere in risalto."></textarea></label>
+  <label>Argomento o istruzioni<textarea id="prompt" rows="5" placeholder="Es. La rivoluzione francese. Puoi aggiungere pubblico, obiettivo e tono, oppure istruzioni sui documenti allegati."></textarea></label>
+  <p id="source-mode" class="muted hint">Nessun allegato: genera dalla conoscenza del modello. Nessuna ricerca web; verifica fatti e date importanti.</p>
   <div class="row"><label>Slide<input id="count" type="number" min="1" max="30" value="6"></label>
   <label>Tema<select id="theme"><option value="ink">Inchiostro</option><option value="paper">Carta</option><option value="forest">Foresta</option></select></label></div>
+  <details class="model-panel" open><summary>Layout e stile</summary>
+  <label>Template<select id="template"><option value="auto">Automatico, in base ai contenuti</option><option value="editorial">Editoriale</option><option value="cards">Schede</option><option value="steps">Sequenza numerata</option><option value="split">Due colonne</option><option value="minimal">Essenziale</option></select></label>
+  <div class="row"><label>Sfondo<input id="background-color" type="color" value="#141b2c"></label><label>Accento<input id="accent-color" type="color" value="#b1f1ce"></label></div>
+  <label>Font<select id="font"><option>Arial</option><option>Calibri</option><option>Segoe UI</option><option>Georgia</option><option>Verdana</option><option>Consolas</option></select></label>
+  <label>Quantità di testo da generare<select id="text-density"><option value="brief">Accenni · 3 punti essenziali</option><option value="detailed" selected>Approfondito · paragrafi in box</option><option value="complete">Completo · paragrafi estesi ed esempi</option></select></label>
+  <small>Da 1 a 4 paragrafi, impaginati secondo il contenuto. Automatico alterna composizioni pertinenti: confronti, sequenze, griglie, approfondimenti e immagini. Il composer misura lo spazio senza cancellare i tuoi testi.</small>
+  <small>Template, font e colori aggiornano subito l’anteprima. Salva per conservarli. La quantità di testo vale per nuove slide e rigenerazioni; non elimina i testi già modificati.</small>
+  </details>
+  <details class="model-panel"><summary>Creatore di temi</summary>
+  <label>Combinazioni pronte<select id="theme-presets"><option value="">Personalizzato / tema corrente</option></select></label>
+  <div id="theme-editor"></div><p id="theme-contrast" class="hint"></p>
+  <small>Automatico sceglie testo chiaro/scuro per contrasto, anche sui box. Le dimensioni sono in pixel: 0 lascia il layout adattivo. Testi più grandi possono richiedere meno contenuto.</small>
+  <label>Nome del tema personale<input id="theme-name" maxlength="60" placeholder="Es. Lezioni di informatica"></label>
+  <button type="button" id="save-theme" class="quiet">Salva tema riutilizzabile</button>
+  <p id="theme-status" class="hint"></p></details>
   <button id="save-project" class="secondary">Salva brief</button>
-  <label class="dropzone">＋ Aggiungi documenti<input id="files" type="file" accept=".pdf,.md,.txt,.png,.jpg,.jpeg,.webp" multiple><small>PDF, Markdown, immagini · max 30 MB/file</small></label>
+  <label class="dropzone">＋ Aggiungi documenti · facoltativo<input id="files" type="file" accept=".pdf,.md,.txt,.png,.jpg,.jpeg,.webp" multiple><small>PDF, Markdown, immagini: report, appunti, libri, schermate.<br>Puoi anche non allegare nulla e scrivere solo un argomento.</small></label>
+  <label>Uso dei PDF allegati<select id="pdf-scope"><option value="auto">Cerca le pagine pertinenti dal prompt</option><option value="whole">Documento intero · anche senza indice</option></select><small>Per una sezione indica capitolo, argomento o lezione. Documento intero legge tutte le pagine; i PDF lunghi richiedono più tempo. Scansioni: serve vision o OCR.</small></label>
   <div id="sources"></div>
+  <details class="model-panel" open><summary>Ricerca web · gratuita e facoltativa</summary>
+  <label class="check"><input id="web-enabled" type="checkbox">Integra fonti dal web</label>
+  <div id="web-options" hidden>
+  <label>Motore<select id="web-provider"><option value="searxng">SearXNG locale</option><option value="duckduckgo">DuckDuckGo · sperimentale, senza installazioni</option></select></label>
+  <label>Query da inviare al motore<input id="web-query" maxlength="200" placeholder="Es. rivoluzione francese cause 1789"></label>
+  <label>Numero massimo di fonti<select id="web-max-sources"><option value="3">3 · più rapido</option><option value="4">4</option><option value="5">5 · più fonti</option></select></label>
+  <small>Al motore inviamo solo questa query, non il documento allegato. L'app legge pagine pubbliche, conserva gli estratti sul PC e li passa al modello scelto. SearXNG è locale ma consulta motori online. Nessuna API a pagamento; CAPTCHA e limiti vengono rispettati.</small>
+  <label class="check"><input id="web-consent" type="checkbox">Autorizzo questa query e la lettura delle pagine trovate.</label>
+  <label class="check"><input id="web-refresh" type="checkbox">Aggiorna le fonti, senza riusare la cache di un’ora</label>
+  </div>
+  <details><summary>Configura SearXNG su questo computer</summary>
+  <label>Indirizzo locale<input id="searxng-url" type="url" value="http://127.0.0.1:8080"></label>
+  <button id="save-search-settings" type="button" class="quiet">Salva indirizzo locale</button>
+  <small id="search-settings-status">Configurazione locale, esclusa da Git. L’app non avvia né ferma istanze SearXNG esterne.</small>
+  </details><div id="web-sources"></div>
+  </details>
+  <details class="model-panel" open><summary>Materiale visivo</summary>
+  <label class="check"><input id="source-images" type="checkbox" checked>Usa immagini del libro/documento</label>
+  <label class="check"><input id="manim-diagrams" type="checkbox">Integra diagrammi animabili con Manim</label>
+  <small>Salva il brief per applicare le opzioni anche alle slide esistenti. I riferimenti restano conservati.<br>Flussi, cicli e confronti: anteprima rapida, animati nell’export Manim, statici in PPTX/PDF. Il diagramma ha priorità sulla figura quando presenti entrambi.</small>
+  </details>
   <details class="model-panel" open><summary>02 / MODELLO AI</summary>
   <label>Provider<select id="provider"><option value="local">llama.cpp integrato</option><option value="remote">API remota (compatibile OpenAI)</option></select></label>
   <div id="local-fields"><label>Modello GGUF<select id="model"><option value="">Caricamento catalogo…</option></select></label>
+  <button id="add-local-model" class="secondary" type="button">Scegli GGUF dal disco…</button>
+  <p id="model-warning" role="status" class="layout-warning" hidden></p>
   <div class="row"><button id="refresh-models" class="quiet">Aggiorna</button><button id="unload" class="quiet">Scarica LLM</button></div><small id="llama-status"></small></div>
   <div id="remote-fields" hidden><label>Base URL API<input id="api-url" type="url" placeholder="https://provider.example/v1"></label>
   <label>Modello<input id="api-model" placeholder="Identificativo del modello"></label>
   <label>API key<input id="api-key" type="password" autocomplete="off" placeholder="Solo in memoria, mai salvata"></label>
-  <label class="check"><input id="consent" type="checkbox">Autorizzo l'invio delle fonti a questo provider.</label></div>
+  <label class="check"><input id="consent" type="checkbox">Autorizzo l'invio del prompt e degli eventuali allegati a questo provider.</label></div>
   <label class="check"><input id="vision" type="checkbox" checked>Vision per immagini e PDF scansionati</label>
   </details>
   <button id="generate" class="primary">Genera presentazione <span>→</span></button>
@@ -36,20 +76,41 @@
   <div class="toolbar"><span id="slide-count">0 slide</span><div class="export-group">
   <button data-export="pptx" class="secondary">↓ PPTX modificabile</button><button data-export="pdf" class="secondary">↓ PDF</button>
   <button id="open-slidev" class="quiet">Apri Slidev live</button><button data-export="slidev" class="quiet">Sorgenti Slidev</button><button data-export="manim" class="quiet">Manim video + slide</button></div></div>
-  <div id="empty"><div class="empty-mark">H3 /</div><h2>Un documento.<br>Una storia da presentare.</h2><p>Carica le fonti, scegli il modello e descrivi il risultato.<br>Qui vedrai crescere il tuo deck, slide dopo slide.</p></div>
+  <div id="empty"><div class="empty-mark">H3 /</div><h2>Un’idea.<br>Una storia da presentare.</h2><p>Scrivi un argomento oppure aggiungi PDF, testi o immagini.<br>Scegli il modello e genera: qui vedrai crescere la presentazione.</p></div>
   <div id="slides"></div>
-  <p class="muted hint">PPTX: testi modificabili. PDF: statico. Slidev: sorgenti web. Manim: preset animato, video e HTML.</p>
+  <p class="muted hint">Ogni slide ha una composizione preferita e Ricomponi cambia il layout senza usare l’LLM. Se necessario il motore adatta la disposizione allo spazio. Formato 16:9 per proiezione e PowerPoint. PPTX: testi modificabili. PDF e Slidev: stessa impaginazione. Manim video: preset animato separato.</p>
 </section>
 </main>
 <dialog id="editor"><form id="edit-form"><div class="editor-head"><h2>Modifica slide</h2><button type="button" id="close-editor" class="quiet">Chiudi</button></div>
 <label>Titolo<input id="edit-title" maxlength="110" required></label><label>Sottotitolo<textarea id="edit-subtitle" maxlength="220" rows="2"></textarea></label>
 <label>Contenuto · un punto per riga, massimo 5<textarea id="edit-bullets" rows="6"></textarea></label>
+<section class="blocks-editor"><h3>Paragrafi e riquadri</h3><p class="muted hint">I box sostituiscono l’elenco nella slide. I vecchi punti restano conservati. Doppio clic sui testi in anteprima per modificarli direttamente.</p><div id="edit-blocks"></div><button id="add-block" type="button" class="secondary">＋ Aggiungi box</button></section>
 <div class="row"><label>Layout<select id="edit-layout"><option value="cover">Copertina</option><option value="content">Contenuto</option><option value="split">Testo + immagine</option><option value="statement">Messaggio</option></select></label>
 <label>Animazione Manim<select id="edit-animation"><option value="none">Una pausa per slide</option><option value="reveal">Una pausa per punto</option></select></label></div>
 <label>Immagine dalla fonte<select id="edit-image"></select></label>
+<label>Diagramma Manim<select id="edit-diagram-kind"><option value="none">Nessuno</option><option value="flow">Flusso / sequenza</option><option value="cycle">Ciclo</option><option value="comparison">Confronto</option></select></label>
+<label>Elementi del diagramma · uno per riga, da 2 a 5<textarea id="edit-diagram-labels" rows="4" placeholder="Sorgente .py&#10;Bytecode&#10;Macchina virtuale"></textarea></label>
 <label>Note del relatore<textarea id="edit-notes" rows="4"></textarea></label>
 <label>Fonti · una per riga<textarea id="edit-sources" rows="2"></textarea></label>
 <p class="muted">La tua modifica è protetta anche se l'LLM sta lavorando su questa slide.</p>
 <button class="primary" type="submit">Salva modifica</button><p id="edit-error" role="alert"></p></form></dialog>
 <div id="toast" role="status" hidden></div>
+<dialog id="model-setup" aria-labelledby="model-setup-title">
+<div class="editor-head"><h2 id="model-setup-title">Configura il modello locale</h2><button id="close-model-setup" type="button" class="quiet">Configura dopo</button></div>
+<p id="model-setup-reason">Scegli un modello GGUF gia presente sul disco.</p>
+<button id="browse-model" type="button" class="primary">Sfoglia file GGUF…</button>
+<p class="hint">La finestra si apre sul PC che esegue H3-Slides. Il modello viene collegato, non copiato o caricato nel browser. Nessun download automatico.</p>
+<label>Oppure incolla il percorso completo<input id="local-model-path" placeholder="Es. D:\Modelli\modello.gguf" autocomplete="off"></label>
+<button id="register-model" type="button" class="secondary">Usa questo file</button>
+<p id="model-setup-status" role="status"></p>
+<p class="hint">Scegli il modello principale, non mmproj. Per modelli suddivisi scegli 00001 e conserva tutte le parti nella stessa cartella. Il controllo del file non garantisce compatibilita o VRAM sufficiente.</p>
+<button id="setup-remote" type="button" class="quiet">Uso un'API remota, senza modello locale</button>
+</dialog>
+<dialog id="admin"><form id="admin-form"><div class="editor-head"><h2>Admin · Modelli e prestazioni</h2><button id="close-admin" class="quiet" type="button">Chiudi</button></div>
+<p class="muted hint">Profili locali per GGUF. Nessun modello viene scaricato. I file in models/ e nel catalogo configurato vengono rilevati automaticamente.</p>
+<label>Modello da configurare<select id="admin-model"></select></label>
+<h3>Caricamento</h3><p class="muted hint">GPU layers: -1 = massimo offload, 0 = CPU. Contesto e cache consumano memoria. MoE su CPU vale solo per modelli MoE.</p><div id="admin-loading" class="admin-grid"></div>
+<h3>Inferenza</h3><p class="muted hint">Per velocità e JSON strutturato, thinking disattivato è il default. Output troppo breve può interrompere una generazione.</p><div id="admin-inference" class="admin-grid"></div>
+<div class="row"><button class="secondary" type="submit">Salva profilo</button><button id="admin-load" class="primary" type="button">Carica / riavvia</button><button id="admin-stop" class="quiet" type="button">Scarica</button></div>
+<p id="admin-status" role="status"></p></form></dialog>
 <script type="module" src="/static/app.mjs"></script></body></html>

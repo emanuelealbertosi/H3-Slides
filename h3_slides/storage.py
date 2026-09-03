@@ -1,6 +1,7 @@
 import copy
 import json
 import sqlite3
+import subprocess
 import time
 import uuid
 from pathlib import Path
@@ -37,7 +38,7 @@ class Store:
         if table == "projects" and self.on_project_saved:
             try:
                 self.on_project_saved(item)
-            except OSError:
+            except (OSError, subprocess.SubprocessError):
                 import logging
                 logging.exception("Sincronizzazione Slidev non riuscita")
         return copy.deepcopy(item)

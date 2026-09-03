@@ -1,13 +1,17 @@
 {
   "name": "h3-slides",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
     "slidev": "slidev examples/slides.md --port 3031 --bind 127.0.0.1",
-    "test": "node --test tests/export.test.mjs"
+    "test": "node --test tests/export.test.mjs tests/composer.test.mjs"
+  },
+  "overrides": {
+    "dompurify": "3.4.14"
   },
   "dependencies": {
+    "image-size": "1.2.1",
     "@slidev/cli": "52.19.1",
     "@slidev/theme-default": "^0.25.0",
     "playwright-chromium": "1.62.1",
