@@ -33,6 +33,15 @@ class InferenceSettings(BaseModel):
     thinking: bool = False
 
 
+class RemoteInferenceSettings(BaseModel):
+    """Portable API parameters; None lets the server choose the output limit."""
+    model_config = ConfigDict(extra="forbid")
+    max_tokens: int | None = Field(default=3500, ge=128, le=131072)
+    temperature: float = Field(default=.35, ge=0, le=2)
+    top_p: float = Field(default=.95, gt=0, le=1)
+    timeout_seconds: int = Field(default=360, ge=30, le=3600)
+
+
 class ModelProfile(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model: str

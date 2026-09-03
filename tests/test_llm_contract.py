@@ -5,6 +5,7 @@ from aiohttp.test_utils import TestServer
 import pytest
 from h3_slides.llm import LLM
 from h3_slides.models import Provider
+from h3_slides.runtime_settings import RemoteInferenceSettings
 
 
 @pytest.mark.asyncio
@@ -46,3 +47,51 @@ async def test_truncated_json_is_reported_without_exposing_response():
         with pytest.raises(ValueError, match="troncata") as error:
             await client.json("Estrai i dati")
     assert "PRIVATE" not in str(error.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit", [12000, None])
+async def test_api_inference_reaches_server(limit, monkeypatch):
+    bodies, timeouts = [], []
+    import aiohttp
+    original = aiohttp.ClientSession
+    def session(**kwargs):
+        timeouts.append(kwargs["timeout"].total)
+        return original(**kwargs)
+    async def complete(request):
+        bodies.append(await request.json())
+        return web.json_response({"choices": [{"finish_reason": "stop", "message": {"content": '{"ok":true}'}}]})
+    app = web.Application()
+    app.router.add_post("/v1/chat/completions", complete)
+    async with TestServer(app) as server:
+        provider = Provider(mode="remote", model="test-api", remote_consent=True,
+                            base_url=str(server.make_url("/")),
+                            inference=RemoteInferenceSettings(max_tokens=limit, temperature=.6, top_p=.8, timeout_seconds=900))
+        client = LLM(provider, SimpleNamespace(last_used=0))
+        monkeypatch.setattr(aiohttp, "ClientSession", session)
+        await client.prepare()
+        assert await client.json("Synthetic content") == {"ok": True}
+    assert timeouts == [900]
+    body = bodies[0]
+    assert body["temperature"] == .6 and body["top_p"] == .8
+    assert body["model"] == "test-api"
+    if limit is None:
+        assert "max_tokens" not in body
+    else:
+        assert body["max_tokens"] == limit
+    assert not ({"timeout_seconds", "top_k", "min_p", "repeat_penalty", "chat_template_kwargs", "reasoning_effort"} & body.keys())
+
+
+@pytest.mark.parametrize("setting", [
+    {"max_tokens": 127}, {"max_tokens": 131073}, {"max_tokens": 200.5},
+    {"temperature": -1}, {"temperature": 3}, {"top_p": 0}, {"top_p": 1.1},
+    {"timeout_seconds": 29}, {"timeout_seconds": 3601}, {"unexpected": 1}
+])
+def test_invalid_api_inference_is_rejected(setting):
+    with pytest.raises(ValueError):
+        Provider(mode="remote", inference=setting)
+
+
+def test_legacy_api_request_defaults_are_preserved():
+    assert Provider(mode="remote").inference.model_dump() == {
+        "max_tokens": 3500, "temperature": .35, "top_p": .95, "timeout_seconds": 360}

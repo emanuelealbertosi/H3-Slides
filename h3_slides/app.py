@@ -416,6 +416,8 @@ def create_app(root=None, data_root=None):
         store.db.close()
 
     app.router.add_get("/", index)
+    app.router.add_get("/admin", index)
+    app.router.add_get("/admin/", index)
     app.router.add_get("/api/health", health)
     app.router.add_get("/api/models", models)
     app.router.add_post("/api/remote-models", remote_models)

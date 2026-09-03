@@ -33,10 +33,12 @@ try{
   await page.locator('#prompt').fill('Una modifica al brief ancora non salvata');
   await page.waitForTimeout(1800);
   assert.equal(await page.locator('#prompt').inputValue(),'Una modifica al brief ancora non salvata');
+  await page.locator('#open-admin').click();
   await page.locator('#provider').selectOption('remote');
   assert.ok(await page.locator('#remote-fields').isVisible());
   await page.locator('#provider').selectOption('local');
   assert.ok(await page.locator('#local-fields').isVisible());
+  await page.locator('#close-admin').click();
   assert.equal(await page.locator('.slide-card').count(),1);
   await page.locator('#template').selectOption('steps');
   await page.locator('#font').selectOption('Georgia');

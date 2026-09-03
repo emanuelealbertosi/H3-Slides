@@ -226,6 +226,7 @@ class LLM:
             if not self.provider.model:
                 raise ValueError("Inserisci il nome del modello remoto")
             self.model = self.provider.model
+            self.sampling = self.provider.inference.model_dump()
 
     async def json(self, prompt, schema=None, images=None):
         if schema:
@@ -243,7 +244,9 @@ class LLM:
         sampling = getattr(self, "sampling", InferenceSettings().model_dump())
         body = {"model": self.model, "messages": [{"role": "system", "content": SYSTEM},
                 {"role": "user", "content": content}], "temperature": sampling["temperature"],
-                "top_p": sampling["top_p"], "max_tokens": sampling["max_tokens"], "stream": False}
+                "top_p": sampling["top_p"], "stream": False}
+        if sampling["max_tokens"] is not None:
+            body["max_tokens"] = sampling["max_tokens"]
         # Local llama.cpp supports constrained JSON decoding. Remote APIs vary.
         if self.provider.mode == "local":
             # Bounded document extraction needs the final JSON, not a long
@@ -256,7 +259,7 @@ class LLM:
             if schema:
                 body["response_format"]["schema"] = schema
         headers = {"Authorization": "Bearer " + self.provider.api_key} if self.provider.mode == "remote" and self.provider.api_key else {}
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=360)) as session:
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=sampling.get("timeout_seconds", 360))) as session:
             async with session.post(self.url + "/chat/completions", json=body, headers=headers,
                                     allow_redirects=False) as response:
                 if 300 <= response.status < 400:
@@ -272,7 +275,10 @@ class LLM:
                      usage.get("prompt_tokens"), usage.get("completion_tokens"),
                      result.get("choices", [{}])[0].get("finish_reason"))
         if result.get("choices", [{}])[0].get("finish_reason") == "length":
-            raise ValueError("Risposta LLM troncata dal limite di token; riduci il contenuto richiesto")
+            limit = sampling["max_tokens"]
+            detail = f"limite richiesto: {limit} token" if limit is not None else "limite deciso dal server"
+            raise ValueError(f"Risposta LLM troncata ({detail}). Controlla il massimo token di output in "
+                             "Admin e il contesto/limite del server, oppure riduci il contenuto richiesto.")
         try:
             raw = result["choices"][0]["message"]["content"]
             return parse_json(raw)

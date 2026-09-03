@@ -1,5 +1,6 @@
 import {esc,slideHTML,slideCSS,themes,themeFor,blockColors,contrast,layouts,fitSlide} from './deck.mjs';
 import {createRemoteModelSelector} from './remote-models.mjs';
+import {createApiSettings} from './api-settings.mjs';
 const $=id=>document.getElementById(id);
 const layoutOptions=value=>'<option value="content">Automatico adattivo</option>'+Object.entries(layouts).map(([key,label])=>'<option value="'+key+'" '+(key===value?'selected':'')+'>'+label+'</option>').join('');
 $('edit-layout').innerHTML=layoutOptions('content');
@@ -7,6 +8,7 @@ const style=document.createElement('style');style.textContent=slideCSS;document.
 let current=null,projects=[],jobs=[],editing=null,job=null,busy=false,dragged=null;
 let polling=false;
 let modelInfo=null;
+let apiSettings=null,adminData=null,adminDirty=false,adminLoading=null;
 const modelNotices=new Set();
 const themeColors={text_color:'Testo principale',title_color:'Titoli',box_text_color:'Testo nei box',
   explanation_color:'Box spiegazione',example_color:'Box esempio',key_color:'Box da ricordare',
@@ -51,7 +53,9 @@ for(const id of preferenceIds) {
 function savePrefs(){
   const values={};for(const id of preferenceIds)values[id]=$(id).type==='checkbox'?$(id).checked:$(id).value;
   values['api-model']=remoteModels.value();values.remote_models=remoteModels.preferences();
+  apiSettings?.sync();values.api_profiles=apiSettings?.preferences()||pref.api_profiles||{};
   localStorage.setItem('h3slides-settings',JSON.stringify(values));
+  updateModelSummary();
 }
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('toast').hidden=true,7000)}
 async function api(url,method='GET',data,signal){
@@ -65,7 +69,8 @@ async function api(url,method='GET',data,signal){
 const design=()=>({...Object.fromEntries(Object.entries(designFields).map(([id,key])=>[key,$(id).type==='checkbox'?$(id).checked:$(id).value])),theme_design:readThemeDesign()});
 const brief=()=>({title:$('title').value,prompt:$('prompt').value,count:Number($('count').value),theme:$('theme').value,...design()});
 const provider=()=>({mode:$('provider').value,model:$('provider').value==='local'?$('model').value:remoteModels.value(),
-  base_url:$('api-url').value.trim(),api_key:$('api-key').value.trim(),remote_consent:$('consent').checked,vision:$('vision').checked});
+  base_url:$('api-url').value.trim(),api_key:$('api-key').value.trim(),remote_consent:$('consent').checked,vision:$('vision').checked,
+  ...($('provider').value==='remote'?{inference:apiSettings.value()}:{})});
 const remoteModels=createRemoteModelSelector({
   select:$('api-model'),refresh:$('refresh-remote-models'),status:$('remote-model-status'),
   manualToggle:$('api-model-manual'),manualInput:$('api-model-id'),
@@ -73,12 +78,34 @@ const remoteModels=createRemoteModelSelector({
   request:(config,signal)=>api('/api/remote-models','POST',config,signal),onSave:savePrefs,
   saved:pref.remote_models,legacy:{url:pref['api-url'],model:pref['api-model']},
 });
-function fields(){const remote=$('provider').value==='remote';$('remote-fields').hidden=!remote;$('local-fields').hidden=remote;remoteModels.activate(remote);savePrefs()}
+apiSettings=createApiSettings({
+  getSelection:()=>({url:$('api-url').value,model:remoteModels.value(),active:$('provider').value==='remote'}),
+  fields:{max_tokens:$('api-max-tokens'),temperature:$('api-temperature'),top_p:$('api-top-p'),timeout_seconds:$('api-timeout')},
+  serverTokens:$('api-server-tokens'),fieldset:$('api-inference-fields'),status:$('api-inference-status'),
+  saved:pref.api_profiles,onSave:savePrefs,
+});
+function updateModelSummary(){
+  const remote=$('provider').value==='remote';
+  const name=remote?remoteModels.value():$('model').selectedOptions[0]?.textContent;
+  $('active-model').textContent=(remote?'Server API':'llama.cpp integrato')+' · '+(name||'Da configurare in Admin');
+}
+function fields(){
+  const remote=$('provider').value==='remote';
+  $('remote-fields').hidden=!remote;$('local-fields').hidden=remote;
+  $('remote-inference').hidden=!remote;$('admin-form').hidden=remote;
+  remoteModels.activate(remote);savePrefs();
+}
 $('provider').addEventListener('change',fields);fields();
 $('provider').addEventListener('change',()=>{if($('provider').value==='local')models().catch(e=>toast(e.message))});
-for(const id of ['model','api-url','vision'])$(id).addEventListener('change',savePrefs);
+for(const id of ['api-url','vision'])$(id).addEventListener('change',savePrefs);
+$('model').addEventListener('change',()=>{
+  if(adminDirty&&!confirm('Scartare le modifiche al profilo locale prima di cambiare modello?')){
+    $('model').value=$('model').dataset.previous||'';return;
+  }
+  adminDirty=false;$('model').dataset.previous=$('model').value;savePrefs();loadAdmin();
+});
 for(const id of ['api-url','api-key']){
-  $(id).addEventListener('input',()=>{remoteModels.invalidate();if(id==='api-url')$('consent').checked=false});
+  $(id).addEventListener('input',()=>{remoteModels.invalidate();apiSettings.sync();updateModelSummary();if(id==='api-url')$('consent').checked=false});
   $(id).addEventListener('change',()=>remoteModels.load());
 }
 for(const id of ['title','prompt','count','theme'])$(id).addEventListener('input',()=>{drafts.add('brief');$('save-status').textContent='Brief non salvato'});
@@ -116,13 +143,15 @@ $('new').onclick=async()=>{
   if(drafts.size&&!confirm('Lasciare le modifiche non salvate?'))return;
   current=null;drafts.clear();$('title').value='Nuova presentazione';$('prompt').value='';$('project-list').value='';
   $('web-enabled').checked=false;$('web-query').value='';$('web-consent').checked=false;$('web-refresh').checked=false;render();
+  navigatePage(false);
 };
-$('project-list').onchange=e=>e.target.value&&selectProject(e.target.value).catch(e=>toast(e.message));
+$('project-list').onchange=e=>e.target.value&&selectProject(e.target.value).then(()=>navigatePage(false)).catch(e=>toast(e.message));
 $('files').onchange=async e=>{
   const files=[...e.target.files];e.target.value='';if(!files.length)return;
   try{await saveProject();for(const file of files){const form=new FormData();form.append('file',file);toast('Lettura di '+file.name+'…');current=await api('/api/projects/'+current.id+'/sources','POST',form)}render();toast('Fonti aggiunte')}catch(error){toast(error.message)}
 };
 function openModelSetup(reason='Scegli un modello GGUF gia presente sul disco.'){
+  navigatePage(true);
   $('model-setup-reason').textContent=reason;$('model-setup-status').textContent='';
   if(!$('model-setup').open)$('model-setup').showModal();
 }
@@ -142,6 +171,9 @@ async function models(preferred=null){
     modelNotices.add(missing);openModelSetup(missing);
   }
   $('llama-status').textContent=data.status.running?'llama.cpp caricato · porta '+data.status.port:'Avvio integrato alla generazione · scarico dopo 5 minuti inattivi';
+  $('model').dataset.previous=$('model').value;
+  updateModelSummary();
+  if(!$('admin').hidden&&!adminDirty)await loadAdmin();
 }
 $('add-local-model').onclick=()=>openModelSetup();
 $('close-model-setup').onclick=()=>$('model-setup').close();
@@ -165,16 +197,22 @@ async function generate(slideId=null){
   if(busy)return;busy=true;$('generate').disabled=true;
   try{
     await finishInlineEdits();
+    if($('provider').value==='local'&&adminDirty){
+      navigatePage(true);throw new Error('Salva il profilo llama.cpp modificato in Admin prima di generare.');
+    }
     if(!current||drafts.has('brief'))await saveProject();
     if($('provider').value==='local')await models();
-    else remoteModels.requireSelection();
+    else try{remoteModels.requireSelection();apiSettings.value()}catch(error){navigatePage(true);throw error}
     const selected=provider();
     if(!selected.model){
       if(selected.mode==='local')openModelSetup('Prima di generare, scegli un modello GGUF dal disco.');
       throw new Error('Seleziona un modello');
     }
-    if(selected.mode==='local'&&modelInfo?.runtime_available===false)throw new Error($('model-warning').textContent);
-    if(selected.mode==='remote'&&!selected.remote_consent)throw new Error('Conferma l’invio del prompt e degli eventuali allegati al provider remoto');
+    if(selected.mode==='local'&&modelInfo?.runtime_available===false){navigatePage(true);throw new Error($('model-warning').textContent)}
+    if(selected.mode==='remote'&&!selected.remote_consent){
+      navigatePage(true);$('consent').focus();
+      throw new Error('In Admin autorizza l’invio al server scelto, poi torna a Crea e premi Genera.');
+    }
     if(current.web_enabled&&!$('web-consent').checked)throw new Error('Conferma la query da inviare al motore di ricerca');
     savePrefs();
     const instructions=slideId?prompt('Istruzioni per rigenerare questa slide:',current.prompt):$('prompt').value;
@@ -418,10 +456,12 @@ async function init(){
 }
 init();
 
-let adminData=null;
 const adminLabels={context_size:'Contesto (token)',gpu_layers:'Layer sulla GPU',threads:'Thread CPU',batch_size:'Batch logico',ubatch_size:'Micro-batch',flash_attention:'Flash Attention',cache_type_k:'Cache K',cache_type_v:'Cache V',load_mode:'Modalità di caricamento',cpu_moe_layers:'Layer MoE da tenere su CPU',temperature:'Temperatura',top_p:'Top-p',top_k:'Top-k',min_p:'Min-p',repeat_penalty:'Penalità ripetizione',max_tokens:'Massimo token di output',seed:'Seed (-1 = casuale)',thinking:'Ragionamento esteso (thinking)'};
 function fillAdmin(){
-  const profile=adminData.profiles[$('admin-model').value];if(!profile)return;
+  const profile=adminData.profiles[$('admin-model').value];
+  $('admin-form').querySelectorAll('button').forEach(button=>button.disabled=!profile);
+  if(!profile){$('admin-loading').replaceChildren();$('admin-inference').replaceChildren();$('admin-status').textContent='Aggiungi un GGUF per configurare il profilo locale.';return}
+  adminDirty=false;$('admin-model').dataset.previous=profile.model;
   for(const group of ['loading','inference']){
     $('admin-'+group).innerHTML=Object.entries(adminData[group+'_schema'].properties).map(([key,schema])=>{
       const value=profile[group][key],name=group+'.'+key;let input;
@@ -434,13 +474,41 @@ function fillAdmin(){
   }
   $('admin-status').textContent=adminData.status.running?'Modello attualmente caricato: '+adminData.status.model:'Nessun modello caricato.';
 }
-$('open-admin').onclick=async()=>{
-  try{adminData=await api('/api/admin/llm');$('admin-model').innerHTML=adminData.models.map(m=>'<option value="'+esc(m.id)+'">'+esc(m.name)+' · '+m.size_gb+' GB</option>').join('');
-    if(adminData.profiles[$('model').value])$('admin-model').value=$('model').value;fillAdmin();$('admin').showModal();
-  }catch(error){toast(error.message)}
+async function loadAdmin(){
+  if(adminDirty)return;
+  if(adminLoading)return adminLoading;
+  adminLoading=(async()=>{
+    const fresh=await api('/api/admin/llm');
+    if(adminDirty)return;
+    adminData=fresh;$('admin-model').innerHTML=adminData.models.map(m=>'<option value="'+esc(m.id)+'">'+esc(m.name)+' · '+m.size_gb+' GB</option>').join('');
+    if(adminData.profiles[$('model').value])$('admin-model').value=$('model').value;
+    fillAdmin();
+  })().catch(error=>{$('admin-status').textContent=error.message}).finally(()=>{adminLoading=null});
+  return adminLoading;
+}
+function navigatePage(admin,push=true){
+  $('admin').hidden=!admin;$('create-page').hidden=admin;
+  $('open-admin').setAttribute('aria-current',admin?'page':'false');
+  $('open-create').setAttribute('aria-current',admin?'false':'page');
+  document.title=admin?'Admin · H3-slides':'H3-slides · Studio';
+  const path=admin?'/admin':'/';
+  if(push&&location.pathname!==path)history.pushState({},'',path+location.search);
+  if(admin)loadAdmin();else{render();requestAnimationFrame(()=>window.dispatchEvent(new Event('resize')))}
+}
+$('open-admin').onclick=()=>navigatePage(true);
+$('configure-model').onclick=()=>navigatePage(true);
+$('open-create').onclick=$('close-admin').onclick=()=>navigatePage(false);
+document.querySelector('.brand').onclick=event=>{event.preventDefault();navigatePage(false)};
+window.addEventListener('popstate',()=>navigatePage(location.pathname.replace(/\/$/,'')==='/admin',false));
+$('admin-form').addEventListener('input',event=>{
+  if(event.target.dataset.setting){adminDirty=true;$('admin-status').textContent='Profilo modificato · premi Salva profilo prima di generare.'}
+});
+window.addEventListener('beforeunload',event=>{if(adminDirty){event.preventDefault();event.returnValue=''}});
+$('admin-model').onchange=()=>{
+  if(adminDirty&&!confirm('Scartare le modifiche non salvate a questo profilo?')){$('admin-model').value=$('admin-model').dataset.previous;return}
+  fillAdmin();
 };
-$('admin-model').onchange=fillAdmin;
-$('close-admin').onclick=()=>$('admin').close();
+navigatePage(location.pathname.replace(/\/$/,'')==='/admin',false);
 async function saveAdmin(){
   const profile={model:$('admin-model').value,loading:{},inference:{}};
   for(const input of $('admin').querySelectorAll('[data-setting]')){
@@ -448,7 +516,8 @@ async function saveAdmin(){
     profile[group][key]=input.type==='checkbox'?input.checked:input.type==='number'?Number(input.value):input.value;
   }
   const saved=await api('/api/admin/llm','POST',profile);adminData.profiles[saved.model]=saved;
-  $('model').value=saved.model;savePrefs();
+  adminDirty=false;
+  $('model').value=saved.model;$('model').dataset.previous=saved.model;savePrefs();
   $('admin-status').textContent='Profilo salvato. Caricamento applicato al prossimo Carica/Genera; nessun processo riavviato ora.';
   return saved;
 }

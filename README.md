@@ -51,7 +51,14 @@ Se il catalogo locale e vuoto, l'app apre **Configura il modello locale**:
 3. Se si preferisce un provider remoto, scegliere **Uso un'API remota**.
    **Configura dopo** permette di usare l'editor senza caricare alcun modello.
 
-Per un **Server API (LM Studio o provider remoto)**, inserire la **Base URL API**
+Tutta la configurazione LLM e nella pagina **Admin**, accessibile dal menu o
+dal percorso **/admin**: provider, modello, Vision, connessione e inferenza.
+Passare da Crea ad Admin non ricarica la pagina e conserva il brief non salvato
+e la chiave in memoria. Un vero ricaricamento richiede di reinserire la chiave
+e confermare nuovamente il consenso. Admin e una pagina di impostazioni,
+non un'area con autenticazione separata: non esporre l'app su reti non fidate.
+
+Per un **Server API (LM Studio o provider remoto)**, in Admin inserire la **Base URL API**
 e la chiave, solo se richiesta dal server. LM Studio gia avviato sullo stesso PC
 accetta **http://localhost:1234** oppure **http://127.0.0.1:1234/v1**: per localhost
 e IP privati, se l'indirizzo non contiene un percorso viene aggiunto /v1.
@@ -65,6 +72,20 @@ in memoria e va reinserita dopo un ricaricamento. Il catalogo non invia prompt
 o allegati e non genera contenuti. Scegliere un modello per chat e verificare
 se supporta Vision. Se il server non espone il catalogo, usare **Alternativa:
 ID manuale**. Errori di connessione o autenticazione non vengono nascosti.
+
+**Inferenza API** permette di scegliere massimo token di output (128–131072),
+temperatura, top-p e timeout per risposta (30–3600 secondi). Il default resta
+3500 token, temperatura 0.35, top-p 0.95 e timeout 360 secondi. Con
+**Lascia il limite di output al server** la richiesta omette max_tokens.
+I valori validi si salvano automaticamente in questo browser per coppia
+indirizzo/modello, anche per gli ID manuali. Non si trasferiscono su un altro PC.
+Il limite effettivo dipende anche dal server e dal contesto disponibile:
+aumentare l'output non aumenta il contesto. Contesto, GPU e caricamento in
+LM Studio si configurano in LM Studio; H3-Slides non avvia o arresta quel server.
+I profili **llama.cpp integrato** mantengono caricamento e inferenza completi,
+si salvano con **Salva profilo** in data/llm_profiles.json e si applicano alle
+generazioni successive. Le impostazioni API sono incluse nella singola richiesta;
+modificarle non cambia i job gia avviati.
 
 Il selettore nativo si apre sul PC che esegue l'app (Windows); da una sessione
 remota usare il percorso sul server. La selezione annullata non cambia nulla.

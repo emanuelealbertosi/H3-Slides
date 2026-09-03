@@ -3,9 +3,9 @@
 <title>H3-slides · Studio</title><link rel="stylesheet" href="/static/style.css"></head>
 <body>
 <header><a class="brand" href="/">H3<span>slides</span><small>STUDIO</small></a>
-<nav><button id="new" class="quiet">＋ Nuovo progetto</button><select id="project-list" aria-label="Progetti salvati"><option value="">I tuoi progetti</option></select></nav>
+<nav><button id="open-create" class="quiet">Crea</button><button id="new" class="quiet">＋ Nuovo progetto</button><select id="project-list" aria-label="Progetti salvati"><option value="">I tuoi progetti</option></select></nav>
 <button id="open-admin" class="quiet">Admin · Modelli</button><span id="connection" class="muted">Connessione…</span></header>
-<main>
+<main id="create-page">
 <aside class="settings">
   <div class="eyebrow">01 / IL TUO BRIEF</div><h2>Da un’idea o un documento<br>alla presentazione.</h2>
   <label>Titolo<input id="title" value="Nuova presentazione" maxlength="140"></label>
@@ -53,28 +53,11 @@
   <label class="check"><input id="manim-diagrams" type="checkbox">Integra diagrammi animabili con Manim</label>
   <small>Salva il brief per applicare le opzioni anche alle slide esistenti. I riferimenti restano conservati.<br>Flussi, cicli e confronti: anteprima rapida, animati nell’export Manim, statici in PPTX/PDF. Il diagramma ha priorità sulla figura quando presenti entrambi.</small>
   </details>
-  <details class="model-panel" open><summary>02 / MODELLO AI</summary>
-  <label>Provider<select id="provider"><option value="local">llama.cpp integrato</option><option value="remote">Server API (LM Studio o provider remoto)</option></select></label>
-  <div id="local-fields"><label>Modello GGUF<select id="model"><option value="">Caricamento catalogo…</option></select></label>
-  <button id="add-local-model" class="secondary" type="button">Scegli GGUF dal disco…</button>
-  <p id="model-warning" role="status" class="layout-warning" hidden></p>
-  <div class="row"><button id="refresh-models" class="quiet">Aggiorna</button><button id="unload" class="quiet">Scarica LLM</button></div><small id="llama-status"></small></div>
-  <div id="remote-fields" hidden><label>Base URL API<input id="api-url" type="url" placeholder="http://localhost:1234 oppure https://provider.example/v1"></label>
-  <p class="hint muted">LM Studio: HTTP su localhost o IP privato; /v1 viene aggiunto se omesso. HTTPS per i server pubblici. La chiave serve solo se il server richiede autenticazione. Il server deve essere già avviato.</p>
-  <label>API key<input id="api-key" type="password" autocomplete="off" placeholder="Solo in memoria, mai salvata"></label>
-  <label>Modello sul server<select id="api-model" aria-describedby="remote-model-status" disabled><option value="">Inserisci la Base URL API</option></select></label>
-  <button id="refresh-remote-models" type="button" class="quiet">Aggiorna modelli</button>
-  <p id="remote-model-status" class="hint muted" role="status" aria-live="polite">L’elenco viene letto dal server configurato, senza inviare prompt o documenti.</p>
-  <details><summary class="hint">Alternativa: ID manuale</summary>
-  <label class="check"><input id="api-model-manual" type="checkbox">Usa un identificativo manuale</label>
-  <label>Identificativo modello<input id="api-model-id" disabled autocomplete="off" placeholder="Solo se il server non espone il catalogo"></label></details>
-  <label class="check"><input id="consent" type="checkbox">Autorizzo l'invio del prompt e degli eventuali allegati a questo provider.</label></div>
-  <label class="check"><input id="vision" type="checkbox" checked>Vision per immagini e PDF scansionati</label>
-  </details>
   <button id="generate" class="primary">Genera presentazione <span>→</span></button>
   <p class="muted hint">Le slide compaiono una alla volta. Puoi modificarle senza aspettare la fine.</p>
 </aside>
 <section class="workspace">
+  <div class="model-summary"><span id="active-model" class="muted hint"></span><button id="configure-model" class="quiet" type="button">Configura in Admin</button></div>
   <div class="workspace-head"><div><div class="eyebrow">LA TUA PRESENTAZIONE</div><h1 id="deck-title">Spazio alle idee.</h1></div><span id="save-status" class="muted"></span></div>
   <div id="job-panel" hidden><div class="job-line"><strong id="job-status"></strong><span id="job-percent"></span></div>
   <progress id="progress" max="1" value="0"></progress><div class="row"><button id="pause" class="quiet">Pausa</button><button id="cancel" class="quiet danger">Annulla</button></div>
@@ -112,11 +95,49 @@
 <p class="hint">Scegli il modello principale, non mmproj. Per modelli suddivisi scegli 00001 e conserva tutte le parti nella stessa cartella. Il controllo del file non garantisce compatibilita o VRAM sufficiente.</p>
 <button id="setup-remote" type="button" class="quiet">Uso un'API remota, senza modello locale</button>
 </dialog>
-<dialog id="admin"><form id="admin-form"><div class="editor-head"><h2>Admin · Modelli e prestazioni</h2><button id="close-admin" class="quiet" type="button">Chiudi</button></div>
+<main id="admin" hidden aria-labelledby="admin-title">
+<div class="editor-head"><div><div class="eyebrow">IMPOSTAZIONI DELLO STUDIO</div><h1 id="admin-title">Admin · LLM</h1></div><button id="close-admin" class="quiet" type="button">Torna a Crea</button></div>
+<p class="muted">Configura qui il modello usato per le generazioni successive. Le impostazioni non cambiano i job già avviati.</p>
+<div class="admin-columns">
+  <section class="admin-card"><h2>Connessione e modello</h2>
+  <label>Provider<select id="provider"><option value="local">llama.cpp integrato</option><option value="remote">Server API (LM Studio o provider remoto)</option></select></label>
+  <div id="local-fields"><label>Modello GGUF<select id="model"><option value="">Caricamento catalogo…</option></select></label>
+  <button id="add-local-model" class="secondary" type="button">Scegli GGUF dal disco…</button>
+  <p id="model-warning" role="status" class="layout-warning" hidden></p>
+  <div class="row"><button id="refresh-models" class="quiet">Aggiorna</button><button id="unload" class="quiet">Scarica LLM</button></div><small id="llama-status"></small></div>
+  <div id="remote-fields" hidden><label>Base URL API<input id="api-url" type="url" placeholder="http://localhost:1234 oppure https://provider.example/v1"></label>
+  <p class="hint muted">LM Studio: HTTP su localhost o IP privato; /v1 viene aggiunto se omesso. HTTPS per i server pubblici. La chiave serve solo se il server richiede autenticazione. Il server deve essere già avviato.</p>
+  <label>API key<input id="api-key" type="password" autocomplete="off" placeholder="Solo in memoria, mai salvata"></label>
+  <label>Modello sul server<select id="api-model" aria-describedby="remote-model-status" disabled><option value="">Inserisci la Base URL API</option></select></label>
+  <button id="refresh-remote-models" type="button" class="quiet">Aggiorna modelli</button>
+  <p id="remote-model-status" class="hint muted" role="status" aria-live="polite">L’elenco viene letto dal server configurato, senza inviare prompt o documenti.</p>
+  <details><summary class="hint">Alternativa: ID manuale</summary>
+  <label class="check"><input id="api-model-manual" type="checkbox">Usa un identificativo manuale</label>
+  <label>Identificativo modello<input id="api-model-id" disabled autocomplete="off" placeholder="Solo se il server non espone il catalogo"></label></details>
+  <label class="check"><input id="consent" type="checkbox">Autorizzo l'invio del prompt e degli eventuali allegati a questo provider.</label></div>
+  <label class="check"><input id="vision" type="checkbox" checked>Vision per immagini e PDF scansionati</label>
+  </section>
+<section id="remote-inference" class="admin-card" hidden>
+<h2>Inferenza API</h2>
+<p class="hint muted">Valori salvati automaticamente in questo browser, separati per server e modello. Seleziona prima un modello. Chiave e consenso non vengono salvati.</p>
+<fieldset id="api-inference-fields" disabled>
+<label class="check"><input id="api-server-tokens" type="checkbox">Lascia il limite di output al server</label>
+<div class="admin-grid">
+<label>Massimo token di output<input id="api-max-tokens" type="number" min="128" max="131072" step="1" value="3500" required></label>
+<label>Temperatura<input id="api-temperature" type="number" min="0" max="2" step=".01" value=".35" required></label>
+<label>Top-p<input id="api-top-p" type="number" min=".01" max="1" step=".01" value=".95" required></label>
+<label>Timeout per risposta (secondi)<input id="api-timeout" type="number" min="30" max="3600" step="1" value="360" required></label>
+</div></fieldset>
+<p class="hint muted">Il massimo di output non è il contesto del modello. Un limite alto non obbliga a usare tutti i token; deve comunque essere supportato dal server e rientrare nel contesto insieme al prompt. Contesto, GPU e caricamento dei modelli API si gestiscono nel server (es. LM Studio), non qui.</p>
+<p id="api-inference-status" role="status" class="hint"></p>
+</section>
+<form id="admin-form" class="admin-card">
+<h2>Profilo llama.cpp integrato</h2>
 <p class="muted hint">Profili locali per GGUF. Nessun modello viene scaricato. I file in models/ e nel catalogo configurato vengono rilevati automaticamente.</p>
 <label>Modello da configurare<select id="admin-model"></select></label>
 <h3>Caricamento</h3><p class="muted hint">GPU layers: -1 = massimo offload, 0 = CPU. Contesto e cache consumano memoria. MoE su CPU vale solo per modelli MoE.</p><div id="admin-loading" class="admin-grid"></div>
 <h3>Inferenza</h3><p class="muted hint">Per velocità e JSON strutturato, thinking disattivato è il default. Output troppo breve può interrompere una generazione.</p><div id="admin-inference" class="admin-grid"></div>
 <div class="row"><button class="secondary" type="submit">Salva profilo</button><button id="admin-load" class="primary" type="button">Carica / riavvia</button><button id="admin-stop" class="quiet" type="button">Scarica</button></div>
-<p id="admin-status" role="status"></p></form></dialog>
+<p id="admin-status" role="status"></p></form>
+</div></main>
 <script type="module" src="/static/app.mjs"></script></body></html>

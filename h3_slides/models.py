@@ -2,6 +2,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, ConfigDict, model_validator, field_validator
 from typing import Annotated
 from .themes import ThemeDesign
+from .runtime_settings import RemoteInferenceSettings
 
 
 class DiagramSpec(BaseModel):
@@ -54,6 +55,7 @@ class Provider(BaseModel):
     api_key: str = Field(default="", repr=False)
     remote_consent: bool = False
     vision: bool = True
+    inference: RemoteInferenceSettings = Field(default_factory=RemoteInferenceSettings)
 
 
 class Generation(BaseModel):
