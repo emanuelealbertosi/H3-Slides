@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "slidev": "slidev examples/slides.md --port 3031 --bind 127.0.0.1",
-    "test": "node --test tests/export.test.mjs tests/composer.test.mjs tests/dependency-security.test.mjs",
+    "test": "node --test tests/export.test.mjs tests/composer.test.mjs tests/dependency-security.test.mjs tests/remote-models.test.mjs",
     "verify:vendor": "node scripts/vendor-pptxgenjs.mjs"
   },
   "overrides": {

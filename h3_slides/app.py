@@ -20,6 +20,7 @@ from .worker import Worker
 from .slidev import write_slidev
 from .local_models import choose_model_file
 from .composition import split_content
+from .remote_models import RemoteModelRequest, list_remote_models
 
 
 def public_project(project):
@@ -165,6 +166,10 @@ def create_app(root=None, data_root=None):
                 raise ValueError("Generazione avviata durante la scelta: riprova quando termina")
             model_id = manager.local_files.register(path)
             return web.json_response({"model": model_id, "cancelled": False})
+
+    async def remote_models(request):
+        settings = RemoteModelRequest.model_validate(await request.json())
+        return web.json_response(await list_remote_models(settings))
 
     async def llm_control(request):
         if manager.lock.locked():
@@ -413,6 +418,7 @@ def create_app(root=None, data_root=None):
     app.router.add_get("/", index)
     app.router.add_get("/api/health", health)
     app.router.add_get("/api/models", models)
+    app.router.add_post("/api/remote-models", remote_models)
     app.router.add_post("/api/local-models/{action}", local_model)
     app.router.add_get("/api/admin/llm", admin_llm)
     app.router.add_post("/api/admin/llm", admin_llm)

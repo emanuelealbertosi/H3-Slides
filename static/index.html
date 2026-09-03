@@ -60,8 +60,13 @@
   <p id="model-warning" role="status" class="layout-warning" hidden></p>
   <div class="row"><button id="refresh-models" class="quiet">Aggiorna</button><button id="unload" class="quiet">Scarica LLM</button></div><small id="llama-status"></small></div>
   <div id="remote-fields" hidden><label>Base URL API<input id="api-url" type="url" placeholder="https://provider.example/v1"></label>
-  <label>Modello<input id="api-model" placeholder="Identificativo del modello"></label>
   <label>API key<input id="api-key" type="password" autocomplete="off" placeholder="Solo in memoria, mai salvata"></label>
+  <label>Modello sul server<select id="api-model" aria-describedby="remote-model-status" disabled><option value="">Inserisci la Base URL API</option></select></label>
+  <button id="refresh-remote-models" type="button" class="quiet">Aggiorna modelli</button>
+  <p id="remote-model-status" class="hint muted" role="status" aria-live="polite">L’elenco viene letto dal server configurato, senza inviare prompt o documenti.</p>
+  <details><summary class="hint">Alternativa: ID manuale</summary>
+  <label class="check"><input id="api-model-manual" type="checkbox">Usa un identificativo manuale</label>
+  <label>Identificativo modello<input id="api-model-id" disabled autocomplete="off" placeholder="Solo se il server non espone il catalogo"></label></details>
   <label class="check"><input id="consent" type="checkbox">Autorizzo l'invio del prompt e degli eventuali allegati a questo provider.</label></div>
   <label class="check"><input id="vision" type="checkbox" checked>Vision per immagini e PDF scansionati</label>
   </details>

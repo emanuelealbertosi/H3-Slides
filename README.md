@@ -51,6 +51,15 @@ Se il catalogo locale e vuoto, l'app apre **Configura il modello locale**:
 3. Se si preferisce un provider remoto, scegliere **Uso un'API remota**.
    **Configura dopo** permette di usare l'editor senza caricare alcun modello.
 
+Per le API remote, inserire la **Base URL API HTTPS** (incluso il prefisso
+del provider, per esempio /v1) e la chiave, se richiesta. **Modello sul server**
+legge automaticamente il catalogo GET /models; **Aggiorna modelli** lo rilegge.
+La scelta viene ricordata per indirizzo del server, ma la chiave resta solo
+in memoria e va reinserita dopo un ricaricamento. Il catalogo non invia prompt
+o allegati e non genera contenuti. Scegliere un modello per chat e verificare
+se supporta Vision. Se il server non espone il catalogo, usare **Alternativa:
+ID manuale**. Errori di connessione o autenticazione non vengono nascosti.
+
 Il selettore nativo si apre sul PC che esegue l'app (Windows); da una sessione
 remota usare il percorso sul server. La selezione annullata non cambia nulla.
 Il controllo rifiuta file mancanti, intestazioni GGUF non valide, proiettori
@@ -334,8 +343,8 @@ Il servizio è solo locale: Tailscale non è stato configurato per questo nuovo 
 
 Eseguire dalla cartella del progetto:
 
-    .venv\Scripts\python.exe -m pytest -q
-    runtime\node\node.exe --test tests/export.test.mjs tests/composer.test.mjs tests/dependency-security.test.mjs
+    .venv\Scripts\python.exe -m pytest tests -q
+    runtime\node\node.exe --test tests/export.test.mjs tests/composer.test.mjs tests/dependency-security.test.mjs tests/remote-models.test.mjs
     runtime\node\node.exe scripts/dependency-check.mjs
     .venv\Scripts\python.exe tests/smoke_llama.py --model "D:\Modelli\piccolo-modello.gguf"
 

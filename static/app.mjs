@@ -1,4 +1,5 @@
 import {esc,slideHTML,slideCSS,themes,themeFor,blockColors,contrast,layouts,fitSlide} from './deck.mjs';
+import {createRemoteModelSelector} from './remote-models.mjs';
 const $=id=>document.getElementById(id);
 const layoutOptions=value=>'<option value="content">Automatico adattivo</option>'+Object.entries(layouts).map(([key,label])=>'<option value="'+key+'" '+(key===value?'selected':'')+'>'+label+'</option>').join('');
 $('edit-layout').innerHTML=layoutOptions('content');
@@ -45,15 +46,16 @@ const designFields={'template':'template','font':'font','text-density':'text_den
 const preferenceIds=['provider','model','api-url','api-model','vision',...Object.keys(designFields).filter(id=>!['web-query','web-enabled'].includes(id))];
 const pref=JSON.parse(localStorage.getItem('h3slides-settings')||'{}');
 for(const id of preferenceIds) {
-  if(pref[id]!==undefined&&id!=='model') { if($(id).type==='checkbox')$(id).checked=pref[id];else $(id).value=pref[id]; }
+  if(pref[id]!==undefined&&!['model','api-model'].includes(id)) { if($(id).type==='checkbox')$(id).checked=pref[id];else $(id).value=pref[id]; }
 }
 function savePrefs(){
   const values={};for(const id of preferenceIds)values[id]=$(id).type==='checkbox'?$(id).checked:$(id).value;
+  values['api-model']=remoteModels.value();values.remote_models=remoteModels.preferences();
   localStorage.setItem('h3slides-settings',JSON.stringify(values));
 }
 function toast(message){$('toast').textContent=message;$('toast').hidden=false;clearTimeout(toast.timer);toast.timer=setTimeout(()=>$('toast').hidden=true,7000)}
-async function api(url,method='GET',data){
-  const options={method,headers:{'X-H3-Slides':'1'}};
+async function api(url,method='GET',data,signal){
+  const options={method,headers:{'X-H3-Slides':'1'},signal};
   if(data instanceof FormData)options.body=data;
   else if(data!==undefined){options.headers['Content-Type']='application/json';options.body=JSON.stringify(data)}
   const response=await fetch(url,options);const result=await response.json();
@@ -62,12 +64,23 @@ async function api(url,method='GET',data){
 }
 const design=()=>({...Object.fromEntries(Object.entries(designFields).map(([id,key])=>[key,$(id).type==='checkbox'?$(id).checked:$(id).value])),theme_design:readThemeDesign()});
 const brief=()=>({title:$('title').value,prompt:$('prompt').value,count:Number($('count').value),theme:$('theme').value,...design()});
-const provider=()=>({mode:$('provider').value,model:$('provider').value==='local'?$('model').value:$('api-model').value,
-  base_url:$('api-url').value,api_key:$('api-key').value,remote_consent:$('consent').checked,vision:$('vision').checked});
-function fields(){const remote=$('provider').value==='remote';$('remote-fields').hidden=!remote;$('local-fields').hidden=remote;savePrefs()}
+const provider=()=>({mode:$('provider').value,model:$('provider').value==='local'?$('model').value:remoteModels.value(),
+  base_url:$('api-url').value.trim(),api_key:$('api-key').value.trim(),remote_consent:$('consent').checked,vision:$('vision').checked});
+const remoteModels=createRemoteModelSelector({
+  select:$('api-model'),refresh:$('refresh-remote-models'),status:$('remote-model-status'),
+  manualToggle:$('api-model-manual'),manualInput:$('api-model-id'),
+  getConnection:()=>({base_url:$('api-url').value,api_key:$('api-key').value}),
+  request:(config,signal)=>api('/api/remote-models','POST',config,signal),onSave:savePrefs,
+  saved:pref.remote_models,legacy:{url:pref['api-url'],model:pref['api-model']},
+});
+function fields(){const remote=$('provider').value==='remote';$('remote-fields').hidden=!remote;$('local-fields').hidden=remote;remoteModels.activate(remote);savePrefs()}
 $('provider').addEventListener('change',fields);fields();
 $('provider').addEventListener('change',()=>{if($('provider').value==='local')models().catch(e=>toast(e.message))});
-for(const id of ['model','api-url','api-model','vision'])$(id).addEventListener('change',savePrefs);
+for(const id of ['model','api-url','vision'])$(id).addEventListener('change',savePrefs);
+for(const id of ['api-url','api-key']){
+  $(id).addEventListener('input',()=>{remoteModels.invalidate();if(id==='api-url')$('consent').checked=false});
+  $(id).addEventListener('change',()=>remoteModels.load());
+}
 for(const id of ['title','prompt','count','theme'])$(id).addEventListener('input',()=>{drafts.add('brief');$('save-status').textContent='Brief non salvato'});
 for(const id of Object.keys(designFields))$(id).addEventListener('input',()=>{
   if(id.startsWith('web-'))$('web-consent').checked=false;
@@ -154,6 +167,7 @@ async function generate(slideId=null){
     await finishInlineEdits();
     if(!current||drafts.has('brief'))await saveProject();
     if($('provider').value==='local')await models();
+    else remoteModels.requireSelection();
     const selected=provider();
     if(!selected.model){
       if(selected.mode==='local')openModelSetup('Prima di generare, scegli un modello GGUF dal disco.');

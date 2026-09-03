@@ -8,11 +8,11 @@ from pathlib import Path
 import socket
 import subprocess
 import time
-from urllib.parse import urlparse
 import aiohttp
 from .models import SYSTEM
 from .runtime_settings import LoadingSettings, InferenceSettings, ModelProfile
 from .local_models import LocalModelFiles, validate_model
+from .remote_models import remote_api_url
 
 
 def parse_json(text):
@@ -220,14 +220,11 @@ class LLM:
             self.model = "h3-slides-local"
             self.sampling = self.manager.profile(self.provider.model)["inference"]
         else:
-            parsed = urlparse(self.provider.base_url)
             if not self.provider.remote_consent:
                 raise ValueError("Conferma l'invio del prompt e degli eventuali allegati al provider remoto")
-            if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
-                raise ValueError("API remota: usa un URL HTTPS senza credenziali, query o frammenti")
+            self.url = remote_api_url(self.provider.base_url)
             if not self.provider.model:
                 raise ValueError("Inserisci il nome del modello remoto")
-            self.url = self.provider.base_url.rstrip("/")
             self.model = self.provider.model
 
     async def json(self, prompt, schema=None, images=None):
