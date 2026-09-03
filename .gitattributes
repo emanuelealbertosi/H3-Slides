@@ -1,0 +1,2 @@
+# Preserve the exact verified upstream bytes across checkouts and release ZIPs.
+vendor/pptxgenjs/** -text -whitespace

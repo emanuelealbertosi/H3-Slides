@@ -2,14 +2,9 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import pptxgen from 'pptxgenjs';
-import sizeOf from 'image-size';
 import {chromium} from 'playwright-chromium';
 import {slideHTML,slideCSS,themeFor,visualFor,fitSlide} from '../static/deck.mjs';
 import {diagramGeometry} from '../static/diagram.mjs';
-
-// Only normalized raster assets enter our exporter. Block unused parsers, including
-// the upstream ICNS/HEIF/JXL denial-of-service paths (see SECURITY.md).
-sizeOf.disableTypes(sizeOf.types.filter(type=>!['png','jpg'].includes(type)));
 
 // Measure every layout, including bullets, illustrations, borders and footers.
 export async function measureLayouts(page){
@@ -29,8 +24,11 @@ export async function measureLayouts(page){
           color:c['border'+side+'Color'],width:parseFloat(c['border'+side+'Width'])*.75}))};
     });
     const visual=node.querySelector('.visual');
+    const img=visual?.matches('img')?visual:visual?.querySelector('img');
     return {layout:node.dataset.layout,overflow:node.dataset.overflow==='true',texts,boxes,
-      visual:visual?rect(visual):null,footer:rect(node.querySelector('.footer'))};
+      visual:visual?rect(visual):null,
+      image:img?{width:img.naturalWidth,height:img.naturalHeight}:null,
+      footer:rect(node.querySelector('.footer'))};
   }));
 }
 
@@ -88,7 +86,10 @@ export async function buildExports(project,assetsDir,outDir,format){
       s.addShape(pptx.ShapeType.line,{x:layout.footer.x,y:layout.footer.y,w:layout.footer.w,h:0,line:{color:t.line.slice(1),width:.75}});
       const frame=layout.visual;
       if(visual.image&&frame){
-        const p=imagePath(visual.image),dims=sizeOf(await fs.readFile(p)),ratio=Math.min(frame.w/dims.width,frame.h/dims.height);
+        const p=imagePath(visual.image),dims=layout.image;
+        if(!dims||!Number.isFinite(dims.width)||!Number.isFinite(dims.height)||dims.width<=0||dims.height<=0)
+          throw new Error('Immagine non decodificabile: esportazione annullata.');
+        const ratio=Math.min(frame.w/dims.width,frame.h/dims.height);
         const w=dims.width*ratio,h=dims.height*ratio;
         s.addImage({path:p,x:frame.x+(frame.w-w)/2,y:frame.y+(frame.h-h)/2,w,h});
       }

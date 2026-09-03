@@ -1,4 +1,28 @@
-# H3-Slides 0.2.0 — prima release standalone Windows
+# H3-Slides 0.2.1 — rimozione della dipendenza vulnerabile
+
+Estrarre **H3-Slides-windows-x64-0.2.1.zip**, inclusa la cartella vendor.
+Per aggiornare: fermare l'app, fare un backup dei propri dati, estrarre i nuovi
+sorgenti e lanciare Installa-H3-slides.bat, poi Avvia-H3-slides.bat.
+Non basta copiare il solo file export.mjs: npm ci deve rimuovere la vecchia libreria.
+
+- image-size rimossa da H3-Slides, PPTXGenJS e dai consumatori Slidev.
+- Dimensioni delle immagini lette da Chromium, preservando le proporzioni.
+- PPTXGenJS 4.0.1-h3.1: solo metadata di distribuzione modificati;
+  codice JavaScript originale invariato, licenza e hash inclusi.
+- Controlli automatici su provenienza, lock e risoluzione dei pacchetti installati.
+- Test aggiuntivi per immagini verticali/orizzontali e file ICNS/HEIF/JXL malformati.
+- **114 test superati**: 99 Python e 15 JavaScript, inclusi gli export reali.
+- Installer corretto anche per aggiornare ambienti Python esistenti senza pip.
+- **npm audit: 0 vulnerabilita segnalate**, senza disattivare l'audit o
+  nascondere advisory. Il risultato e riferito all'albero npm, non a una
+  certificazione globale dell'app o di tutte le dipendenze Python/native.
+
+Rimangono i requisiti Windows x64 e il vincolo di uso locale senza autenticazione.
+Dettagli: [SECURITY.md](https://github.com/emanuelealbertosi/H3-Slides/blob/v0.2.1/SECURITY.md).
+
+---
+
+# H3-Slides 0.2.0 — note storiche della prima release standalone Windows
 
 ## Installazione
 

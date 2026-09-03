@@ -1,3 +1,4 @@
+import './browser-env.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {slideHTML,themeFor,blockColors,autoText,contrast,slideCSS} from '../static/deck.mjs';

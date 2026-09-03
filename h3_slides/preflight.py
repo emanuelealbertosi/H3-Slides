@@ -36,9 +36,10 @@ def inspect_installation(root, core_only=False):
             errors.append("Node dedicato mancante: riesegui Installa-H3-slides.bat.")
         else:
             probe = (
-                "require('pptxgenjs');require('image-size');"
+                "require('pptxgenjs');"
                 "if(!require('node:fs').existsSync('node_modules/@slidev/cli/bin/slidev.mjs'))throw Error('Slidev mancante');"
-                "(async()=>{const b=await require('playwright-chromium').chromium.launch({headless:true});"
+                "(async()=>{await (await import('./scripts/dependency-check.mjs')).verifyDependencies();"
+                "const b=await require('playwright-chromium').chromium.launch({headless:true});"
                 "await b.close()})().catch(e=>{console.error(e.message);process.exitCode=1})"
             )
             env = dict(os.environ, PLAYWRIGHT_BROWSERS_PATH=str(root / "runtime/browsers"))

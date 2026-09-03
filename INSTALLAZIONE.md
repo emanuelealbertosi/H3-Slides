@@ -71,6 +71,8 @@ non fidata. Vedere [SECURITY.md](SECURITY.md).
 Lo ZIP contiene sorgenti, script e lock; i runtime vengono scaricati
 direttamente dalle distribuzioni degli strumenti. Non contiene modelli,
 chiavi, documenti, librerie personali, cache o installazioni di altre app.
+Include anche vendor/pptxgenjs, con il codice originale verificato e il
+manifest corretto della libreria PPTX: non rimuovere la cartella vendor.
 La somma SHA256 dello ZIP e allegata alla stessa release.
 Gli strumenti di terze parti restano soggetti alle rispettive licenze:
 Python, uv, Node.js, llama.cpp, Slidev, Chromium/Playwright, Manim e Manim Slides.

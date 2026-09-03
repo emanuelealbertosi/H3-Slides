@@ -335,7 +335,8 @@ Il servizio è solo locale: Tailscale non è stato configurato per questo nuovo 
 Eseguire dalla cartella del progetto:
 
     .venv\Scripts\python.exe -m pytest -q
-    runtime\node\node.exe --test tests/export.test.mjs tests/composer.test.mjs
+    runtime\node\node.exe --test tests/export.test.mjs tests/composer.test.mjs tests/dependency-security.test.mjs
+    runtime\node\node.exe scripts/dependency-check.mjs
     .venv\Scripts\python.exe tests/smoke_llama.py --model "D:\Modelli\piccolo-modello.gguf"
 
 I test della pipeline usano un LLM simulato controllato e verificano salvataggio
@@ -354,6 +355,12 @@ genera PDF/PPTX di verifica e chiude il proprio processo llama.cpp alla fine.
 
 Dipendenze applicative in requirements.txt, lock Python in requirements.lock,
 lock Node in package-lock.json. Runtime e dati non vanno pubblicati su Git.
+La 0.2.1 include una distribuzione controllata di PPTXGenJS senza la dipendenza
+inutilizzata image-size, applicata anche a Slidev. Codice originale, licenza,
+provenienza e verifiche sono in [vendor](vendor/README.md). Non eliminare questa
+cartella dallo ZIP: serve anche durante una installazione senza Git.
+L'audit npm della 0.2.1 non segnala vulnerabilita note; vedere [SECURITY.md](SECURITY.md)
+per ambito del controllo e limiti. Non e una certificazione di sicurezza totale.
 L'installazione standalone attuale è per Windows x64: non è un singolo eseguibile,
 non include modelli e non ha un installer Linux/macOS verificato.
 

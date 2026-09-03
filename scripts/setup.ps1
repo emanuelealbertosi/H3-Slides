@@ -56,7 +56,9 @@ if (-not (Test-Path -LiteralPath '.venv\Scripts\python.exe')) {
 }
 & '.\.venv\Scripts\python.exe' -c "import sys,struct; sys.exit(0 if sys.version_info[:2]==(3,12) and struct.calcsize('P')==8 else 1)"
 if ($LASTEXITCODE -ne 0) { throw 'Ambiente .venv incompatibile o danneggiato: spostalo in una cartella di backup e rilancia l installazione.' }
-& '.\.venv\Scripts\python.exe' -m pip --version *> $null
+# A pip-less existing venv is supported. Do not redirect native stderr here:
+# Windows PowerShell 5.1 would throw before ensurepip gets a chance to repair it.
+& '.\.venv\Scripts\python.exe' -c "import importlib.util,sys; sys.exit(0 if importlib.util.find_spec('pip') else 1)"
 if ($LASTEXITCODE -ne 0) {
     & '.\.venv\Scripts\python.exe' -m ensurepip --upgrade
     if ($LASTEXITCODE -ne 0) { throw 'pip non disponibile in questo ambiente Python' }
@@ -114,6 +116,8 @@ $env:PLAYWRIGHT_BROWSERS_PATH=Join-Path $projectRoot 'runtime\browsers'
 Write-Host '[3/6] Installazione Slidev e componenti web...'
 & $npm ci --foreground-scripts
 if ($LASTEXITCODE -ne 0) { throw 'Installazione dipendenze Node non riuscita' }
+& $nodeExe 'scripts\dependency-check.mjs'
+if ($LASTEXITCODE -ne 0) { throw 'Controllo dipendenze corrette fallito: installazione non completata.' }
 Write-Host '[4/6] Installazione browser per anteprima ed export...'
 & (Join-Path $nodeDir 'node.exe') 'node_modules\playwright-chromium\cli.js' install chromium
 if ($LASTEXITCODE -ne 0) { throw 'Installazione Chromium non riuscita' }

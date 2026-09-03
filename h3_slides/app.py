@@ -137,7 +137,7 @@ def create_app(root=None, data_root=None):
         return web.FileResponse(root / "static" / "index.html")
 
     async def health(request):
-        return web.json_response({"app": "H3-slides", "version": "0.2.0", "llama": manager.status()})
+        return web.json_response({"app": "H3-slides", "version": "0.2.1", "llama": manager.status()})
 
     async def models(request):
         catalog = manager.catalog()

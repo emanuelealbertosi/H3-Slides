@@ -5,6 +5,9 @@ data/
 logs/
 outputs/
 dist/
+!vendor/pptxgenjs/dist/
+!vendor/pptxgenjs/dist/pptxgen.cjs.js
+!vendor/pptxgenjs/dist/pptxgen.es.js
 __pycache__/
 .pytest_cache/
 *.pyc
