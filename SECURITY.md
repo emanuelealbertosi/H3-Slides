@@ -39,6 +39,17 @@ Il lock Python fissa le versioni ma non include hash di ogni wheel.
 Questa e una release iniziale verificata funzionalmente, non un audit
 di sicurezza completo o una garanzia di assenza di vulnerabilita.
 
+## Server LLM locali ed esterni
+
+Le API compatibili possono usare HTTP su localhost, IP loopback, reti private
+RFC1918, IPv6 ULA e indirizzi Tailscale (100.64.0.0/10). Per server LAN indicare
+un IP privato letterale: altri nomi host HTTP non vengono risolti per decidere
+se siano fidati. HTTP non cifra il traffico: usarlo solo su reti e server fidati.
+Gli indirizzi pubblici richiedono HTTPS con certificato valido. Non sono ammessi
+credenziali nell'URL, query o frammenti. Catalogo e generazione non seguono redirect,
+per non inoltrare chiavi o contenuti a destinazioni diverse.
+Questo non cambia l'ascolto di H3-Slides: l'app resta su 127.0.0.1.
+
 ## Dati e credenziali
 
 Modelli, documenti, progetti, log e config.local.json sono esclusi dal repository

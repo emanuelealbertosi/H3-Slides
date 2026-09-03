@@ -54,12 +54,13 @@
   <small>Salva il brief per applicare le opzioni anche alle slide esistenti. I riferimenti restano conservati.<br>Flussi, cicli e confronti: anteprima rapida, animati nell’export Manim, statici in PPTX/PDF. Il diagramma ha priorità sulla figura quando presenti entrambi.</small>
   </details>
   <details class="model-panel" open><summary>02 / MODELLO AI</summary>
-  <label>Provider<select id="provider"><option value="local">llama.cpp integrato</option><option value="remote">API remota (compatibile OpenAI)</option></select></label>
+  <label>Provider<select id="provider"><option value="local">llama.cpp integrato</option><option value="remote">Server API (LM Studio o provider remoto)</option></select></label>
   <div id="local-fields"><label>Modello GGUF<select id="model"><option value="">Caricamento catalogo…</option></select></label>
   <button id="add-local-model" class="secondary" type="button">Scegli GGUF dal disco…</button>
   <p id="model-warning" role="status" class="layout-warning" hidden></p>
   <div class="row"><button id="refresh-models" class="quiet">Aggiorna</button><button id="unload" class="quiet">Scarica LLM</button></div><small id="llama-status"></small></div>
-  <div id="remote-fields" hidden><label>Base URL API<input id="api-url" type="url" placeholder="https://provider.example/v1"></label>
+  <div id="remote-fields" hidden><label>Base URL API<input id="api-url" type="url" placeholder="http://localhost:1234 oppure https://provider.example/v1"></label>
+  <p class="hint muted">LM Studio: HTTP su localhost o IP privato; /v1 viene aggiunto se omesso. HTTPS per i server pubblici. La chiave serve solo se il server richiede autenticazione. Il server deve essere già avviato.</p>
   <label>API key<input id="api-key" type="password" autocomplete="off" placeholder="Solo in memoria, mai salvata"></label>
   <label>Modello sul server<select id="api-model" aria-describedby="remote-model-status" disabled><option value="">Inserisci la Base URL API</option></select></label>
   <button id="refresh-remote-models" type="button" class="quiet">Aggiorna modelli</button>

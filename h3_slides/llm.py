@@ -257,7 +257,11 @@ class LLM:
                 body["response_format"]["schema"] = schema
         headers = {"Authorization": "Bearer " + self.provider.api_key} if self.provider.mode == "remote" and self.provider.api_key else {}
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=360)) as session:
-            async with session.post(self.url + "/chat/completions", json=body, headers=headers) as response:
+            async with session.post(self.url + "/chat/completions", json=body, headers=headers,
+                                    allow_redirects=False) as response:
+                if 300 <= response.status < 400:
+                    raise ValueError("Il server API reindirizza la richiesta: configura il suo indirizzo finale. "
+                                     "Prompt, documenti e chiave non vengono inoltrati altrove.")
                 if response.status >= 400:
                     # Never log remote response bodies: they may echo keys or source contents.
                     raise RuntimeError(f"LLM HTTP {response.status}: verifica modello, supporto vision, contesto e credenziali")

@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import aiohttp
+from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 import pytest
 
@@ -121,10 +122,86 @@ async def test_bad_or_oversized_catalog(monkeypatch, raw, match):
     "http://provider.example/v1", "file:///models", "https://user:secret@provider.example/v1",
     "https://provider.example/v1?key=secret", "https://provider.example/v1#fragment",
     "https://provider.example:70000/v1", "https:///v1", "https://provider.example/invalid path",
+    "http://8.8.8.8/v1", "http://203.0.113.1/v1", "http://169.254.169.254/v1",
+    "http://0.0.0.0:1234", "http://localhost.evil.example:1234",
+    "http://127.0.0.1.evil.example:1234", "http://[2001:4860:4860::8888]/v1",
+    "http://user:secret@localhost:1234/v1", "http://localhost:1234/v1?key=secret",
 ])
-def test_remote_urls_keep_existing_https_security(url):
+def test_rejects_public_http_and_malformed_api_urls(url):
     with pytest.raises(ValueError, match="HTTPS"):
         remote_api_url(url)
+
+
+@pytest.mark.parametrize("url,expected", [
+    ("http://localhost:1234", "http://localhost:1234/v1"),
+    ("http://localhost:1234/", "http://localhost:1234/v1"),
+    ("http://127.0.0.1:1234", "http://127.0.0.1:1234/v1"),
+    (" http://127.0.0.1:1234/v1/ ", "http://127.0.0.1:1234/v1"),
+    ("http://192.168.1.20:1234", "http://192.168.1.20:1234/v1"),
+    ("http://10.0.0.2:1234", "http://10.0.0.2:1234/v1"),
+    ("http://172.16.0.2:1234", "http://172.16.0.2:1234/v1"),
+    ("http://172.31.255.254:1234", "http://172.31.255.254:1234/v1"),
+    ("http://100.100.1.2:1234", "http://100.100.1.2:1234/v1"),
+    ("http://[::1]:1234", "http://[::1]:1234/v1"),
+    ("http://[fd7a:115c:a1e0::1]:1234", "http://[fd7a:115c:a1e0::1]:1234/v1"),
+    ("http://[::ffff:127.0.0.1]:1234", "http://[::ffff:127.0.0.1]:1234/v1"),
+    ("http://192.168.1.20:1234/custom/v1", "http://192.168.1.20:1234/custom/v1"),
+    ("https://provider.example/api/v1/", "https://provider.example/api/v1"),
+])
+def test_local_http_and_base_path_normalization(url, expected):
+    assert remote_api_url(url) == expected
+    assert RemoteModelRequest(base_url=url).base_url == expected
+
+
+@pytest.mark.asyncio
+async def test_real_http_server_catalog_and_generation_without_key():
+    calls = []
+    async def models(request):
+        calls.append((request.method, request.path, request.headers.get("Authorization")))
+        return web.json_response({"data": [{"id": "local/chat"}]})
+
+    async def complete(request):
+        calls.append((request.method, request.path, request.headers.get("Authorization")))
+        assert (await request.json())["model"] == "local/chat"
+        return web.json_response({"choices": [{"finish_reason": "stop",
+            "message": {"content": '{"ok":true}'}}]})
+
+    server_app = web.Application()
+    server_app.router.add_get("/v1/models", models)
+    server_app.router.add_post("/v1/chat/completions", complete)
+    async with TestServer(server_app) as server:
+        base = str(server.make_url("/"))
+        found = await list_remote_models(RemoteModelRequest(base_url=base))
+        assert found["models"] == [{"id": "local/chat", "name": "local/chat"}]
+        llm = LLM(Provider(mode="remote", base_url=base, model="local/chat", remote_consent=True),
+                  SimpleNamespace(last_used=0))
+        await llm.prepare()
+        assert await llm.json("Synthetic test; no user documents") == {"ok": True}
+    assert calls == [("GET", "/v1/models", None), ("POST", "/v1/chat/completions", None)]
+
+
+@pytest.mark.asyncio
+async def test_generation_never_follows_redirects_with_content_or_keys():
+    forwarded = []
+    async def destination(request):
+        forwarded.append(await request.read())
+        return web.json_response({})
+
+    target = web.Application()
+    target.router.add_post("/collect", destination)
+    async with TestServer(target) as target_server:
+        async def redirect(request):
+            raise web.HTTPTemporaryRedirect(str(target_server.make_url("/collect")))
+        source = web.Application()
+        source.router.add_post("/v1/chat/completions", redirect)
+        async with TestServer(source) as source_server:
+            llm = LLM(Provider(mode="remote", base_url=str(source_server.make_url("/")),
+                              model="local/chat", api_key="test-only", remote_consent=True),
+                      SimpleNamespace(last_used=0))
+            await llm.prepare()
+            with pytest.raises(ValueError, match="reindirizza"):
+                await llm.json("Synthetic private prompt")
+    assert forwarded == []
 
 
 def test_key_cannot_inject_headers():

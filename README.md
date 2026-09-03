@@ -51,8 +51,14 @@ Se il catalogo locale e vuoto, l'app apre **Configura il modello locale**:
 3. Se si preferisce un provider remoto, scegliere **Uso un'API remota**.
    **Configura dopo** permette di usare l'editor senza caricare alcun modello.
 
-Per le API remote, inserire la **Base URL API HTTPS** (incluso il prefisso
-del provider, per esempio /v1) e la chiave, se richiesta. **Modello sul server**
+Per un **Server API (LM Studio o provider remoto)**, inserire la **Base URL API**
+e la chiave, solo se richiesta dal server. LM Studio gia avviato sullo stesso PC
+accetta **http://localhost:1234** oppure **http://127.0.0.1:1234/v1**: per localhost
+e IP privati, se l'indirizzo non contiene un percorso viene aggiunto /v1.
+Un server su un altro PC richiede il suo IP privato e la porta configurata.
+HTTP e consentito su loopback, IP LAN privati e Tailscale; usarlo solo con server
+e reti fidate. I server pubblici richiedono HTTPS e il prefisso previsto dal
+provider (per esempio /v1 oppure /api/v1). **Modello sul server**
 legge automaticamente il catalogo GET /models; **Aggiorna modelli** lo rilegge.
 La scelta viene ricordata per indirizzo del server, ma la chiave resta solo
 in memoria e va reinserita dopo un ricaricamento. Il catalogo non invia prompt

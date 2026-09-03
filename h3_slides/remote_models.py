@@ -1,5 +1,6 @@
 """Read an OpenAI-compatible model catalog without sending project contents."""
 import asyncio
+from ipaddress import ip_address, ip_network, IPv6Address
 import json
 from urllib.parse import urlparse
 
@@ -9,20 +10,43 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 MAX_CATALOG_BYTES = 2 * 1024 * 1024
 CATALOG_TIMEOUT = 15
 MAX_MODELS = 2000
+LOCAL_API_NETWORKS = tuple(ip_network(network) for network in (
+    "127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16",
+    "100.64.0.0/10", "::1/128", "fc00::/7",
+))
+
+
+def is_local_api_host(host):
+    if host.lower().rstrip(".") == "localhost":
+        return True
+    try:
+        address = ip_address(host)
+    except ValueError:
+        return False
+    if isinstance(address, IPv6Address) and address.ipv4_mapped:
+        address = address.ipv4_mapped
+    return any(address in network for network in LOCAL_API_NETWORKS)
 
 
 def remote_api_url(value: str) -> str:
     value = value.strip().rstrip("/")
     try:
         parsed = urlparse(value)
-        valid = (parsed.scheme == "https" and parsed.hostname and not parsed.username
+        valid = (parsed.scheme in ("http", "https") and parsed.hostname and not parsed.username
                  and not parsed.password and not parsed.query and not parsed.fragment
                  and not any(c.isspace() or ord(c) < 32 for c in value))
         parsed.port  # Validate malformed or out-of-range ports too.
     except ValueError:
         valid = False
     if not valid:
-        raise ValueError("API remota: usa un URL HTTPS senza credenziali, query o frammenti")
+        raise ValueError("API: usa un URL HTTP/HTTPS valido, senza credenziali, query o frammenti")
+    local = is_local_api_host(parsed.hostname)
+    if parsed.scheme == "http" and not local:
+        raise ValueError("HTTP è consentito per localhost e IP di rete privata o Tailscale. "
+                         "Per un server pubblico usa HTTPS; per un server LAN usa il suo IP privato.")
+    if local and not parsed.path:
+        # LM Studio shows its server address without the OpenAI-compatible prefix.
+        value += "/v1"
     return value
 
 
@@ -104,5 +128,6 @@ async def list_remote_models(settings: RemoteModelRequest):
         raise ValueError("Il server non ha risposto entro 15 secondi. Controlla la connessione e riprova.") from None
     except aiohttp.ClientError:
         # Do not include exception URLs, headers or provider error bodies.
-        raise ValueError("Impossibile collegarsi al server API. Verifica URL, rete e certificato HTTPS.") from None
+        raise ValueError("Impossibile collegarsi al server API. Verifica che sia avviato, "
+                         "l'indirizzo e la porta; per HTTPS controlla anche il certificato.") from None
     return normalize_catalog(payload)
