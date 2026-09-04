@@ -558,18 +558,21 @@ function addSceneElement(value={}){
       '<input data-scene="'+key+'" type="number" step="'+(key==='stage'||key==='columns'?'1':'.1')+'" required></label>').join('')+'</div>'+
     '<div class="row"><label>Valori · separati da virgola<textarea data-scene="values" rows="2"></textarea></label>'+
     '<label>Etichette · una per riga<textarea data-scene="labels" rows="2"></textarea></label></div>'+
-    '<label>Funzione di x (es. 1/x, sin(x), x^2)<input data-scene="expression" maxlength="120"></label>'+
+    '<div class="math-fields"><label>Funzione di x (es. 1/x, sin(x), x^2)<input data-scene="expression" maxlength="120"></label>'+
     '<div class="scene-geometry">'+['x_min','x_max','y_min','y_max'].map(key=>'<label>'+key+
       '<input data-scene="'+key+'" type="number" step=".1" required></label>').join('')+'</div>'+
-    '<label>Asintoti verticali · separati da virgola<input data-scene="asymptotes"></label>'+
+    '<label>Asintoti verticali · separati da virgola<input data-scene="asymptotes"></label></div>'+
     '<button type="button" class="quiet danger" data-remove-scene>Rimuovi oggetto</button>';
   for(const [key,item] of Object.entries(value)){const input=row.querySelector('[data-scene="'+key+'"]');if(input)input.value=Array.isArray(item)?item.join(key==='labels'?'\n':', '):item}
-  row.querySelector('[data-scene="type"]').onchange=event=>{
-    if(event.target.value!=='function_plot')return;
+  const syncMathFields=()=>{
+    const enabled=row.querySelector('[data-scene="type"]').value==='function_plot';
+    row.querySelector('.math-fields').hidden=!enabled;
+    if(!enabled)return;
     row.querySelector('[data-scene="width"]').value=Math.max(5,Number(row.querySelector('[data-scene="width"]').value));
     row.querySelector('[data-scene="height"]').value=Math.max(3.5,Number(row.querySelector('[data-scene="height"]').value));
     if(!row.querySelector('[data-scene="expression"]').value)row.querySelector('[data-scene="expression"]').value='1/x';
   };
+  row.querySelector('[data-scene="type"]').onchange=syncMathFields;syncMathFields();
   row.querySelector('[data-remove-scene]').onclick=()=>row.remove();$('scene-elements').append(row);
 }
 function addSceneConnection(value={}){
