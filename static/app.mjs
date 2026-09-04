@@ -261,7 +261,8 @@ $('open-slidev').onclick=async()=>{
   }catch(error){if(tab)tab.close();toast(error.message)}
 };
 function sourceHTML(s){
-  return '<div class="source"><strong>'+esc(s.name)+'</strong>'+
+  return '<div class="source"><div class="source-head"><strong>'+esc(s.name)+'</strong>'+
+    '<button type="button" class="quiet danger" data-remove-source="'+esc(s.id)+'">Rimuovi</button></div>'+
     (s.page_count?'<div class="muted">'+s.page_count+' pagine indicizzate · ricerca locale</div>':'')+
     (s.selection?'<details open><summary>Pagine usate: '+esc(s.selection.summary)+'</summary><small>'+esc(s.selection.reason)+'</small></details>':
       s.page_count?'<small>La sezione verrà individuata dal modello alla generazione.</small>':'')+
@@ -269,6 +270,18 @@ function sourceHTML(s){
     (s.images.length>8?'<small>+'+(s.images.length-8)+' pagine</small>':'')+
     (s.warnings.length?'<div class="warning">'+esc(s.warnings[0])+'</div>':'')+'</div>';
 }
+$('sources').onclick=async event=>{
+  const button=event.target.closest('[data-remove-source]');if(!button||!current)return;
+  const source=current.sources.find(item=>item.id===button.dataset.removeSource);if(!source)return;
+  if(!confirm('Rimuovere «'+source.name+'» dal progetto? Le slide già create resteranno; le immagini di questo documento verranno scollegate.'))return;
+  button.disabled=true;
+  try{
+    current=await api('/api/projects/'+current.id+'/sources/'+encodeURIComponent(source.id),'DELETE');
+    render();toast('Documento rimosso dal progetto');
+  }catch(error){
+    toast(error.message);if(button.isConnected)button.disabled=false;
+  }
+};
 const resize=new ResizeObserver(entries=>{for(const entry of entries)entry.target.style.setProperty('--slide-scale',entry.contentRect.width/1280)});
 function render(){
   const display=current?{...current,...design(),theme:$('theme').value}:null;

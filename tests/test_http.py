@@ -8,6 +8,7 @@ import zipfile
 import aiohttp
 from aiohttp.test_utils import TestClient, TestServer
 from pypdf import PdfReader
+from PIL import Image
 import pytest
 from h3_slides.app import create_app, run_child
 from h3_slides.models import SlideContent
@@ -58,6 +59,52 @@ async def test_api_generate_without_upload(tmp_path):
         assert generated["sources"] == []
         assert generated["slides"][0]["content"]["sources"] == []
         assert generated["slides"][0]["content"]["notes"].startswith("Origine: conoscenza del modello")
+
+
+@pytest.mark.asyncio
+async def test_remove_source_deletes_local_derivatives_and_unlinks_slide_image(tmp_path):
+    app = create_app(ROOT, tmp_path / "data")
+    async with TestClient(TestServer(app)) as client:
+        response = await client.post("/api/projects", headers=HEADERS,
+                                     json={"title":"Fonti eliminabili", "prompt":"Test"})
+        project = await response.json()
+        pid = project["id"]
+        raw = io.BytesIO()
+        Image.new("RGB", (40, 30), "navy").save(raw, format="PNG")
+        form = aiohttp.FormData()
+        form.add_field("file", raw.getvalue(), filename="schema.png")
+        response = await client.post(f"/api/projects/{pid}/sources", headers=HEADERS, data=form)
+        assert response.status == 200
+        uploaded = await response.json()
+        source = uploaded["sources"][0]
+        image_id = source["images"][0]["id"]
+        image_path = app["store"].asset_path(pid, image_id)
+        assert image_path.is_file()
+        cache = app["store"].asset_path(pid, "rag-obsoleto.json")
+        cache.write_text('{"context":"documento rimosso"}', encoding="utf-8")
+        preview_copy = app["store"].root / "slidev" / pid / "assets" / image_id
+        preview_copy.parent.mkdir(parents=True)
+        preview_copy.write_bytes(image_path.read_bytes())
+        stored = app["store"].project(pid)
+        stored["slides"] = [{"id":"s1", "revision":1, "status":"ready", "purpose":"",
+                             "content":SlideContent(title="Slide", image_id=image_id,
+                                                    sources=["schema.png"]).model_dump()}]
+        app["store"].save_project(stored)
+
+        response = await client.delete(
+            f"/api/projects/{pid}/sources/{source['id']}", headers=HEADERS)
+        assert response.status == 200
+        updated = await response.json()
+        assert updated["sources"] == []
+        assert updated["slides"][0]["content"]["image_id"] == ""
+        assert updated["slides"][0]["content"]["sources"] == ["schema.png"]
+        assert updated["slides"][0]["revision"] == 2
+        assert not image_path.exists()
+        assert not cache.exists()
+        assert not preview_copy.exists()
+        again = await client.delete(
+            f"/api/projects/{pid}/sources/{source['id']}", headers=HEADERS)
+        assert again.status == 404
 
 
 @pytest.mark.asyncio

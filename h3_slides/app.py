@@ -256,6 +256,48 @@ def create_app(root=None, data_root=None):
             raise ValueError("Nessun file allegato")
         return web.json_response(public_project(store.project(pid)))
 
+    async def remove_source(request):
+        pid, source_id = request.match_info["pid"], request.match_info["source_id"]
+        if worker.active():
+            raise ValueError("Attendi la fine della generazione o annullala prima di rimuovere una fonte")
+        p = store.project(pid)
+        source = next((item for item in p["sources"] if item.get("id") == source_id), None)
+        if source is None:
+            raise KeyError()
+        image_names = {item.get("id") for item in source.get("images", []) if item.get("id")}
+        file_names = image_names | {
+            source.get("pdf_file"), source.get("page_index_file")
+        }
+        file_names.discard(None)
+        p["sources"] = [item for item in p["sources"] if item.get("id") != source_id]
+        for slide in p["slides"]:
+            if slide.get("content", {}).get("image_id") in image_names:
+                slide["content"]["image_id"] = ""
+                slide["revision"] = slide.get("revision", 0) + 1
+        p["revision"] += 1
+        store.save_project(p)
+
+        # Save first: a filesystem cleanup failure must never restore a source
+        # in the project after the user has explicitly removed it.
+        for name in file_names:
+            try:
+                store.asset_path(pid, name).unlink(missing_ok=True)
+            except (OSError, ValueError):
+                logging.warning("Impossibile rimuovere asset della fonte %s: %s", source_id, name)
+        asset_root = (store.root / "assets" / pid).resolve()
+        if asset_root.is_dir():
+            for cache in asset_root.glob("rag-*.json"):
+                with suppress(OSError):
+                    cache.unlink()
+        slidev_root = (store.root / "slidev" / pid / "assets").resolve()
+        if slidev_root.is_dir():
+            for name in image_names:
+                target = (slidev_root / name).resolve()
+                if target.is_relative_to(slidev_root):
+                    with suppress(OSError):
+                        target.unlink()
+        return web.json_response(public_project(store.project(pid)))
+
     async def slide(request):
         p = store.project(request.match_info["pid"])
         item = next((s for s in p["slides"] if s["id"] == request.match_info["sid"]), None)
@@ -464,6 +506,7 @@ def create_app(root=None, data_root=None):
     app.router.add_get("/api/projects/{pid}", project)
     app.router.add_patch("/api/projects/{pid}", project)
     app.router.add_post("/api/projects/{pid}/sources", upload)
+    app.router.add_delete("/api/projects/{pid}/sources/{source_id}", remove_source)
     app.router.add_patch("/api/projects/{pid}/slides/{sid}", slide)
     app.router.add_post("/api/projects/{pid}/reorder", reorder)
     app.router.add_post("/api/projects/{pid}/slides/{sid}/split", split_slide)
