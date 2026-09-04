@@ -146,7 +146,7 @@ PLAN_SCHEMA = {
 }
 
 
-def resolve_section(pages, plan):
+def resolve_section(pages, plan, navigation=""):
     """Require a real pagination run and verify the start and next headings."""
     start, end = plan["printed_start"], plan["printed_end"]
     if start < 1 or end < start:
@@ -161,11 +161,20 @@ def resolve_section(pages, plan):
         if pages[a-1]["printed_page"] != start or pages[b-1]["printed_page"] != end:
             continue
         title = normalized(plan["title"])
-        if not title or title not in normalized(pages[a-1]["text"][:1600]):
-            continue
         next_title = normalized(plan["next_title"])
-        if next_title and (b == len(pages) or next_title not in normalized(pages[b]["text"][:1600])):
-            continue
+        if navigation:
+            # Many textbooks print the lesson title only in the TOC and start
+            # the actual section with its first subsection.  Verify the
+            # model's literal titles against the TOC, while physical page
+            # numbers below still verify the selected body range.
+            toc_text = normalized(navigation)
+            if not title or title not in toc_text or (next_title and next_title not in toc_text):
+                continue
+        else:
+            if not title or title not in normalized(pages[a-1]["text"][:1600]):
+                continue
+            if next_title and (b == len(pages) or next_title not in normalized(pages[b]["text"][:1600])):
+                continue
         matches.append((a, b))
     if len(matches) != 1:
         raise ValueError("Confini della sezione ambigui: indice e titoli reali non coincidono. Nessuna slide generata.")
@@ -183,7 +192,7 @@ async def select_pages(client, source, index, prompt, event, checkpoint, scope_m
         return list(pages), {"title": "Documento completo", "reason": "Tutte le pagine: opzione Documento intero"}
     # Table-of-contents pages are discovered, not provided by the operator.
     toc = [p for p in pages if re.search(
-        r"(?im)^\s*(indice|sommario|contents|table of contents)\s*$", p["text"][:500])]
+        r"(?im)^\s*(indice|sommario|contents|table of contents)\s*$", p["text"])]
     if not toc:
         # A compact heading map supports short PDFs without a table of contents.
         if len(pages) > 60:
@@ -226,7 +235,11 @@ async def select_pages(client, source, index, prompt, event, checkpoint, scope_m
         if plan["scope"] == "whole":
             return pages, {"title": "Documento completo", "reason": plan["evidence"]}
         if plan["scope"] == "section":
-            a, b = resolve_section(pages, plan)
+            try:
+                a, b = resolve_section(pages, plan, navigation)
+            except ValueError as exc:
+                event("Candidato dell’indice scartato · " + str(exc))
+                continue
             return pages[a-1:b], {"title": plan["title"], "reason": plan["evidence"],
                                   "index_pages": [p["pdf_page"] for p in batch]}
     raise ValueError("La sezione richiesta non è stata identificata nell'indice; verifica unità e lezione nel brief")

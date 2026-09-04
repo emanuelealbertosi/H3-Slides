@@ -64,6 +64,59 @@ async def test_model_finds_section_from_toc_and_brief():
     assert details["index_pages"] == [9]
 
 
+@pytest.mark.asyncio
+async def test_toc_footer_and_body_subheading_still_select_verified_lesson():
+    data = pages()
+    data[7]["text"] = (
+        "UDA 1 Il mondo dell'informatica\n"
+        "01 La tecnologia dell'informazione 2\n"
+        "Che cos'è l'informatica 2\nMappa concettuale 14\nVerifiche 15\n"
+        "02 I sistemi di numerazione 16\n" + "voce secondaria\n" * 80 + "Indice")
+    # Real lesson pages may omit the umbrella title and start with a subsection.
+    data[21]["text"] = "Che cos'è l'informatica\n" + "Contenuto leggibile. " * 8
+    calls, events = [], []
+    class Client:
+        async def json(self, prompt, **kwargs):
+            calls.append(prompt)
+            return {"scope":"section", "title":"La tecnologia dell'informazione",
+                    "printed_start":2, "printed_end":15,
+                    "next_title":"I sistemi di numerazione",
+                    "evidence":"UDA 1, lezione 01"}
+    async def checkpoint():
+        pass
+    selected, details = await select_pages(
+        Client(), {"name":"libro.pdf"}, {"pages":data},
+        "UDA 1 lezione 1", events.append, checkpoint)
+    assert [page["pdf_page"] for page in selected] == list(range(22, 36))
+    assert details["index_pages"] == [8]
+    assert "UDA 1" in calls[0]
+
+
+@pytest.mark.asyncio
+async def test_invalid_toc_candidate_is_skipped_instead_of_aborting_search():
+    data = pages()
+    data[0]["text"] = "Indice\nUDA 9\n01 Lezione sbagliata 400\n02 Altra lezione 410"
+    data[1]["text"] = "Indice\nUDA 10\n01 Ancora una lezione sbagliata 450"
+    data[2]["text"] = "Indice\nUDA 1\n01 Il linguaggio Python 2\n02 La sintassi di Python e le variabili 16"
+    calls, events = 0, []
+    class Client:
+        async def json(self, prompt, **kwargs):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return {"scope":"section", "title":"Lezione sbagliata",
+                        "printed_start":400, "printed_end":409,
+                        "next_title":"Altra lezione", "evidence":"candidato errato"}
+            return plan()
+    async def checkpoint():
+        pass
+    selected, details = await select_pages(
+        Client(), {}, {"pages":data}, "UDA 1 lezione 1", events.append, checkpoint)
+    assert calls == 2
+    assert [page["pdf_page"] for page in selected] == list(range(22, 36))
+    assert any("scartato" in event for event in events)
+
+
 def test_large_pdf_is_indexed_without_rendering_all_pages(tmp_path):
     store = Store(tmp_path)
     project = store.create(ProjectInput().model_dump())
