@@ -101,8 +101,6 @@ class ManimSceneSpec(BaseModel):
         for edge in self.connections:
             if edge.source not in ids or edge.target not in ids or edge.source == edge.target:
                 raise ValueError("Collegamento con estremi mancanti o identici")
-        if len(self.elements) >= 3 and self.connections and all(element.type == "box" for element in self.elements):
-            raise ValueError("Un flusso non può essere composto solo da rettangoli: usa circle per inizio/fine, decision per le condizioni e forme semantiche pertinenti")
         for index, a in enumerate(self.elements):
             for b in self.elements[index+1:]:
                 if abs(a.x-b.x) < (a.width+b.width)/2+.08 and abs(a.y-b.y) < (a.height+b.height)/2+.08:

@@ -194,6 +194,23 @@ def fallback_diagram(content, previous=None, required_family=""):
             "scene": scene.model_dump()}
 
 
+def validate_designed_scene(scene, required=""):
+    """Apply editorial rules only to newly AI-designed scenes.
+
+    Persisted scenes created by older versions must remain readable so that the
+    user can explicitly redesign them with the current compiler.
+    """
+    if (len(scene.elements) >= 3 and scene.connections and
+            all(element.type == "box" for element in scene.elements)):
+        raise ValueError("Un flusso non può essere composto solo da rettangoli: usa circle per inizio/fine, decision per le condizioni e forme semantiche pertinenti")
+    if required == "flowchart":
+        semantic = {"circle", "decision", "database", "document"}
+        if not scene.connections or not any(element.type in semantic for element in scene.elements):
+            raise ValueError("È richiesto un vero diagramma di flusso con frecce e forme semantiche")
+    elif required and not any(element.type == required for element in scene.elements):
+        raise ValueError(f"È richiesto un diagramma {required}, non una sua approssimazione")
+
+
 def scene_for(diagram):
     if diagram.get("kind") == "manim":
         if not diagram.get("scene"):
@@ -283,12 +300,7 @@ async def design_diagram(client, renderer, pid, project, content, context, instr
             event("Manim · testo, numeri e ingombri normalizzati automaticamente")
         try:
             scene = ManimSceneSpec.model_validate(candidate)
-            if required == "flowchart":
-                semantic = {"circle", "decision", "database", "document"}
-                if not scene.connections or not any(element.type in semantic for element in scene.elements):
-                    raise ValueError("È richiesto un vero diagramma di flusso con frecce e forme semantiche")
-            elif required and not any(element.type == required for element in scene.elements):
-                raise ValueError(f"È richiesto un diagramma {required}, non una sua approssimazione")
+            validate_designed_scene(scene, required)
             diagram = {"kind": "manim", "labels": [], "brief": content.diagram.brief, "scene": scene.model_dump()}
             await checkpoint()
             event("Rendering Manim · 1800 × 1200 · verifica testi, ingombri e collegamenti")

@@ -5,7 +5,8 @@ import pytest
 from manim import tempconfig
 from h3_slides.diagram_layout import route_connection
 from h3_slides.diagram_spec import Element, ManimSceneSpec
-from h3_slides.diagrams import ManimRenderer, fallback_diagram, normalize_scene_geometry, requested_family
+from h3_slides.diagrams import (ManimRenderer, fallback_diagram, normalize_scene_geometry,
+                                requested_family, validate_designed_scene)
 from h3_slides.manim_scene import build_scene
 from h3_slides.models import Generation, ProjectInput, SlideContent
 from h3_slides.storage import Store
@@ -45,8 +46,11 @@ def test_scene_rejects_overlap_and_executable_fields():
         {"id":f"n{i}","type":"box","x":2+i*4,"y":4,"width":2.5,"height":1.2,"text":str(i)}
         for i in range(3)], "connections":[
         {"source":"n0","target":"n1"},{"source":"n1","target":"n2"}]}
+    # Historical/manual scenes remain loadable, while a newly AI-designed
+    # all-box flow is rejected by the editorial pass.
+    box_scene = ManimSceneSpec.model_validate(boxes)
     with pytest.raises(ValueError, match="solo da rettangoli"):
-        ManimSceneSpec.model_validate(boxes)
+        validate_designed_scene(box_scene)
 
 
 def test_router_avoids_every_unrelated_element():
