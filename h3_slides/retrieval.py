@@ -72,6 +72,62 @@ def normalized(value):
     return re.sub(r"[^a-z0-9]", "", unicodedata.normalize("NFKD", value).lower())
 
 
+def outline_topic_section(pages, outline, prompt):
+    """Resolve a clear topical request against trusted PDF bookmarks.
+
+    This handles manuals and reports whose users ask for a subject rather than
+    for a numbered unit/lesson.  A unique, distinctive lexical match is
+    required; ambiguous requests fall through to model-guided TOC navigation.
+    """
+    entries = []
+    for position, raw in enumerate(outline or []):
+        if not isinstance(raw, (list, tuple)) or len(raw) < 3:
+            continue
+        level, title, pdf_page = raw[:3]
+        if not isinstance(level, int) or not isinstance(title, str) or not isinstance(pdf_page, int):
+            continue
+        if level < 1 or not 1 <= pdf_page <= len(pages):
+            continue
+        tokens = set(evidence_tokens(title))
+        if not tokens or normalized(title) in {"indice", "sommario", "contents", "tableofcontents"}:
+            continue
+        entries.append({"position": position, "level": level, "title": title,
+                        "pdf_page": pdf_page, "tokens": tokens})
+    query = set(evidence_tokens(prompt))
+    if not entries or not query:
+        return None
+    frequencies = Counter(token for entry in entries for token in entry["tokens"])
+    total = len(entries)
+    for entry in entries:
+        overlap = query & entry["tokens"]
+        entry["score"] = sum(math.log(1 + (total-frequencies[token]+.5)/(frequencies[token]+.5)) ** 2
+                             for token in overlap)
+    ranked = sorted(entries, key=lambda entry: entry["score"], reverse=True)
+    best = ranked[0]
+    second = ranked[1]["score"] if len(ranked) > 1 else 0
+    # One rare term (or several ordinary ones) may be sufficient, but a generic
+    # word shared by many headings must not select an arbitrary chapter.
+    if best["score"] < 1.0 or (second > 0 and best["score"] < second * 1.55):
+        return None
+    start = best["pdf_page"]
+    end = len(pages)
+    original = best["position"]
+    for raw in (outline or [])[original+1:]:
+        if not isinstance(raw, (list, tuple)) or len(raw) < 3:
+            continue
+        level, _, pdf_page = raw[:3]
+        if isinstance(level, int) and isinstance(pdf_page, int) and level <= best["level"] and pdf_page > start:
+            end = min(len(pages), pdf_page - 1)
+            break
+    if end < start:
+        return None
+    return pages[start-1:end], {
+        "title": best["title"],
+        "reason": "Corrispondenza tematica univoca nei segnalibri PDF",
+        "outline_entry": original,
+    }
+
+
 def printed_number(page):
     candidates = []
     for block in page.get_text("blocks"):
@@ -190,6 +246,13 @@ async def select_pages(client, source, index, prompt, event, checkpoint, scope_m
         raise ValueError("PDF scansionato oltre 60 pagine senza testo: esegui OCR prima della generazione")
     if scope_mode == "whole":
         return list(pages), {"title": "Documento completo", "reason": "Tutte le pagine: opzione Documento intero"}
+    structured_locator = re.search(
+        r"(?i)\b(?:uda|unit[aà]|lezione|lesson)\s*(?:n(?:umero)?\.?\s*)?[#°º]?\s*\d+", prompt)
+    if index.get("outline") and not structured_locator:
+        topical = outline_topic_section(pages, index["outline"], prompt)
+        if topical:
+            event("Argomento individuato nei segnalibri PDF · " + topical[1]["title"])
+            return topical
     # Table-of-contents pages are discovered, not provided by the operator.
     toc = [p for p in pages if re.search(
         r"(?im)^\s*(indice|sommario|contents|table of contents)\s*$", p["text"])]
@@ -222,7 +285,9 @@ async def select_pages(client, source, index, prompt, event, checkpoint, scope_m
         plan = await client.json(
             "Localizza la sezione richiesta nell'INDICE. Questa è soltanto la ricerca dei confini, non una slide. "
             "UDA significa unità didattica: abbina numero dell'unità E numero della lezione. "
-            "scope=section solo se l'abbinamento è esplicito; uncertain se non è in questo estratto. "
+            "Per richieste numerate, scope=section solo se l'abbinamento di unità e lezione è esplicito. "
+            "Per richieste tematiche senza numeri, scope=section se una voce dell'indice corrisponde chiaramente "
+            "all'argomento; uncertain se non è in questo estratto. "
             "scope=whole SOLO se l'utente chiede esplicitamente l'intero documento, non se non trovi la lezione. "
             "title è il titolo ESATTO della sezione, senza prefisso L1/Lezione. "
             "printed_start è il numero STAMPATO di inizio. printed_end è la pagina precedente alla lezione "
@@ -242,7 +307,7 @@ async def select_pages(client, source, index, prompt, event, checkpoint, scope_m
                 continue
             return pages[a-1:b], {"title": plan["title"], "reason": plan["evidence"],
                                   "index_pages": [p["pdf_page"] for p in batch]}
-    raise ValueError("La sezione richiesta non è stata identificata nell'indice; verifica unità e lezione nel brief")
+    raise ValueError("L'argomento o la sezione richiesta non è stata identificata nell'indice; rendi più specifico il brief")
 
 
 async def prepare_pdf(store, pid, source, client, prompt, event, checkpoint, scope_mode="auto"):

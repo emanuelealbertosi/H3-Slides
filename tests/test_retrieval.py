@@ -65,6 +65,32 @@ async def test_model_finds_section_from_toc_and_brief():
 
 
 @pytest.mark.asyncio
+async def test_topical_manual_request_uses_distinctive_pdf_bookmark():
+    data = [{"pdf_page":n, "printed_page":n-12,
+             "text":"Contenuto leggibile del manuale fotografico. " * 3} for n in range(1, 341)]
+    outline = [
+        [1, "Sommario", 2],
+        [1, "Funzioni per la messa a fuoco", 115],
+        [1, "Modalità di scatto speciali (Modalità computazionali)", 257],
+        [1, "Funzioni disponibili solo in Modalità video", 297],
+        [1, "Riproduzione", 303],
+    ]
+    class NoNavigation:
+        async def json(self, *_args, **_kwargs):
+            raise AssertionError("Un segnalibro univoco non richiede una scelta del modello")
+    async def checkpoint():
+        pass
+    events = []
+    selected, details = await select_pages(
+        NoNavigation(), {"name":"fotocamera.pdf"}, {"pages":data, "outline":outline},
+        "Fai brevi slide spiegando le funzioni computazionali della fotocamera, cosa sono e come funzionano",
+        events.append, checkpoint)
+    assert [page["pdf_page"] for page in selected] == list(range(257, 297))
+    assert details["title"] == "Modalità di scatto speciali (Modalità computazionali)"
+    assert any("segnalibri PDF" in event for event in events)
+
+
+@pytest.mark.asyncio
 async def test_toc_footer_and_body_subheading_still_select_verified_lesson():
     data = pages()
     data[7]["text"] = (
