@@ -211,7 +211,7 @@ async function generate(slideId=null,diagramOnly=false,regenerateAll=false,repla
   if(busy)return;busy=true;$('generate').disabled=true;
   try{
     await finishInlineEdits();
-    if(regenerateAll&&!confirm('Rigenerare tutte le slide? I contenuti attuali saranno sostituiti; brief, fonti, tema, ordine e scaletta restano invariati.'))return;
+    if(regenerateAll&&current?.slides.length&&!confirm('Rigenerare tutte le slide? I contenuti attuali saranno sostituiti; brief, fonti, tema, ordine e scaletta restano invariati.'))return;
     if(replaceDiagrams&&!confirm('Riprogettare tutti i diagrammi con il modello? I testi delle slide restano invariati.'))return;
     if($('provider').value==='local'&&adminDirty){
       navigatePage(true);throw new Error('Salva il profilo llama.cpp modificato in Admin prima di generare.');
@@ -351,7 +351,9 @@ function render(){
   }
   for(const card of [...container.children])if(!ids.has(card.dataset.id))card.remove();
   document.querySelectorAll('[data-export]').forEach(b=>b.disabled=!current?.slides.length||exporting.has(b.dataset.export));
-  $('regenerate-all').disabled=!current?.slides.length||busy;
+  const hasSlides=Boolean(current?.slides.length);
+  $('regenerate-all').disabled=!current||busy;
+  $('regenerate-all').textContent=hasSlides?'↻ Rigenera tutte le slide':'↻ Riprova generazione';
   const missingDiagrams=(current?.slides||[]).filter(slide=>slide.content?.layout!=='cover'&&slide.status==='ready'&&!slide.diagram_render?.asset).length;
   $('generate-missing-diagrams').hidden=!current?.use_manim_diagrams;
   $('generate-missing-diagrams').disabled=!missingDiagrams||busy;
