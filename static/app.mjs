@@ -5,7 +5,7 @@ const $=id=>document.getElementById(id);
 const layoutOptions=value=>'<option value="content">Automatico adattivo</option>'+Object.entries(layouts).map(([key,label])=>'<option value="'+key+'" '+(key===value?'selected':'')+'>'+label+'</option>').join('');
 $('edit-layout').innerHTML=layoutOptions('content');
 const style=document.createElement('style');style.textContent=slideCSS;document.head.append(style);
-let current=null,projects=[],jobs=[],editing=null,job=null,busy=false,dragged=null;
+let current=null,projects=[],documents=[],jobs=[],editing=null,job=null,busy=false,dragged=null;
 let polling=false;
 let modelInfo=null;
 let apiSettings=null,adminData=null,adminDirty=false,adminLoading=null;
@@ -119,6 +119,22 @@ async function loadProjects(){
   if(current)$('project-list').value=current.id;
   renderLibrary();
 }
+async function loadDocuments(){
+  documents=await api('/api/documents');
+  renderDocumentLibrary();
+}
+function renderDocumentLibrary(){
+  const container=$('document-library'),attached=new Set((current?.sources||[]).map(s=>s.library_id||s.id));
+  $('document-library-count').textContent=documents.length?'· '+documents.length:'';
+  container.innerHTML=documents.length?documents.map(doc=>{
+    const present=attached.has(doc.library_id);
+    const details=doc.page_count?doc.page_count+' pagine':doc.image_count?doc.image_count+' immagini':String(doc.kind||'documento').toUpperCase();
+    return '<div class="library-document"><div><strong>'+esc(doc.name)+'</strong><small>'+esc(details)+' · da '+esc(doc.project_title)+'</small></div><div class="library-document-actions">'+
+      (doc.viewable?'<a class="quiet button-link" href="/api/documents/'+encodeURIComponent(doc.project_id)+'/'+encodeURIComponent(doc.source_id)+'" target="_blank" rel="noopener">Apri</a>':'')+
+      '<button type="button" class="quiet" data-reuse-project="'+esc(doc.project_id)+'" data-reuse-source="'+esc(doc.source_id)+'" '+(present?'disabled':'')+'>'+
+      (present?'Già nel progetto':'Usa nel progetto')+'</button></div></div>';
+  }).join(''):'<p class="muted hint">La libreria è vuota. Il primo documento aggiunto comparirà qui.</p>';
+}
 function renderLibrary(){
   $('library-grid').innerHTML=projects.length?projects.map(p=>{
     const when=new Date(p.updated_at),date=Number.isNaN(when.getTime())?'':when.toLocaleString('it-IT',{dateStyle:'medium',timeStyle:'short'});
@@ -162,7 +178,7 @@ $('library-grid').onclick=e=>{
 };
 $('files').onchange=async e=>{
   const files=[...e.target.files];e.target.value='';if(!files.length)return;
-  try{await saveProject();for(const file of files){const form=new FormData();form.append('file',file);toast('Lettura di '+file.name+'…');current=await api('/api/projects/'+current.id+'/sources','POST',form)}render();toast('Fonti aggiunte')}catch(error){toast(error.message)}
+  try{await saveProject();for(const file of files){const form=new FormData();form.append('file',file);toast('Lettura di '+file.name+'…');current=await api('/api/projects/'+current.id+'/sources','POST',form)}await loadDocuments();render();toast('Fonti aggiunte')}catch(error){toast(error.message)}
 };
 function openModelSetup(reason='Scegli un modello GGUF gia presente sul disco.'){
   navigatePage(true);
@@ -262,7 +278,8 @@ $('open-slidev').onclick=async()=>{
 };
 function sourceHTML(s){
   return '<div class="source"><div class="source-head"><strong>'+esc(s.name)+'</strong>'+
-    '<button type="button" class="quiet danger" data-remove-source="'+esc(s.id)+'">Rimuovi</button></div>'+
+    '<span class="source-actions"><a class="quiet button-link" href="/api/documents/'+encodeURIComponent(current.id)+'/'+encodeURIComponent(s.id)+'" target="_blank" rel="noopener">Apri</a>'+
+    '<button type="button" class="quiet danger" data-remove-source="'+esc(s.id)+'">Rimuovi</button></span></div>'+
     (s.page_count?'<div class="muted">'+s.page_count+' pagine indicizzate · ricerca locale</div>':'')+
     (s.selection?'<details open><summary>Pagine usate: '+esc(s.selection.summary)+'</summary><small>'+esc(s.selection.reason)+'</small></details>':
       s.page_count?'<small>La sezione verrà individuata dal modello alla generazione.</small>':'')+
@@ -277,10 +294,20 @@ $('sources').onclick=async event=>{
   button.disabled=true;
   try{
     current=await api('/api/projects/'+current.id+'/sources/'+encodeURIComponent(source.id),'DELETE');
-    render();toast('Documento rimosso dal progetto');
+    await loadDocuments();render();toast('Documento rimosso dal progetto');
   }catch(error){
     toast(error.message);if(button.isConnected)button.disabled=false;
   }
+};
+$('document-library').onclick=async event=>{
+  const button=event.target.closest('[data-reuse-source]');if(!button)return;
+  button.disabled=true;
+  try{
+    if(!current||drafts.has('brief'))await saveProject();
+    current=await api('/api/projects/'+current.id+'/sources/reuse','POST',{
+      project_id:button.dataset.reuseProject,source_id:button.dataset.reuseSource});
+    await loadDocuments();render();toast('Documento aggiunto al progetto dalla libreria locale');
+  }catch(error){toast(error.message);if(button.isConnected)button.disabled=false}
 };
 const resize=new ResizeObserver(entries=>{for(const entry of entries)entry.target.style.setProperty('--slide-scale',entry.contentRect.width/1280)});
 function render(){
@@ -295,6 +322,7 @@ function render(){
     $('theme-editor').querySelector('[data-theme-color="'+key+'"]').value=autoValues[key];
   $('deck-title').textContent=current?.title||'Spazio alle idee.';
   $('sources').innerHTML=current?current.sources.map(sourceHTML).join(''):'';
+  renderDocumentLibrary();
   $('web-options').hidden=!$('web-enabled').checked;
   $('source-mode').textContent=$('web-enabled').checked?'Ricerca web attiva: estratti delle pagine lette ed eventuali allegati. Verifica le fonti prima dell’uso.':
     current?.sources.length?'Con documenti allegati: il modello usa le fonti fornite. Le immagini richiedono vision.':'Nessun allegato: genera dalla conoscenza del modello. Nessuna ricerca web; verifica fatti e date importanti.';
@@ -574,7 +602,7 @@ async function poll(){
   }catch(error){$('connection').textContent='● App non raggiungibile'}finally{polling=false}
 }
 async function init(){
-  try{await Promise.all([loadProjects(),models()]);const id=new URLSearchParams(location.search).get('project')||localStorage.getItem('h3slides-project');
+  try{await Promise.all([loadProjects(),loadDocuments(),models()]);const id=new URLSearchParams(location.search).get('project')||localStorage.getItem('h3slides-project');
     if(projects.some(p=>p.id===id))await selectProject(id);await poll();
   }catch(error){toast(error.message)}
   setInterval(poll,1500);

@@ -110,6 +110,12 @@ class ProjectInput(BaseModel):
     theme_design: ThemeDesign = Field(default_factory=ThemeDesign)
 
 
+class ReuseSource(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    project_id: str = Field(min_length=1, max_length=80)
+    source_id: str = Field(min_length=1, max_length=80)
+
+
 class SlideEdit(BaseModel):
     revision: int
     content: SlideContent

@@ -1,4 +1,5 @@
 import asyncio
+import copy
 from contextlib import suppress
 import html
 import json
@@ -14,7 +15,7 @@ from aiohttp import web
 from pydantic import ValidationError
 from .ingest import ingest, MAX_BYTES
 from .llm import ChildGuard, LlamaManager
-from .models import Generation, ProjectInput, SlideContent, SlideEdit
+from .models import Generation, ProjectInput, ReuseSource, SlideContent, SlideEdit
 from .storage import Store, uid
 from .worker import Worker
 from .slidev import write_slidev
@@ -220,6 +221,43 @@ def create_app(root=None, data_root=None):
         return web.json_response([{"id": p["id"], "title": p["title"], "updated_at": p["updated_at"],
                                   "slide_count": len(p["slides"])} for p in store.projects()])
 
+    async def documents(request):
+        """Expose one safe library entry per logical local document."""
+        result, seen = [], set()
+        for p in store.projects():
+            for source in p["sources"]:
+                library_id = source.get("library_id") or source["id"]
+                if library_id in seen:
+                    continue
+                seen.add(library_id)
+                result.append({
+                    "library_id": library_id,
+                    "project_id": p["id"],
+                    "source_id": source["id"],
+                    "project_title": source.get("library_origin_title") or p["title"],
+                    "name": source["name"],
+                    "kind": source["kind"],
+                    "page_count": source.get("page_count", 0),
+                    "image_count": len(source.get("images", [])),
+                    "viewable": bool(source.get("pdf_file") or source.get("images") or source.get("text")),
+                    "updated_at": p["updated_at"],
+                })
+        return web.json_response(result)
+
+    async def view_document(request):
+        pid, source_id = request.match_info["pid"], request.match_info["source_id"]
+        p = store.project(pid)
+        source = next((item for item in p["sources"] if item.get("id") == source_id), None)
+        if source is None:
+            raise KeyError()
+        if source.get("pdf_file"):
+            return web.FileResponse(store.asset_path(pid, source["pdf_file"]))
+        if source.get("images"):
+            return web.FileResponse(store.asset_path(pid, source["images"][0]["id"]))
+        if source.get("text"):
+            return web.Response(text=source["text"], content_type="text/plain", charset="utf-8")
+        raise KeyError()
+
     async def project(request):
         p = store.project(request.match_info["pid"])
         if request.method == "PATCH":
@@ -250,10 +288,72 @@ def create_app(root=None, data_root=None):
                     raise ValueError("Massimo 250 MB per file")
             source = ingest(store, pid, part.filename, bytes(raw))
             p = store.project(pid)
+            source["library_id"] = source["id"]
+            source["library_origin_title"] = p["title"]
             p["sources"].append(source)
             store.save_project(p)
         if source is None:
             raise ValueError("Nessun file allegato")
+        return web.json_response(public_project(store.project(pid)))
+
+    async def reuse_source(request):
+        pid = request.match_info["pid"]
+        if worker.active():
+            raise ValueError("Attendi la fine della generazione o annullala prima di riusare una fonte")
+        target = store.project(pid)
+        choice = ReuseSource.model_validate(await request.json())
+        origin = store.project(choice.project_id)
+        source = next((item for item in origin["sources"] if item.get("id") == choice.source_id), None)
+        if source is None:
+            raise KeyError()
+        library_id = source.get("library_id") or source["id"]
+        if any((item.get("library_id") or item["id"]) == library_id for item in target["sources"]):
+            raise ValueError("Questo documento è già presente nel progetto")
+
+        clone = copy.deepcopy(source)
+        clone["id"] = uid()
+        clone["library_id"] = library_id
+        clone["library_origin_title"] = source.get("library_origin_title") or origin["title"]
+        if "selection" in clone:
+            clone["selection"] = None
+
+        names = [source.get("pdf_file"), source.get("page_index_file")]
+        names.extend(image.get("id") for image in source.get("images", []))
+        names = [name for name in dict.fromkeys(names) if name]
+        copied, mapping = [], {}
+        try:
+            for name in names:
+                old_path = store.asset_path(origin["id"], name)
+                if not old_path.is_file():
+                    raise ValueError(f"File del documento non disponibile: {name}")
+                suffix = Path(name).suffix or ".bin"
+                new_name = uid() + suffix.lower()
+                new_path = store.asset_path(pid, new_name)
+                try:
+                    os.link(old_path, new_path)
+                except OSError:
+                    shutil.copy2(old_path, new_path)
+                copied.append(new_path)
+                mapping[name] = new_name
+            if clone.get("pdf_file"):
+                clone["pdf_file"] = mapping[clone["pdf_file"]]
+            if clone.get("page_index_file"):
+                clone["page_index_file"] = mapping[clone["page_index_file"]]
+            for image in clone.get("images", []):
+                image["id"] = mapping[image["id"]]
+            target["sources"].append(clone)
+            target["revision"] += 1
+            store.save_project(target)
+        except BaseException:
+            for path in copied:
+                with suppress(OSError):
+                    path.unlink()
+            raise
+
+        asset_root = (store.root / "assets" / pid).resolve()
+        for cache in asset_root.glob("rag-*.json"):
+            with suppress(OSError):
+                cache.unlink()
         return web.json_response(public_project(store.project(pid)))
 
     async def remove_source(request):
@@ -503,9 +603,12 @@ def create_app(root=None, data_root=None):
     app.router.add_post("/api/llm/{action}", llm_control)
     app.router.add_get("/api/projects", projects)
     app.router.add_post("/api/projects", projects)
+    app.router.add_get("/api/documents", documents)
+    app.router.add_get("/api/documents/{pid}/{source_id}", view_document)
     app.router.add_get("/api/projects/{pid}", project)
     app.router.add_patch("/api/projects/{pid}", project)
     app.router.add_post("/api/projects/{pid}/sources", upload)
+    app.router.add_post("/api/projects/{pid}/sources/reuse", reuse_source)
     app.router.add_delete("/api/projects/{pid}/sources/{source_id}", remove_source)
     app.router.add_patch("/api/projects/{pid}/slides/{sid}", slide)
     app.router.add_post("/api/projects/{pid}/reorder", reorder)

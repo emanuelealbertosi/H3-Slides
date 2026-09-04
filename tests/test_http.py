@@ -108,6 +108,52 @@ async def test_remove_source_deletes_local_derivatives_and_unlinks_slide_image(t
 
 
 @pytest.mark.asyncio
+async def test_uploaded_document_can_be_reused_independently(tmp_path):
+    app = create_app(ROOT, tmp_path / "data")
+    async with TestClient(TestServer(app)) as client:
+        first = await (await client.post("/api/projects", headers=HEADERS,
+                                        json={"title":"Progetto sorgente", "prompt":"Test"})).json()
+        second = await (await client.post("/api/projects", headers=HEADERS,
+                                         json={"title":"Nuovo progetto", "prompt":"Altro test"})).json()
+        raw = io.BytesIO()
+        Image.new("RGB", (40, 30), "teal").save(raw, format="PNG")
+        form = aiohttp.FormData()
+        form.add_field("file", raw.getvalue(), filename="diagramma.png")
+        response = await client.post(f"/api/projects/{first['id']}/sources", headers=HEADERS, data=form)
+        uploaded = (await response.json())["sources"][0]
+        original_image = uploaded["images"][0]["id"]
+
+        response = await client.get("/api/documents")
+        assert response.status == 200
+        library = await response.json()
+        assert len(library) == 1
+        assert library[0]["name"] == "diagramma.png"
+        assert library[0]["project_title"] == "Progetto sorgente"
+        assert "text" not in library[0]
+        preview = await client.get(f"/api/documents/{first['id']}/{uploaded['id']}")
+        assert preview.status == 200
+        assert await preview.read() == app["store"].asset_path(first["id"], original_image).read_bytes()
+
+        response = await client.post(f"/api/projects/{second['id']}/sources/reuse", headers=HEADERS,
+                                     json={"project_id":first["id"], "source_id":uploaded["id"]})
+        assert response.status == 200
+        reused = (await response.json())["sources"][0]
+        assert reused["id"] != uploaded["id"]
+        assert reused["library_id"] == uploaded["library_id"]
+        assert reused["images"][0]["id"] != original_image
+        reused_path = app["store"].asset_path(second["id"], reused["images"][0]["id"])
+        assert reused_path.read_bytes() == app["store"].asset_path(first["id"], original_image).read_bytes()
+
+        duplicate = await client.post(f"/api/projects/{second['id']}/sources/reuse", headers=HEADERS,
+                                      json={"project_id":first["id"], "source_id":uploaded["id"]})
+        assert duplicate.status == 400
+        removed = await client.delete(f"/api/projects/{first['id']}/sources/{uploaded['id']}", headers=HEADERS)
+        assert removed.status == 200
+        assert reused_path.is_file()
+        assert len(await (await client.get("/api/documents")).json()) == 1
+
+
+@pytest.mark.asyncio
 async def test_api_and_real_exports(tmp_path):
     app = create_app(ROOT, tmp_path / "data")
     app["worker"].clients = SingleSlideLLM

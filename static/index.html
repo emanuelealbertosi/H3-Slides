@@ -38,6 +38,9 @@
   <label class="dropzone">＋ Aggiungi documenti · facoltativo<input id="files" type="file" accept=".pdf,.md,.txt,.png,.jpg,.jpeg,.webp" multiple><small>PDF, Markdown, immagini: report, appunti, libri, schermate.<br>Puoi anche non allegare nulla e scrivere solo un argomento.</small></label>
   <label>Uso dei PDF allegati<select id="pdf-scope"><option value="auto">Cerca le pagine pertinenti dal prompt</option><option value="whole">Documento intero · anche senza indice</option></select><small>Per una sezione indica capitolo, argomento o lezione. Documento intero legge tutte le pagine; i PDF lunghi richiedono più tempo. Scansioni: serve vision o OCR.</small></label>
   <div id="sources"></div>
+  <details class="model-panel document-library-panel"><summary>Documenti già caricati <span id="document-library-count"></span></summary>
+  <p class="muted hint">Riusa un documento presente in un altro progetto senza cercarlo di nuovo sul disco.</p>
+  <div id="document-library"></div></details>
   <details class="model-panel" open><summary>Ricerca web · gratuita e facoltativa</summary>
   <label class="check"><input id="web-enabled" type="checkbox">Integra fonti dal web</label>
   <div id="web-options" hidden>
