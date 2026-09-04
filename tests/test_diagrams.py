@@ -2,9 +2,11 @@ import json
 from types import SimpleNamespace
 from PIL import Image
 import pytest
+from manim import tempconfig
 from h3_slides.diagram_layout import route_connection
 from h3_slides.diagram_spec import Element, ManimSceneSpec
-from h3_slides.diagrams import ManimRenderer, fallback_diagram, normalize_scene_geometry
+from h3_slides.diagrams import ManimRenderer, fallback_diagram, normalize_scene_geometry, requested_family
+from h3_slides.manim_scene import build_scene
 from h3_slides.models import Generation, ProjectInput, SlideContent
 from h3_slides.storage import Store
 from h3_slides.worker import Worker, normalize_slide_candidate
@@ -39,6 +41,12 @@ def test_scene_rejects_overlap_and_executable_fields():
     scene["elements"][0]["python"] = "open('private.txt').read()"
     with pytest.raises(ValueError):
         ManimSceneSpec.model_validate(scene)
+    boxes = {"title":"Flusso","elements":[
+        {"id":f"n{i}","type":"box","x":2+i*4,"y":4,"width":2.5,"height":1.2,"text":str(i)}
+        for i in range(3)], "connections":[
+        {"source":"n0","target":"n1"},{"source":"n1","target":"n2"}]}
+    with pytest.raises(ValueError, match="solo da rettangoli"):
+        ManimSceneSpec.model_validate(boxes)
 
 
 def test_router_avoids_every_unrelated_element():
@@ -85,6 +93,38 @@ def test_common_remote_scene_type_and_length_errors_are_repaired():
     assert len(scene.elements[0].text) <= 48
     assert isinstance(scene.elements[0].x, float)
     assert all(isinstance(number, float) for number in scene.elements[3].values)
+
+
+@pytest.mark.parametrize(("kind","labels","values","height"), [
+    ("venn", ["Clienti", "Abbonati", "Attivi"], [], 4.0),
+    ("gantt", ["Analisi", "Sviluppo", "Test"], [0, 3, 2, 7, 6, 9], 4.5),
+    ("timeline", ["Idea", "Prototipo", "Rilascio"], [2024, 2025, 2026], 3.5),
+    ("tree", ["Sistema", "Client", "Server", "Web", "API"], [0, 0, 1, 2], 4.5),
+    ("network", ["A", "B", "C", "D"], [0, 1, 1, 2, 2, 3, 3, 0], 4.0),
+])
+def test_semantic_compound_diagrams_build_native_manim(kind, labels, values, height, tmp_path):
+    value = {"title":"Diagramma semantico","takeaway":"La forma comunica il significato.",
+             "elements":[{"id":"main","type":kind,"x":6,"y":4.1,"width":10,"height":height,
+                          "text":kind.upper(),"labels":labels,"values":values,"tone":"blue","stage":1}],
+             "connections":[]}
+    with tempconfig({"media_dir":str(tmp_path / kind)}):
+        root, _header, _footer, stages, report = build_scene(value, {"theme":"ink","font":"Arial"})
+    assert kind in report["types"]
+    assert report["min_font_size"] >= 20
+    assert root.width <= 12 and root.height <= 8
+    assert len(stages) == 1
+
+
+def test_legacy_flow_fallback_uses_flowchart_shapes():
+    content = SlideContent(title="Ricerca", diagram={
+        "kind":"flow","labels":["Inizio","Confronto","Trovato?","Fine"]})
+    scene = fallback_diagram(content, content.diagram.model_dump())["scene"]
+    assert [element["type"] for element in scene["elements"]] == [
+        "circle", "box", "decision", "circle"]
+    assert requested_family("Prepara un diagramma di Gantt") == "gantt"
+    assert requested_family("Mostra un diagramma di Venn") == "venn"
+    with pytest.raises(ValueError, match="vero diagramma gantt"):
+        fallback_diagram(content, content.diagram.model_dump(), "gantt")
 
 
 def test_first_stage_cannot_inject_or_duplicate_a_manim_scene():
@@ -201,6 +241,12 @@ async def test_batch_creates_only_missing_diagrams_and_skips_cover(tmp_path):
     assert "diagram_render" not in result["slides"][1]
     assert all(result["slides"][index]["diagram_render"]["engine"] == "manim" for index in (0, 2))
     assert len(calls) == 2
+    replacement = worker.submit(project["id"], Generation(provider={"mode":"local","model":"fake"},
+                                prompt="Riprogetta con forme semantiche", count=3,
+                                diagram_only=True, replace_diagrams=True))
+    await worker.tasks[replacement["id"]]
+    assert store.job(replacement["id"])["status"] == "completed"
+    assert len(calls) == 4
     store.db.close()
 
 

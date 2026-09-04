@@ -17,6 +17,10 @@
 - Correzione automatica di etichette e numeri fuori schema e fallback Manim
   deterministico dai contenuti approvati; un batch senza alcun inserimento ora
   risulta fallito anziché mostrare un completamento fuorviante.
+- DSL Manim estesa con Venn, Gantt, timeline, alberi e reti nativi; flowchart
+  con forme semantiche e validazione della famiglia nominata nel prompt.
+- Nuovo comando Riprogetta tutti i diagrammi per sostituire in blocco le scene
+  esistenti senza rigenerare i testi delle slide.
 - Errori dello schema remoto ora indicano campo e causa; durante la rigenerazione
   completa una slide non conforme conserva la versione precedente senza
   interrompere quelle successive.

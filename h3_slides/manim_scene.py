@@ -74,7 +74,7 @@ def build_scene(value, project):
         e, tone = element, colors[element.tone]
         w, h = e.width, e.height
         group = VGroup()
-        if e.type in ("grid", "bars", "plot"):
+        if e.type in ("grid", "bars", "plot", "venn", "gantt", "timeline", "tree", "network"):
             panel = RoundedRectangle(width=w, height=h, corner_radius=.13, stroke_width=1.5,
                 color=mix(colors["bg"], tone, .55), fill_color=mix(colors["bg"], tone, .055), fill_opacity=1)
             group.add(panel)
@@ -115,7 +115,7 @@ def build_scene(value, project):
                     label = copy(e.labels[i], step-.1, .4, size=22, minimum=20).move_to([x, baseline-.28, 0])
                     number = copy(f"{value:g}", step-.05, .35, size=22, minimum=20).move_to([x, baseline+bh+.19, 0])
                     group.add(bar, label, number)
-            else:
+            elif e.type == "plot":
                 lo, hi = min(0, min(e.values)), max(e.values)
                 if hi <= lo:
                     hi = lo+1
@@ -130,6 +130,102 @@ def build_scene(value, project):
                 for value in (lo, hi):
                     number = copy(f"{value:g}", .65, .3, size=20, minimum=20).next_to(axes.c2p(0, value), [-1, 0, 0], buff=.05)
                     group.add(number)
+            elif e.type == "venn":
+                count = len(e.labels)
+                if count == 2:
+                    centers = [(-inner_w*.18, 0), (inner_w*.18, 0)]
+                elif count == 3:
+                    centers = [(-inner_w*.18, .22), (inner_w*.18, .22), (0, -.34)]
+                else:
+                    centers = [(-inner_w*.18, .24), (inner_w*.18, .24),
+                               (-inner_w*.18, -.28), (inner_w*.18, -.28)]
+                diameter = min(inner_w*(.56 if count <= 3 else .48), inner_h*(.82 if count <= 3 else .68))
+                venn_colors = [colors["blue"], colors["amber"], colors["violet"], colors["red"]]
+                for index, ((x, y), name) in enumerate(zip(centers, e.labels)):
+                    oval = Ellipse(width=diameter, height=diameter*.72, color=venn_colors[index],
+                                   fill_color=venn_colors[index], fill_opacity=.2, stroke_width=3).move_to([x, y-.04, 0])
+                    label = copy(name, diameter*.55, .45, size=22, minimum=20, bold=True).move_to([x, y, 0])
+                    group.add(oval, label)
+            elif e.type == "gantt":
+                starts, ends = e.values[::2], e.values[1::2]
+                lo, hi = min(starts), max(ends)
+                span = hi-lo
+                label_w, chart_left = inner_w*.28, -inner_w/2+inner_w*.28+.12
+                chart_right = inner_w/2-.08
+                chart_w = chart_right-chart_left
+                row_h = inner_h/len(e.labels)
+                for tick in range(5):
+                    x = chart_left+chart_w*tick/4
+                    group.add(Line([x, -inner_h/2, 0], [x, inner_h/2, 0],
+                                   color=mix(colors["bg"], colors["fg"], .18), stroke_width=1))
+                    tick_value = lo+span*tick/4
+                    tick_label = copy(f"{tick_value:g}", .65, .3, size=20, minimum=20).move_to([x, -inner_h/2-.18, 0])
+                    group.add(tick_label)
+                for index, (name, start, end) in enumerate(zip(e.labels, starts, ends)):
+                    y = inner_h/2-(index+.5)*row_h
+                    label = copy(name, label_w-.12, row_h*.75, size=22, minimum=20).move_to([-inner_w/2+label_w/2, y, 0])
+                    x1 = chart_left+chart_w*(start-lo)/span
+                    x2 = chart_left+chart_w*(end-lo)/span
+                    bar = RoundedRectangle(width=max(.08, x2-x1), height=max(.08, row_h*.5),
+                                           corner_radius=min(.08, row_h*.14), stroke_width=0,
+                                           fill_color=mix(colors["bg"], tone, .72), fill_opacity=1).move_to([(x1+x2)/2, y, 0])
+                    group.add(label, bar)
+            elif e.type == "timeline":
+                positions = list(e.values) if e.values else list(range(len(e.labels)))
+                lo, hi = positions[0], positions[-1]
+                xs = [-inner_w/2+.25+(inner_w-.5)*(value-lo)/(hi-lo) for value in positions]
+                group.add(Arrow([xs[0]-.18, 0, 0], [xs[-1]+.28, 0, 0], buff=0,
+                                color=tone, stroke_width=3, tip_length=.13))
+                slot_w = max(.65, (inner_w-.35)/len(xs)*.9)
+                for index, (x, name) in enumerate(zip(xs, e.labels)):
+                    y = .55 if index % 2 == 0 else -.55
+                    group.add(Dot([x, 0, 0], radius=.07, color=tone),
+                              Line([x, .08 if y > 0 else -.08, 0], [x, y*.58, 0],
+                                   color=tone, stroke_width=2),
+                              copy(name, slot_w, .55, size=22, minimum=20, bold=True).move_to([x, y, 0]))
+            elif e.type == "tree":
+                parents = [None]+[int(value) for value in e.values]
+                depths = [0]
+                for child in range(1, len(e.labels)):
+                    depths.append(depths[parents[child]]+1)
+                levels = max(depths)+1
+                positions = {}
+                node_h = min(.62, inner_h/levels*.55)
+                for depth in range(levels):
+                    nodes = [index for index, value in enumerate(depths) if value == depth]
+                    for column, index in enumerate(nodes):
+                        x = 0 if len(nodes) == 1 else -inner_w/2+(column+1)*inner_w/(len(nodes)+1)
+                        y = inner_h/2-(depth+.5)*inner_h/levels
+                        positions[index] = (x, y)
+                for child in range(1, len(e.labels)):
+                    parent = parents[child]
+                    group.add(Arrow([positions[parent][0], positions[parent][1]-node_h/2, 0],
+                                    [positions[child][0], positions[child][1]+node_h/2, 0],
+                                    buff=.04, color=colors["muted"], stroke_width=2, tip_length=.1))
+                max_nodes = max(depths.count(depth) for depth in set(depths))
+                node_w = min(1.8, inner_w/max_nodes*.72)
+                for index, name in enumerate(e.labels):
+                    x, y = positions[index]
+                    node = RoundedRectangle(width=node_w, height=node_h, corner_radius=.12,
+                                            color=tone, fill_color=mix(colors["bg"], tone, .16),
+                                            fill_opacity=1, stroke_width=2).move_to([x, y, 0])
+                    label = copy(name, node_w-.16, node_h-.08, size=22, minimum=20, bold=index == 0).move_to(node)
+                    group.add(node, label)
+            elif e.type == "network":
+                count = len(e.labels)
+                radius_x, radius_y = inner_w*.38, inner_h*.34
+                positions = [(radius_x*math.cos(-math.pi/2+2*math.pi*i/count),
+                              radius_y*math.sin(-math.pi/2+2*math.pi*i/count)) for i in range(count)]
+                for a, b in zip(e.values[::2], e.values[1::2]):
+                    group.add(Line([*positions[int(a)], 0], [*positions[int(b)], 0],
+                                   color=colors["muted"], stroke_width=2))
+                node_w, node_h = min(1.35, inner_w*.22), min(.72, inner_h*.32)
+                for index, (position, name) in enumerate(zip(positions, e.labels)):
+                    node = Ellipse(width=node_w, height=node_h, color=tone,
+                                   fill_color=mix(colors["bg"], tone, .18), fill_opacity=1,
+                                   stroke_width=2.5).move_to([*position, 0])
+                    label = copy(name, node_w-.12, node_h-.08, size=22, minimum=20, bold=True).move_to(node)
+                    group.add(node, label)
         else:
             fill = mix(colors["bg"], tone, .12)
             if e.type == "decision":

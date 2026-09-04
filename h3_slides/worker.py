@@ -7,7 +7,7 @@ from .content_rules import content_contract, validate_content, fit_complete_sent
 from .storage import uid, now
 from .search_settings import SearchConfig
 from .web_research import WebResearch, public_research, web_context, web_evidence, source_citations
-from .diagrams import ManimRenderer, design_diagram, fallback_diagram
+from .diagrams import ManimRenderer, design_diagram, fallback_diagram, requested_family
 
 KNOWLEDGE_CONTEXT = (
     "MODALITÀ CONOSCENZA DEL MODELLO — nessun documento allegato. "
@@ -201,7 +201,7 @@ class Worker:
                 targets = [s["id"] for i, s in enumerate(project["slides"])
                            if (s["id"] == request.slide_id if request.slide_id else
                                s["content"].get("layout") != "cover" and s["status"] == "ready" and
-                               not s.get("diagram_render", {}).get("asset"))]
+                               (request.replace_diagrams or not s.get("diagram_render", {}).get("asset")))]
                 if not targets:
                     self.store.event(jid, "Nessun diagramma Manim mancante", status="completed", progress=1)
                     return
@@ -213,9 +213,11 @@ class Worker:
                     expected_revision = slide["revision"]
                     content = SlideContent.model_validate(slide["content"])
                     previous_diagram = content.diagram.model_dump()
-                    brief = content.diagram.brief or slide.get("purpose", "") or content.title
+                    brief = (request.prompt if request.slide_id else
+                             content.diagram.brief or slide.get("purpose", "") or content.title)
+                    required_family = requested_family(content.title + " " + brief)
                     try:
-                        if content.diagram.kind == "manim" and content.diagram.scene:
+                        if content.diagram.kind == "manim" and content.diagram.scene and not request.replace_diagrams:
                             diagram = content.diagram.model_dump()
                             rendered = await self.renderer.render(pid, diagram, project)
                         else:
@@ -228,7 +230,7 @@ class Worker:
                         self.store.event(jid, f"Diagramma {index + 1}/{len(targets)} · uso il fallback Manim dopo: " +
                                          str(exc)[:220])
                         try:
-                            diagram = fallback_diagram(content, previous_diagram)
+                            diagram = fallback_diagram(content, previous_diagram, required_family)
                             rendered = await self.renderer.render(pid, diagram, project)
                         except ValueError as fallback_exc:
                             if request.slide_id:
@@ -443,7 +445,8 @@ class Worker:
                         self.store.event(jid, "Progetto Manim non valido; uso una scena deterministica · " +
                                          str(exc)[:220])
                         try:
-                            diagram = fallback_diagram(content, previous_diagram)
+                            required_family = requested_family(content.title + " " + content.diagram.brief)
+                            diagram = fallback_diagram(content, previous_diagram, required_family)
                             rendered = await self.renderer.render(pid, diagram, project)
                             content.diagram = type(content.diagram).model_validate(diagram)
                         except ValueError as fallback_exc:

@@ -67,6 +67,7 @@ class Generation(BaseModel):
     count: int = Field(default=6, ge=1, le=30)
     slide_id: str | None = None
     diagram_only: bool = False
+    replace_diagrams: bool = False
     regenerate_all: bool = False
     web_consent: bool = False
     web_refresh: bool = False
@@ -77,6 +78,8 @@ class Generation(BaseModel):
             raise ValueError("La rigenerazione completa non accetta una singola slide")
         if self.regenerate_all and self.diagram_only:
             raise ValueError("La rigenerazione completa e quella del solo diagramma sono alternative")
+        if self.replace_diagrams and not self.diagram_only:
+            raise ValueError("La sostituzione dei diagrammi richiede diagram_only")
         return self
 
     @field_validator("prompt")

@@ -9,7 +9,8 @@ Tone = Literal["accent", "blue", "amber", "red", "violet", "neutral"]
 class Element(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(pattern=r"^[a-zA-Z][a-zA-Z0-9_-]{0,31}$")
-    type: Literal["box", "decision", "circle", "database", "document", "text", "grid", "bars", "plot"]
+    type: Literal["box", "decision", "circle", "database", "document", "text",
+                  "grid", "bars", "plot", "venn", "gantt", "timeline", "tree", "network"]
     x: float = Field(ge=.2, le=11.8, allow_inf_nan=False)
     y: float = Field(ge=1.1, le=7.2, allow_inf_nan=False)
     width: float = Field(default=2.8, ge=.6, le=11, allow_inf_nan=False)
@@ -36,7 +37,43 @@ class Element(BaseModel):
             raise ValueError(f"Grafico {self.id}: servono almeno due campioni")
         if self.type == "bars" and len(self.labels) != len(self.values):
             raise ValueError(f"Barre {self.id}: ogni valore richiede un'etichetta")
-        if self.type not in ("grid", "bars", "plot") and not self.text.strip():
+        if self.type == "venn" and not 2 <= len(self.labels) <= 4:
+            raise ValueError(f"Venn {self.id}: servono da 2 a 4 insiemi in labels")
+        if self.type == "gantt":
+            if not 1 <= len(self.labels) <= 8 or len(self.values) != len(self.labels)*2:
+                raise ValueError(f"Gantt {self.id}: labels contiene le attività e values le coppie inizio,fine")
+            if any(self.values[i] >= self.values[i+1] for i in range(0, len(self.values), 2)):
+                raise ValueError(f"Gantt {self.id}: ogni fine deve essere maggiore dell'inizio")
+        if self.type == "timeline":
+            if not 2 <= len(self.labels) <= 8:
+                raise ValueError(f"Timeline {self.id}: servono da 2 a 8 eventi")
+            if self.values and (len(self.values) != len(self.labels) or
+                                any(a >= b for a, b in zip(self.values, self.values[1:]))):
+                raise ValueError(f"Timeline {self.id}: values deve contenere una posizione crescente per evento")
+        if self.type == "tree":
+            if not 3 <= len(self.labels) <= 9 or len(self.values) != len(self.labels)-1:
+                raise ValueError(f"Albero {self.id}: labels contiene i nodi e values il genitore di ogni nodo dopo la radice")
+            if any(not value.is_integer() or value < 0 or value >= child
+                   for child, value in enumerate(self.values, start=1)):
+                raise ValueError(f"Albero {self.id}: ogni indice genitore deve essere intero e precedere il figlio")
+            depths = [0]
+            for parent in self.values:
+                depths.append(depths[int(parent)]+1)
+            if max(depths) > 3:
+                raise ValueError(f"Albero {self.id}: massimo quattro livelli per mantenere il testo leggibile")
+        if self.type == "network":
+            if not 3 <= len(self.labels) <= 8 or len(self.values) < 2 or len(self.values) % 2:
+                raise ValueError(f"Rete {self.id}: labels contiene i nodi e values le coppie di indici collegate")
+            pairs = zip(self.values[::2], self.values[1::2])
+            if any(not a.is_integer() or not b.is_integer() or a == b or
+                   a < 0 or b < 0 or a >= len(self.labels) or b >= len(self.labels) for a, b in pairs):
+                raise ValueError(f"Rete {self.id}: gli archi devono usare indici di nodi validi e distinti")
+        if self.type in ("venn", "gantt", "timeline", "tree", "network") and (
+                self.width < 5 or self.height < 3):
+            raise ValueError(f"Diagramma {self.id}: usa width>=5 e height>=3")
+        if self.type in ("gantt", "tree") and self.height < 4:
+            raise ValueError(f"{self.type} {self.id}: usa height>=4")
+        if self.type not in ("grid", "bars", "plot", "venn", "gantt", "timeline", "tree", "network") and not self.text.strip():
             raise ValueError(f"Elemento {self.id}: testo mancante")
         return self
 
@@ -64,6 +101,8 @@ class ManimSceneSpec(BaseModel):
         for edge in self.connections:
             if edge.source not in ids or edge.target not in ids or edge.source == edge.target:
                 raise ValueError("Collegamento con estremi mancanti o identici")
+        if len(self.elements) >= 3 and self.connections and all(element.type == "box" for element in self.elements):
+            raise ValueError("Un flusso non può essere composto solo da rettangoli: usa circle per inizio/fine, decision per le condizioni e forme semantiche pertinenti")
         for index, a in enumerate(self.elements):
             for b in self.elements[index+1:]:
                 if abs(a.x-b.x) < (a.width+b.width)/2+.08 and abs(a.y-b.y) < (a.height+b.height)/2+.08:
@@ -83,7 +122,16 @@ def legacy_scene(diagram):
                       4.15+2.1*math.sin(-math.pi/2+2*math.pi*i/n)) for i in range(n)]
     else:
         positions = [(3 if i % 2 == 0 else 9, 2+(i//2)*1.85) for i in range(n)]
-    elements = [Element(id=f"n{i}", type="box", x=x, y=y, width=3, height=1.1,
+    def legacy_type(index, text):
+        lowered = text.casefold()
+        if "?" in text or any(word in lowered for word in ("condizione", "trova", "verifica")):
+            return "decision"
+        if diagram["kind"] == "flow" and index in (0, n-1):
+            return "circle"
+        if diagram["kind"] == "cycle":
+            return "circle"
+        return "box"
+    elements = [Element(id=f"n{i}", type=legacy_type(i, text), x=x, y=y, width=3, height=1.3,
                         text=text, stage=i+1) for i, ((x, y), text) in enumerate(zip(positions, labels))]
     connections = [] if diagram["kind"] == "comparison" else [
         Connection(source=f"n{i}", target=f"n{(i+1)%n}") for i in range(n if diagram["kind"] == "cycle" else n-1)]
@@ -95,13 +143,20 @@ Il disegno deve spiegare un meccanismo, una struttura o dati concreti presenti n
 Non inventare misurazioni. Per esempi numerici inventati a scopo didattico scrivi 'Esempio illustrativo'.
 Scegli il linguaggio visivo pertinente: decision per condizioni e rami sì/no; database per archivi;
 document per file; circle per entità; grid per pixel/matrici (valori 0..1); bars per confronti quantitativi
-(labels per ogni valore); plot per segnali/campioni; text per annotazioni. Non forzare grafici numerici su argomenti senza dati.
+(labels per ogni valore); plot per segnali/campioni; venn per 2–4 insiemi sovrapposti (nomi in labels);
+gantt per attività temporali (labels e coppie inizio,fine in values); timeline per eventi ordinati
+(labels e posizioni crescenti facoltative in values); tree per gerarchie (labels e indice del genitore
+di ogni nodo dopo la radice in values); network per grafi (labels e coppie di indici collegate in values).
+Usa un solo elemento composto venn/gantt/timeline/tree/network grande almeno width=5,height=3
+(Gantt height>=4), anziché approssimarlo con riquadri. Non forzare grafici numerici su argomenti senza dati.
 Tu progetti elementi e relazioni, Manim costruisce e renderizza la scena.
 Canvas 12 × 8, x cresce verso destra e y verso il basso. x,y sono il CENTRO, width,height l'ingombro totale.
 Area utile x=0.15..11.85, y=1.05..7.25; titolo sopra e conclusione sotto sono automatici.
 Progetta liberamente la disposizione, con 3–7 elementi quando bastano. Esempio di coordinate ampie:
 tre colonne x=2,6,10 con width=3; due righe y=2.6,5.5 con height=1.6.
 Per grid/bars/plot riserva width>=4.5, height>=3.5 e poche annotazioni vicine.
+Un diagramma di flusso usa circle per inizio/fine, decision per condizioni, document/database quando
+semanticamente corretti e connections per le frecce: non rappresentare tutto con box.
 Niente sovrapposizioni. Usa testo BREVE (2–5 parole), caption solo se chiarisce, non ripetere la prosa.
 Le connections referenziano gli id degli elementi; label spiega la relazione, non 'collegamento'.
 Le frecce vengono instradate evitando gli elementi. Lascia spazio tra gli elementi per le etichette.

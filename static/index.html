@@ -57,7 +57,7 @@
   <details class="model-panel" open><summary>Materiale visivo</summary>
   <label class="check"><input id="source-images" type="checkbox" checked>Usa immagini del libro/documento</label>
   <label class="check"><input id="manim-diagrams" type="checkbox">Crea un vero diagramma Manim in ogni slide di contenuto</label>
-  <small>L’opzione è vincolante, non un suggerimento: la copertina resta libera e ogni altra slide riceve una scena pertinente. Un passaggio LLM dedicato progetta oggetti, dati, relazioni e disposizione; Manim costruisce la scena a 1800 × 1200 e ne verifica leggibilità e ingombri. Per i progetti esistenti usa “Crea diagrammi mancanti”. Non viene eseguito codice prodotto dal modello.</small>
+  <small>L’opzione è vincolante, non un suggerimento: la copertina resta libera e ogni altra slide riceve una scena pertinente. Il modello può progettare flowchart, Venn, Gantt, timeline, alberi, reti e grafici; Manim costruisce la scena a 1800 × 1200 e ne verifica leggibilità e ingombri. Per i progetti esistenti usa “Crea diagrammi mancanti” o “Riprogetta tutti”. Non viene eseguito codice prodotto dal modello.</small>
   </details>
   <button id="generate" class="primary">Genera presentazione <span>→</span></button>
   <p class="muted hint">Le slide compaiono una alla volta. Puoi modificarle senza aspettare la fine.</p>
@@ -71,6 +71,7 @@
   <div class="toolbar"><span id="slide-count">0 slide</span><div class="export-group">
   <button id="regenerate-all" class="secondary" type="button">↻ Rigenera tutte le slide</button>
   <button id="generate-missing-diagrams" class="secondary" type="button" hidden>◇ Crea diagrammi mancanti</button>
+  <button id="redesign-diagrams" class="secondary" type="button" hidden>✦ Riprogetta tutti i diagrammi</button>
   <button data-export="pptx" class="secondary">↓ PPTX modificabile</button><button data-export="pdf" class="secondary">↓ PDF</button>
   <button id="open-slidev" class="quiet">Apri Slidev live</button><button data-export="slidev" class="quiet">Sorgenti Slidev</button><button data-export="manim" class="quiet">Manim video + slide</button></div></div>
   <div id="empty"><div class="empty-mark">H3 /</div><h2>Un’idea.<br>Una storia da presentare.</h2><p>Scrivi un argomento oppure aggiungi PDF, testi o immagini.<br>Scegli il modello e genera: qui vedrai crescere la presentazione.</p></div>
@@ -95,7 +96,7 @@
   <div class="row"><label>Titolo interno<input id="scene-title" maxlength="75"></label><label>Conclusione<input id="scene-takeaway" maxlength="130"></label></div>
   <h3>Oggetti Manim</h3><div id="scene-elements"></div><button id="add-scene-element" type="button" class="secondary">＋ Oggetto</button>
   <h3>Relazioni</h3><div id="scene-connections"></div><button id="add-scene-connection" type="button" class="secondary">＋ Relazione</button>
-  <p class="hint muted">Canvas 12 × 8. x cresce verso destra, y verso il basso; width e height sono l’ingombro. Salvando, Manim renderizza di nuovo e rifiuta testi, geometrie o collegamenti non validi.</p>
+  <p class="hint muted">Canvas 12 × 8. x cresce verso destra, y verso il basso; width e height sono l’ingombro. Venn, Gantt, timeline, albero e rete sono oggetti Manim composti: usa Etichette per insiemi/attività/eventi/nodi e Valori per tempi, posizioni, genitori o coppie di nodi. Salvando, Manim renderizza e verifica la scena.</p>
 </div>
 <label id="legacy-diagram-labels">Vecchie etichette · sola compatibilità<textarea id="edit-diagram-labels" rows="4"></textarea></label>
 <label>Note del relatore<textarea id="edit-notes" rows="4"></textarea></label>

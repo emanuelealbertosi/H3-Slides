@@ -207,11 +207,12 @@ $('browse-model').onclick=()=>connectLocalModel('pick');
 $('register-model').onclick=()=>connectLocalModel('register');
 $('refresh-models').onclick=()=>models().catch(e=>toast(e.message));
 $('unload').onclick=async()=>{try{await api('/api/llm/stop','POST',{});await models();toast('Modello di H3-slides scaricato')}catch(e){toast(e.message)}};
-async function generate(slideId=null,diagramOnly=false,regenerateAll=false){
+async function generate(slideId=null,diagramOnly=false,regenerateAll=false,replaceDiagrams=false){
   if(busy)return;busy=true;$('generate').disabled=true;
   try{
     await finishInlineEdits();
     if(regenerateAll&&!confirm('Rigenerare tutte le slide? I contenuti attuali saranno sostituiti; brief, fonti, tema, ordine e scaletta restano invariati.'))return;
+    if(replaceDiagrams&&!confirm('Riprogettare tutti i diagrammi con il modello? I testi delle slide restano invariati.'))return;
     if($('provider').value==='local'&&adminDirty){
       navigatePage(true);throw new Error('Salva il profilo llama.cpp modificato in Admin prima di generare.');
     }
@@ -234,7 +235,8 @@ async function generate(slideId=null,diagramOnly=false,regenerateAll=false){
       diagramOnly?(current.slides.find(s=>s.id===slideId)?.content.diagram?.brief||current.slides.find(s=>s.id===slideId)?.content.title||''):current.prompt):$('prompt').value;
     if(instructions===null)return;
     job=await api('/api/projects/'+current.id+'/generate','POST',{provider:selected,prompt:instructions,count:Number($('count').value),slide_id:slideId,
-      diagram_only:diagramOnly,regenerate_all:regenerateAll,web_consent:diagramOnly?false:$('web-consent').checked,web_refresh:diagramOnly?false:$('web-refresh').checked});
+      diagram_only:diagramOnly,replace_diagrams:replaceDiagrams,regenerate_all:regenerateAll,
+      web_consent:diagramOnly?false:$('web-consent').checked,web_refresh:diagramOnly?false:$('web-refresh').checked});
     $('web-consent').checked=false;$('web-refresh').checked=false;
     toast('Generazione avviata');await poll();
   }catch(e){toast(e.message)}finally{busy=false;$('generate').disabled=false}
@@ -242,6 +244,7 @@ async function generate(slideId=null,diagramOnly=false,regenerateAll=false){
 $('generate').onclick=()=>generate();
 $('regenerate-all').onclick=()=>generate(null,false,true);
 $('generate-missing-diagrams').onclick=()=>generate(null,true);
+$('redesign-diagrams').onclick=()=>generate(null,true,false,true);
 api('/api/admin/search').then(settings=>{$('searxng-url').value=settings.searxng_url}).catch(e=>{$('search-settings-status').textContent=e.message});
 $('save-search-settings').onclick=async()=>{
   try{
@@ -340,6 +343,10 @@ function render(){
   $('generate-missing-diagrams').hidden=!current?.use_manim_diagrams;
   $('generate-missing-diagrams').disabled=!missingDiagrams||busy;
   $('generate-missing-diagrams').textContent='◇ Crea diagrammi mancanti'+(missingDiagrams?' · '+missingDiagrams:'');
+  const diagramSlides=(current?.slides||[]).filter(slide=>slide.content?.layout!=='cover'&&slide.status==='ready').length;
+  $('redesign-diagrams').hidden=!current?.use_manim_diagrams;
+  $('redesign-diagrams').disabled=!diagramSlides||busy;
+  $('redesign-diagrams').textContent='✦ Riprogetta tutti i diagrammi'+(diagramSlides?' · '+diagramSlides:'');
 }
 async function rerenderDiagram(id){
   if(busy)throw new Error('Attendi la generazione in corso');
@@ -367,7 +374,9 @@ function editSlide(id){
   for(const block of slide.content.blocks||[])addBlockEditor(block);
 }
 const elementTypes={box:'Riquadro',decision:'Decisione',circle:'Entità',database:'Archivio',document:'Documento',
-  text:'Annotazione',grid:'Griglia / pixel',bars:'Grafico a barre',plot:'Grafico lineare'};
+  text:'Annotazione',grid:'Griglia / pixel',bars:'Grafico a barre',plot:'Grafico lineare',
+  venn:'Diagramma di Venn',gantt:'Diagramma di Gantt',timeline:'Timeline',
+  tree:'Albero / gerarchia',network:'Rete / grafo'};
 const tones={accent:'Accento',blue:'Blu',amber:'Ambra',red:'Rosso',violet:'Viola',neutral:'Neutro'};
 function options(values,current){return Object.entries(values).map(([value,label])=>'<option value="'+value+'" '+(value===current?'selected':'')+'>'+label+'</option>').join('')}
 function addSceneElement(value={}){

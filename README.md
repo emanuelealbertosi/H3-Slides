@@ -253,9 +253,16 @@ Il codice Python che compila e renderizza la scena e distribuito con l'app e
 non proviene mai dal modello.
 
 Sono disponibili blocchi, decisioni, documenti, database, griglie di valori,
-grafici a barre e grafici lineari. I collegamenti sono instradati
-deterministicamente attorno agli altri oggetti; testi, sovrapposizioni,
-dimensione minima e limiti del canvas vengono verificati prima del salvataggio.
+grafici a barre e lineari, diagrammi di Venn, Gantt, timeline, alberi e reti.
+Venn/Gantt/timeline/albero/rete sono oggetti composti nativi: il modello ne
+specifica insiemi, attività e tempi, eventi, gerarchie o archi; il compilatore
+Manim dell'app costruisce forme e relazioni. Nei flowchart inizio/fine, decisioni
+e archivi usano forme semantiche e un flusso collegato di soli rettangoli viene
+rifiutato. Se il prompt nomina esplicitamente Gantt, Venn, timeline, albero,
+rete o diagramma di flusso, una famiglia diversa non supera la validazione.
+I collegamenti sono instradati deterministicamente attorno agli altri oggetti;
+testi, sovrapposizioni, dimensione minima e limiti del canvas vengono verificati
+prima del salvataggio.
 Piccoli sconfinamenti e sovrapposizioni geometriche prodotti dal modello vengono
 corretti deterministicamente tenendo conto dell'intera scena. Se un diagramma
 automatico resta non valido dopo le correzioni, la slide viene salvata senza
@@ -278,6 +285,13 @@ si possono modificare titolo, conclusione, oggetti, coordinate, dimensioni,
 dati e relazioni. I vecchi diagrammi flow/cycle/comparison restano leggibili
 e possono essere convertiti esplicitamente; non vengono più mostrati come
 segnaposto SVG.
+
+**Riprogetta tutti i diagrammi** interroga nuovamente il modello per ogni slide
+di contenuto senza riscriverne i testi. Serve, per esempio, per sostituire in
+blocco vecchi fallback con le famiglie semantiche disponibili. Il modello non
+scrive né esegue Python libero: produce una DSL dichiarativa validata. Questa
+scelta mantiene l'app distribuibile senza dare a una risposta LLM accesso a
+file, rete o processi del computer.
 
 ## Runtime distribuiti dall'installer
 
