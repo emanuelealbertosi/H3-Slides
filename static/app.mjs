@@ -480,8 +480,8 @@ function render(){
             'La scena è valida ma il render va aggiornato. Usa Renderizza Manim.':'Il vecchio diagramma va riprogettato con Manim.')+'</p>':'');
       const select=card.querySelector('[data-slide-layout]');
       select.value=({split:'visual-right',statement:'focus'})[slide.content.layout]||slide.content.layout||'content';
-      for(const item of card.querySelectorAll('.prose-box,li'))item.draggable=arranging;
-      const headingElement=card.querySelector('.heading');if(headingElement)headingElement.draggable=arranging;
+      for(const item of card.querySelectorAll('.prose-box,li'))item.draggable=slide.status==='ready';
+      const headingElement=card.querySelector('.heading');if(headingElement)headingElement.draggable=slide.status==='ready';
       const visualElement=card.querySelector('.visual');if(visualElement)visualElement.draggable=slide.status==='ready';
       resize.observe(card.querySelector('.slide-preview'));
       const fit=()=>{
@@ -801,7 +801,7 @@ $('slides').ondragstart=e=>{
     card.classList.add('component-dragging','visual-dragging');
     e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain','visual');return;
   }
-  if(card?.classList.contains('layout-editing')){
+  if(card){
     const heading=e.target.closest('.heading'),block=e.target.closest('[data-block-index]'),bullet=e.target.closest('[data-bullet-index]');
     if(heading){
       const slide=current.slides.find(item=>item.id===card.dataset.id);

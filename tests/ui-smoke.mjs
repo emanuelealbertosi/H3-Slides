@@ -22,8 +22,6 @@ try{
   await page.reload();
   assert.equal(await page.locator('body').evaluate(body=>body.classList.contains('sidebar-collapsed')),true);
   await page.locator('#toggle-sidebar').click();
-  await page.locator('[data-action="arrange"]').first().click();
-  assert.equal(await page.locator('.slide-card').first().evaluate(card=>card.classList.contains('layout-editing')),true);
   assert.equal(await page.locator('.slide-card').first().locator('.heading').getAttribute('draggable'),'true');
   const headingMoved=page.waitForResponse(r=>r.url().includes('/slides/')&&r.request().method()==='PATCH');
   const headingBox=await page.locator('.slide-card').first().locator('.heading').boundingBox();
@@ -39,6 +37,8 @@ try{
     await boxes.first().dragTo(boxes.nth(1));
     assert.equal((await reordered).status(),200);
   }
+  await page.locator('[data-action="arrange"]').first().click();
+  assert.equal(await page.locator('.slide-card').first().evaluate(card=>card.classList.contains('layout-editing')),true);
   await page.locator('[data-action="arrange"]').first().click();
   const blockCount=await page.locator('.slide-card').first().locator('.prose-box').count();
   const blockAdded=page.waitForResponse(r=>r.url().includes('/slides/')&&r.request().method()==='PATCH');
