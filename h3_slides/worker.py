@@ -20,6 +20,32 @@ KNOWLEDGE_CONTEXT = (
 KNOWLEDGE_NOTE = "Origine: conoscenza del modello; contenuti non verificati su fonti esterne."
 
 
+def validation_reason(exc):
+    if not hasattr(exc, "errors"):
+        return str(exc)
+    parts = []
+    for error in exc.errors(include_input=False, include_url=False)[:4]:
+        location = ".".join(str(item) for item in error.get("loc", ())) or "risposta"
+        parts.append(location + ": " + error.get("msg", "valore non valido"))
+    return "; ".join(parts) or "Contenuto non conforme allo schema"
+
+
+def normalize_slide_candidate(value):
+    """Remove fields reserved for the trusted second-stage diagram compiler."""
+    if not isinstance(value, dict):
+        return value
+    result = {**value, "layout_variant": 0}
+    diagram = result.get("diagram")
+    if isinstance(diagram, dict) and diagram.get("kind") in ("manim", "none"):
+        diagram = {**diagram, "scene": None}
+        if diagram["kind"] == "manim":
+            diagram["labels"] = []
+        else:
+            diagram.update(labels=[], brief="")
+        result["diagram"] = diagram
+    return result
+
+
 class Worker:
     def __init__(self, store, manager):
         self.store, self.manager = store, manager
@@ -297,10 +323,11 @@ class Worker:
                     "la soluzione deve risolvere ESATTAMENTE l'esercizio precedente, senza cambiare i dati. "
                     "Ricontrolla i calcoli. Niente segnaposto come 'script fornito' se non lo mostri. "
                     "Applica le precisazioni tecniche dell'utente anche se correggono il documento." + visual_rules)
-                correction = ""
+                correction, content, failure_reason = "", None, ""
                 for attempt in range(3):
                     await self.checkpoint(jid)
                     result = await client.json(slide_prompt + correction, schema=content_schema)
+                    result = normalize_slide_candidate(result)
                     try:
                         content = SlideContent.model_validate(result)
                         if attempt and fit_complete_sentences(content, project):
@@ -318,10 +345,13 @@ class Worker:
                             content.sources = source_citations(refs, research, project["sources"])[:12]
                         break
                     except ValueError as exc:
+                        reason = validation_reason(exc)
                         if attempt == 2:
+                            if request.regenerate_all and expected_revision > 0:
+                                content, failure_reason = None, reason
+                                break
                             raise
-                        reason = "Contenuto non conforme allo schema" if type(exc).__name__ == "ValidationError" else str(exc)
-                        self.store.event(jid, "Correzione del testo prima del salvataggio: " + reason[:200])
+                        self.store.event(jid, "Correzione del testo prima del salvataggio: " + reason[:350])
                         retry_blocks = result.get("blocks") if isinstance(result, dict) else None
                         retry_schema, retry_rules = content_contract(project, len(retry_blocks) if isinstance(retry_blocks, list) else None)
                         content_schema["properties"]["blocks"] = retry_schema["properties"]["blocks"]
@@ -332,8 +362,18 @@ class Worker:
                         correction = ("\nCORREGGI IL TENTATIVO PRECEDENTE: " + reason[:200] +
                             "\nBUDGET PER PARAGRAFO RICALCOLATO:\n" + retry_rules +
                             ". Riscrivi l'intero JSON, conserva i concetti, rispetta il budget e chiudi le frasi. "
-                            "Non copiare una frase interrotta.\nTENTATIVO PRECEDENTE (dati):\n" +
-                            json.dumps(result, ensure_ascii=False)[:8000])
+                             "Non copiare una frase interrotta.\nTENTATIVO PRECEDENTE (dati):\n" +
+                             json.dumps(result, ensure_ascii=False)[:8000])
+                if content is None:
+                    project = self.store.project(pid)
+                    current = next((s for s in project["slides"] if s["id"] == sid), None)
+                    if current and current["revision"] == expected_revision:
+                        current["status"] = "ready"
+                        self.store.save_project(project)
+                    self.store.event(jid, f"Slide {index + 1} non rigenerata; versione precedente conservata · " +
+                                     failure_reason[:350],
+                                     progress=0.15 + 0.85 * (index + 1) / len(targets))
+                    continue
                 if not project["sources"] and not research:
                     content.sources = []
                     content.notes = KNOWLEDGE_NOTE + "\n\n" + content.notes[:6000-len(KNOWLEDGE_NOTE)-2]
@@ -383,7 +423,8 @@ class Worker:
                 self.store.event(jid, "Generazione annullata; slide salvate conservate", status="cancelled")
         except Exception as exc:
             # Only our bounded error strings: avoid storing Pydantic inputs containing documents.
-            message = "Risposta LLM non conforme allo schema della slide" if type(exc).__name__ == "ValidationError" else str(exc)
+            message = ("Risposta LLM non conforme allo schema della slide: " + validation_reason(exc)
+                       if type(exc).__name__ == "ValidationError" else str(exc))
             self.store.event(jid, message[:600], status="failed", error=message[:600])
         finally:
             project = self.store.project(pid)

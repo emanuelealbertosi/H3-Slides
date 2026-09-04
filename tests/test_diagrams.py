@@ -7,7 +7,7 @@ from h3_slides.diagram_spec import Element, ManimSceneSpec
 from h3_slides.diagrams import ManimRenderer, normalize_scene_geometry
 from h3_slides.models import Generation, ProjectInput, SlideContent
 from h3_slides.storage import Store
-from h3_slides.worker import Worker
+from h3_slides.worker import Worker, normalize_slide_candidate
 
 
 def sample_scene():
@@ -59,6 +59,15 @@ def test_small_canvas_drift_is_repaired_without_changing_scene_meaning():
     assert scene.elements[2].text == "Risultato"
     assert scene.elements[0].x-scene.elements[0].width/2 >= .15
     assert scene.elements[2].x+scene.elements[2].width/2 <= 11.85
+
+
+def test_first_stage_cannot_inject_or_duplicate_a_manim_scene():
+    candidate = normalize_slide_candidate({"title":"Test","layout_variant":9,
+        "diagram":{"kind":"manim","labels":["duplicato"],"brief":"Processo",
+                   "scene":{"unexpected":"secondo compilatore"}}})
+    assert candidate["layout_variant"] == 0
+    assert candidate["diagram"]["labels"] == []
+    assert candidate["diagram"]["scene"] is None
 
 
 @pytest.mark.asyncio

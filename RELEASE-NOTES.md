@@ -11,6 +11,9 @@
   ordine e impostazioni del progetto.
 - Riparazione deterministica dei piccoli sconfinamenti dal canvas Manim;
   un diagramma opzionale non valido non interrompe più il resto del deck.
+- Errori dello schema remoto ora indicano campo e causa; durante la rigenerazione
+  completa una slide non conforme conserva la versione precedente senza
+  interrompere quelle successive.
 - Interfaccia chiara ispirata a H3-documentary, con sezioni Crea, Progetti e
   Admin e font OFL inclusi.
 

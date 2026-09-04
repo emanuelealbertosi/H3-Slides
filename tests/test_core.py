@@ -234,6 +234,37 @@ async def test_regenerate_all_rewrites_every_slide_but_keeps_outline(store):
     assert len(calls) == 2  # La scaletta esistente non viene richiesta di nuovo.
 
 
+@pytest.mark.asyncio
+async def test_regenerate_all_keeps_invalid_slide_and_continues(store):
+    p = store.create(ProjectInput(title="Corso", prompt="Spiega", count=2).model_dump())
+    p["slides"] = [
+        {"id":"uno","revision":2,"status":"ready","purpose":"Prima",
+         "block_count":2,"content":SlideContent(title="Versione uno").model_dump()},
+        {"id":"due","revision":4,"status":"ready","purpose":"Seconda",
+         "block_count":2,"content":SlideContent(title="Versione due").model_dump()},
+    ]
+    store.save_project(p)
+    class PartlyInvalidLLM(FakeLLM):
+        async def json(self, prompt, **kwargs):
+            if '"id": "uno"' in prompt:
+                return {"title":""}
+            return await super().json(prompt, **kwargs)
+    worker = Worker(store, SimpleNamespace())
+    worker.clients = PartlyInvalidLLM
+    job = worker.submit(p["id"], Generation(provider={"model":"fake"}, prompt="Spiega",
+                                             count=2, regenerate_all=True))
+    await worker.tasks[job["id"]]
+    result = store.project(p["id"])
+    assert store.job(job["id"])["status"] == "completed"
+    assert result["slides"][0]["content"]["title"] == "Versione uno"
+    assert result["slides"][0]["revision"] == 2
+    assert result["slides"][1]["content"]["title"] == "Titolo dal modello"
+    assert result["slides"][1]["revision"] == 5
+    messages = [event["message"] for event in store.job(job["id"])["events"]]
+    assert any("title:" in message for message in messages)
+    assert any("versione precedente conservata" in message for message in messages)
+
+
 def test_blank_topic_is_rejected():
     with pytest.raises(ValueError, match="Scrivi un argomento"):
         Generation(provider={"model":"fake"}, prompt=" \n\t ")

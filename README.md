@@ -373,6 +373,10 @@ La generazione controlla lunghezza e conclusione dei paragrafi e prova fino a du
 correzioni con limiti più stretti se il modello non rispetta il formato. Come ultima misura adatta
 solo spiegazioni generate a frasi complete, mantenendo la versione estesa
 nelle note e segnalando l'adattamento nel log. Le citazioni non vengono tagliate.
+Durante **Rigenera tutte**, se una singola risposta resta fuori schema dopo
+i tentativi di correzione, la versione precedente di quella slide viene
+conservata e il job prosegue con le successive. Il log indica campo e motivo
+della mancata validazione, senza salvare il prompt o la risposta completa.
 Le slide precedenti restano intatte: per ottenere paragrafi nuovi scegliere
 Approfondito/Completo, salvare il brief e rigenerare la singola slide.
 Editor a campi e riordino, non ancora un canvas PowerPoint libero.
