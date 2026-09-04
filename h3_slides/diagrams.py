@@ -211,6 +211,19 @@ def validate_designed_scene(scene, required=""):
         raise ValueError(f"È richiesto un diagramma {required}, non una sua approssimazione")
 
 
+def simplify_connection_labels(scene, keep_decisions=True):
+    """Preserve the designed scene when only arrow-label placement fails."""
+    repaired = scene.model_copy(deep=True)
+    by_id = {element.id: element for element in repaired.elements}
+    for edge in repaired.connections:
+        source = by_id.get(edge.source)
+        if keep_decisions and source and source.type == "decision":
+            edge.label = _shorten(edge.label, 8)
+        else:
+            edge.label = ""
+    return repaired
+
+
 def scene_for(diagram):
     if diagram.get("kind") == "manim":
         if not diagram.get("scene"):
@@ -310,6 +323,22 @@ async def design_diagram(client, renderer, pid, project, content, context, instr
         except ValueError as exc:
             reason = "; ".join(e["msg"] for e in exc.errors(include_input=False)[:3]) if hasattr(exc, "errors") else str(exc)
             if attempt == 2:
+                if "etichetta di una freccia" in reason and "scene" in locals():
+                    # Geometry and semantics are already valid.  Do not throw
+                    # away the entire AI-designed diagram for a decorative
+                    # relation label: first retain only short decision labels,
+                    # then omit labels while keeping every shape and arrow.
+                    for keep_decisions in (True, False):
+                        rescued = simplify_connection_labels(scene, keep_decisions)
+                        try:
+                            event("Manim · etichette delle frecce adattate automaticamente")
+                            diagram = {"kind": "manim", "labels": [], "brief": content.diagram.brief,
+                                       "scene": rescued.model_dump()}
+                            rendered = await renderer.render(pid, diagram, project)
+                            await checkpoint()
+                            return diagram, rendered
+                        except ValueError:
+                            continue
                 raise ValueError("Diagramma Manim non completato: " + reason[:400]) from None
             correction = ("\nCORREGGI GEOMETRIA/TESTI: " + reason[:700] +
                           "\nSCENA PRECEDENTE (dati):\n" + json.dumps(candidate, ensure_ascii=False)[:12000])

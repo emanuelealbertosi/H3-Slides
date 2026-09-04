@@ -274,16 +274,22 @@ def build_scene(value, project):
             label = copy(edge.label, 2.5, .7, size=22, minimum=20)
             placed = False
             for a, b in sorted(zip(route, route[1:]), key=lambda pair: -math.dist(*pair)):
-                for t in (.5, .3, .7):
-                    x, y = a[0]*(1-t)+b[0]*t, a[1]*(1-t)+b[1]*t
-                    x += label.width/2+.13 if abs(a[0]-b[0]) < .001 else 0
-                    y -= label.height/2+.12 if abs(a[1]-b[1]) < .001 else 0
-                    box = x-label.width/2-.04, y-label.height/2-.04, x+label.width/2+.04, y+label.height/2+.04
-                    if box[0] < .05 or box[2] > 11.95 or box[1] < .95 or box[3] > 7.35:
-                        continue
-                    if any(box[0] < other[2] and box[2] > other[0] and box[1] < other[3] and box[3] > other[1] for other in occupied):
-                        continue
-                    label.move_to(point(x, y)); occupied.append(box); placed = True; break
+                vertical = abs(a[0]-b[0]) < .001
+                for t in (.5, .3, .7, .15, .85):
+                    base_x, base_y = a[0]*(1-t)+b[0]*t, a[1]*(1-t)+b[1]*t
+                    # Try both sides of the line.  Previously labels were only
+                    # attempted to the right/above, causing needless failures.
+                    for side in (1, -1):
+                        x = base_x + (side*(label.width/2+.13) if vertical else 0)
+                        y = base_y + (side*(label.height/2+.12) if not vertical else 0)
+                        box = x-label.width/2-.04, y-label.height/2-.04, x+label.width/2+.04, y+label.height/2+.04
+                        if box[0] < .05 or box[2] > 11.95 or box[1] < .95 or box[3] > 7.35:
+                            continue
+                        if any(box[0] < other[2] and box[2] > other[0] and box[1] < other[3] and box[3] > other[1] for other in occupied):
+                            continue
+                        label.move_to(point(x, y)); occupied.append(box); placed = True; break
+                    if placed:
+                        break
                 if placed:
                     break
             if not placed:

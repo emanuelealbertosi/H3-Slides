@@ -24,7 +24,10 @@ def route_connection(source, target, elements):
     else:
         start = (source.x, source.y+sign*(source.height/2+.16))
         end = (target.x, target.y-sign*(target.height/2+.16))
-    boxes = [bounds(element, .10) for element in elements]
+    # Scene validation already guarantees separation between elements.  A
+    # tenth of a unit on both sides made otherwise valid narrow corridors
+    # impossible to route; four hundredths still keeps the stroke clear.
+    boxes = [bounds(element, .04) for element in elements]
     xs = sorted(set([start[0], end[0], .08, 11.92] + [round(v, 6) for box in boxes for v in (box[0]-.02, box[2]+.02) if .06 < v < 11.94]))
     ys = sorted(set([start[1], end[1], .94, 7.34] + [round(v, 6) for box in boxes for v in (box[1]-.02, box[3]+.02) if .92 < v < 7.36]))
     origin, goal = (xs.index(start[0]), ys.index(start[1])), (xs.index(end[0]), ys.index(end[1]))

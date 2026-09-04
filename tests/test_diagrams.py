@@ -6,7 +6,8 @@ from manim import tempconfig
 from h3_slides.diagram_layout import route_connection
 from h3_slides.diagram_spec import Element, ManimSceneSpec
 from h3_slides.diagrams import (ManimRenderer, fallback_diagram, normalize_scene_geometry,
-                                requested_family, validate_designed_scene)
+                                requested_family, simplify_connection_labels,
+                                validate_designed_scene)
 from h3_slides.manim_scene import build_scene
 from h3_slides.models import Generation, ProjectInput, SlideContent
 from h3_slides.storage import Store
@@ -58,6 +59,23 @@ def test_router_avoids_every_unrelated_element():
     route = route_connection(scene.elements[0], scene.elements[2], scene.elements)
     assert len(route) >= 4  # The processing block forces a real detour.
     assert route[0] != route[-1]
+
+
+def test_connection_label_rescue_keeps_shapes_arrows_and_decision_meaning():
+    scene = ManimSceneSpec.model_validate({"title":"Scelta","elements":[
+        {"id":"start","type":"circle","x":2,"y":4,"width":2.5,"height":1.4,"text":"Inizio"},
+        {"id":"choice","type":"decision","x":6,"y":4,"width":2.5,"height":1.6,"text":"Valido?"},
+        {"id":"end","type":"circle","x":10,"y":4,"width":2.5,"height":1.4,"text":"Fine"}],
+        "connections":[
+            {"source":"start","target":"choice","label":"verifica il dato"},
+            {"source":"choice","target":"end","label":"Sì, continua"}]})
+    rescued = simplify_connection_labels(scene)
+    assert [element.type for element in rescued.elements] == ["circle","decision","circle"]
+    assert [(edge.source, edge.target) for edge in rescued.connections] == [
+        ("start","choice"),("choice","end")]
+    assert rescued.connections[0].label == ""
+    assert rescued.connections[1].label
+    assert len(rescued.connections[1].label) <= 8
 
 
 def test_small_canvas_drift_is_repaired_without_changing_scene_meaning():
