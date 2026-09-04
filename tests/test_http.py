@@ -154,6 +154,36 @@ async def test_uploaded_document_can_be_reused_independently(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_project_library_folders_order_and_delete(tmp_path):
+    app = create_app(ROOT, tmp_path / "data")
+    async with TestClient(TestServer(app)) as client:
+        first = await (await client.post("/api/projects", headers=HEADERS,
+                                        json={"title":"Primo", "prompt":"Uno"})).json()
+        second = await (await client.post("/api/projects", headers=HEADERS,
+                                         json={"title":"Secondo", "prompt":"Due"})).json()
+        asset = app["store"].asset_path(first["id"], "prova.txt")
+        asset.write_text("dato locale", encoding="utf-8")
+        response = await client.post("/api/library", headers=HEADERS, json={
+            "folders":[{"id":"didattica", "name":"Didattica"}],
+            "order":[second["id"], first["id"]],
+            "assignments":{first["id"]:"didattica"},
+        })
+        assert response.status == 200
+        library = await response.json()
+        assert library["order"] == [second["id"], first["id"]]
+        assert library["assignments"] == {first["id"]:"didattica"}
+
+        response = await client.delete(f"/api/projects/{first['id']}", headers=HEADERS)
+        assert response.status == 200
+        assert not asset.parent.exists()
+        assert (await client.get(f"/api/projects/{first['id']}")).status == 404
+        library = await (await client.get("/api/library")).json()
+        assert first["id"] not in library["order"]
+        assert first["id"] not in library["assignments"]
+        assert library["order"] == [second["id"]]
+
+
+@pytest.mark.asyncio
 async def test_api_and_real_exports(tmp_path):
     app = create_app(ROOT, tmp_path / "data")
     app["worker"].clients = SingleSlideLLM

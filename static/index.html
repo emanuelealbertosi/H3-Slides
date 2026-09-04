@@ -3,10 +3,11 @@
 <title>H3-slides · Studio</title><link rel="stylesheet" href="/static/style.css"></head>
 <body>
 <header class="studio-sidebar"><a class="brand" href="/">H3<span>slides</span><small>STUDIO</small></a>
+<button id="toggle-sidebar" class="sidebar-toggle" type="button" aria-label="Comprimi menu" aria-expanded="true" title="Comprimi menu">‹</button>
 <nav aria-label="Navigazione principale">
-  <button id="open-create" class="nav-item" type="button"><span>◇</span>Crea</button>
-  <button id="open-library" class="nav-item" type="button"><span>▤</span>Progetti</button>
-  <button id="open-admin" class="nav-item" type="button"><span>⚙</span>Admin · LLM</button>
+  <button id="open-create" class="nav-item" type="button" title="Crea"><span>◇</span>Crea</button>
+  <button id="open-library" class="nav-item" type="button" title="Progetti"><span>▤</span>Progetti</button>
+  <button id="open-admin" class="nav-item" type="button" title="Admin · LLM"><span>⚙</span>Admin · LLM</button>
 </nav>
 <div class="sidebar-status"><i></i><span id="connection">Connessione…</span><small>Dati e file restano sul tuo PC</small></div></header>
 <main id="create-page">
@@ -83,7 +84,7 @@
 </section>
 </main>
 <main id="library" hidden aria-labelledby="library-title">
-  <div class="page-head"><div><div class="eyebrow">ARCHIVIO LOCALE</div><h1 id="library-title">I tuoi progetti</h1><p class="muted">Apri una presentazione per modificarla, rigenerare singole slide o esportarla.</p></div><button id="library-new" class="primary compact" type="button">＋ Nuovo progetto</button></div>
+  <div class="page-head"><div><div class="eyebrow">ARCHIVIO LOCALE</div><h1 id="library-title">I tuoi progetti</h1><p class="muted">Trascina le schede per ordinarle o spostarle nelle cartelle.</p></div><div class="library-actions"><button id="library-folder-new" class="secondary compact" type="button">＋ Nuova cartella</button><button id="library-new" class="primary compact" type="button">＋ Nuovo progetto</button></div></div>
   <div id="library-grid" class="library-grid"></div>
 </main>
 <dialog id="editor"><form id="edit-form"><div class="editor-head"><h2>Modifica slide</h2><button type="button" id="close-editor" class="quiet">Chiudi</button></div>

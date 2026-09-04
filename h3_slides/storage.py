@@ -24,6 +24,7 @@ class Store:
         self.db.execute("PRAGMA journal_mode=WAL")
         self.db.execute("CREATE TABLE IF NOT EXISTS projects (id TEXT PRIMARY KEY, body TEXT NOT NULL)")
         self.db.execute("CREATE TABLE IF NOT EXISTS jobs (id TEXT PRIMARY KEY, body TEXT NOT NULL)")
+        self.db.execute("CREATE TABLE IF NOT EXISTS app_state (id TEXT PRIMARY KEY, body TEXT NOT NULL)")
         self.db.commit()
         for job in self.jobs():
             if job["status"] in ("running", "queued", "paused"):
@@ -59,6 +60,23 @@ class Store:
     def create(self, values):
         return self.save_project(dict(id=uid(), created_at=now(), revision=1,
                                       slides=[], sources=[], **values))
+
+    def state(self, key, default):
+        row = self.db.execute("SELECT body FROM app_state WHERE id=?", (key,)).fetchone()
+        return json.loads(row[0]) if row else copy.deepcopy(default)
+
+    def save_state(self, key, value):
+        self.db.execute("INSERT OR REPLACE INTO app_state VALUES (?,?)",
+                        (key, json.dumps(value, ensure_ascii=False)))
+        self.db.commit()
+        return copy.deepcopy(value)
+
+    def delete_project(self, pid):
+        self.project(pid)
+        job_ids = [job["id"] for job in self.jobs() if job.get("project_id") == pid]
+        self.db.execute("DELETE FROM projects WHERE id=?", (pid,))
+        self.db.executemany("DELETE FROM jobs WHERE id=?", ((jid,) for jid in job_ids))
+        self.db.commit()
 
     def jobs(self):
         return sorted((json.loads(row[0]) for row in self.db.execute("SELECT body FROM jobs")),

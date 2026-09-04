@@ -15,7 +15,7 @@ from aiohttp import web
 from pydantic import ValidationError
 from .ingest import ingest, MAX_BYTES
 from .llm import ChildGuard, LlamaManager
-from .models import Generation, ProjectInput, ReuseSource, SlideContent, SlideEdit
+from .models import Generation, LibraryInput, ProjectInput, ReuseSource, SlideContent, SlideEdit
 from .storage import Store, uid
 from .worker import Worker
 from .slidev import write_slidev
@@ -220,6 +220,51 @@ def create_app(root=None, data_root=None):
             return web.json_response(public_project(project), status=201)
         return web.json_response([{"id": p["id"], "title": p["title"], "updated_at": p["updated_at"],
                                   "slide_count": len(p["slides"])} for p in store.projects()])
+
+    def normalized_library(raw=None):
+        raw = raw or store.state("project_library", {})
+        project_ids = [p["id"] for p in store.projects()]
+        known = set(project_ids)
+        folders, folder_ids = [], set()
+        for folder in raw.get("folders", []):
+            if folder["id"] not in folder_ids:
+                folders.append({"id": folder["id"], "name": folder["name"].strip()})
+                folder_ids.add(folder["id"])
+        order = []
+        for pid in raw.get("order", []) + project_ids:
+            if pid in known and pid not in order:
+                order.append(pid)
+        assignments = {pid: fid for pid, fid in raw.get("assignments", {}).items()
+                       if pid in known and fid in folder_ids}
+        return {"folders": folders, "order": order, "assignments": assignments}
+
+    async def library_settings(request):
+        if request.method == "POST":
+            raw = LibraryInput.model_validate(await request.json()).model_dump()
+            return web.json_response(store.save_state("project_library", normalized_library(raw)))
+        return web.json_response(normalized_library())
+
+    async def delete_project(request):
+        pid = request.match_info["pid"]
+        project = store.project(pid)
+        if worker.active():
+            raise ValueError("Attendi la fine della generazione o annullala prima di eliminare un progetto")
+        process = slidev_state["process"]
+        if slidev_state["project_id"] == pid and process and process.poll() is None:
+            process.terminate()
+            await asyncio.to_thread(process.wait)
+            slidev_state.update(process=None, project_id=None)
+        store.delete_project(pid)
+        store.save_state("project_library", normalized_library())
+        for base in (store.root / "assets", store.root / "slidev", root / "outputs"):
+            base = base.resolve()
+            target = (base / pid).resolve()
+            if target.is_relative_to(base) and target.is_dir():
+                try:
+                    shutil.rmtree(target)
+                except OSError:
+                    logging.warning("Progetto %s eliminato dal database ma pulizia incompleta: %s", pid, target)
+        return web.json_response({"deleted": pid, "title": project["title"]})
 
     async def documents(request):
         """Expose one safe library entry per logical local document."""
@@ -603,10 +648,13 @@ def create_app(root=None, data_root=None):
     app.router.add_post("/api/llm/{action}", llm_control)
     app.router.add_get("/api/projects", projects)
     app.router.add_post("/api/projects", projects)
+    app.router.add_get("/api/library", library_settings)
+    app.router.add_post("/api/library", library_settings)
     app.router.add_get("/api/documents", documents)
     app.router.add_get("/api/documents/{pid}/{source_id}", view_document)
     app.router.add_get("/api/projects/{pid}", project)
     app.router.add_patch("/api/projects/{pid}", project)
+    app.router.add_delete("/api/projects/{pid}", delete_project)
     app.router.add_post("/api/projects/{pid}/sources", upload)
     app.router.add_post("/api/projects/{pid}/sources/reuse", reuse_source)
     app.router.add_delete("/api/projects/{pid}/sources/{source_id}", remove_source)

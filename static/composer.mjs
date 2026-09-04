@@ -130,6 +130,8 @@ export const composerCSS=`
 .slide-frame.tpl-visual-top .slide-columns{display:grid;grid-template-columns:1fr;grid-template-rows:180px minmax(0,1fr);gap:20px}
 .slide-frame.tpl-visual-top .visual{grid-row:1;width:100%;height:180px}
 .slide-frame.tpl-visual-top .copy{grid-row:2}
+.slide-frame.tpl-visual-top.has-diagram .slide-columns{grid-template-rows:280px minmax(0,1fr)}
+.slide-frame.tpl-visual-top.has-diagram .visual{height:280px}
 .slide-frame.tpl-stack .prose-box{display:grid;grid-template-columns:minmax(130px,23%) minmax(0,1fr);gap:12px 25px;align-content:center;border-radius:var(--box-radius);padding:20px 26px;box-shadow:none}
 .slide-frame.tpl-stack .prose-source{grid-column:2}
 .slide-frame.compact-spacing{padding-top:28px}

@@ -22,6 +22,11 @@ test('old prose can change layout; recomposition is stable and preserves input',
   assert.equal(layoutCandidates(p,make('comparison'),0)[0],'comparison');
   assert.equal(layoutCandidates(p,make('steps'),0)[0],'steps');
   assert.ok(!layoutCandidates(p,make('visual-left'),0).includes('visual-left'));
+  const visual={...p,use_manim_diagrams:true};
+  const content=make('visual-left');content.diagram={kind:'manim',labels:[],brief:'',scene:{}};
+  assert.equal(layoutCandidates(visual,content,0,true)[0],'visual-left');
+  content.layout='visual-top';
+  assert.equal(layoutCandidates(visual,content,0,true)[0],'visual-top');
 });
 
 test('all twelve compositions fit and native exports use the same measured layouts',async()=>{

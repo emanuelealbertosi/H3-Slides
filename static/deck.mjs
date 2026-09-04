@@ -57,14 +57,14 @@ export function slideHTML(project,slide,index,imageUrl=''){
   const blocks=contentBlocks(c);
   const box=(b,i)=>{
     const colors=blockColors(project,b,i);
-    return '<section class="prose-box kind-'+esc(b.kind)+'" style="--box-bg:'+colors.bg+';--box-fg:'+colors.fg+';--box-border:'+colors.border+'">'+
+    return '<section class="prose-box kind-'+esc(b.kind)+'" data-block-index="'+i+'" style="--box-bg:'+colors.bg+';--box-fg:'+colors.fg+';--box-border:'+colors.border+'">'+
       '<div class="block-number">'+String(i+1).padStart(2,'0')+'</div>'+
       '<h2 data-edit-field="block-heading" data-index="'+i+'">'+esc(b.heading)+'</h2>'+
       '<p data-edit-field="block-text" data-index="'+i+'">'+esc(b.text)+'</p>'+
       '<div class="prose-source" data-edit-field="block-source" data-index="'+i+'">'+esc(b.source)+'</div></section>';
   };
   return '<article class="slide-frame tpl-'+esc(template)+' density-'+esc(project.text_density||'detailed')+
-    (visual.diagram||visual.image?' has-visual':'')+(blocks.reduce((n,b)=>n+b.text.length,0)>1100?' copy-dense':'')+
+    (visual.diagram||visual.image?' has-visual':'')+(visual.diagram?' has-diagram':'')+(blocks.reduce((n,b)=>n+b.text.length,0)>1100?' copy-dense':'')+
     (d.title_size?' custom-title-size':'')+(d.body_size?' custom-body-size':'')+'" data-candidates="'+esc(JSON.stringify(candidates))+'" data-layout="'+esc(template)+'" style="'+style+';--item-count:'+(blocks.length||c.bullets?.length||1)+'">'+
     '<div class="slide-accent"></div>'+
     '<div class="kicker">H3 SLIDES <span>/ '+String(index+1).padStart(2,'0')+'</span></div><div class="heading">'+
@@ -72,7 +72,7 @@ export function slideHTML(project,slide,index,imageUrl=''){
     (c.subtitle?'<p class="subtitle" data-edit-field="subtitle">'+esc(c.subtitle)+'</p>':'')+'</div>'+
     '<div class="slide-columns"><div class="copy">'+(blocks.length?
       '<div class="prose-grid count-'+blocks.length+'">'+blocks.map(box).join('')+'</div>':
-      '<ul>'+(c.bullets||[]).map(point).join('')+'</ul>')+'</div>'+
+      '<ul>'+(c.bullets||[]).map((item,i)=>point(item,i).replace('<li>','<li data-bullet-index="'+i+'">')).join('')+'</ul>')+'</div>'+
     (visual.image&&imageUrl?'<img class="visual'+(visual.diagram?' diagram-render':'')+'" src="'+esc(imageUrl)+'" alt="'+
       (visual.diagram?'Diagramma renderizzato con Manim':'')+'">':'')+'</div>'+
     '<div class="footer"><span>'+esc(project.title)+'</span><span>'+String(index+1).padStart(2,'0')+'</span></div></article>';

@@ -6,6 +6,20 @@ const layoutOptions=value=>'<option value="content">Automatico adattivo</option>
 $('edit-layout').innerHTML=layoutOptions('content');
 const style=document.createElement('style');style.textContent=slideCSS;document.head.append(style);
 let current=null,projects=[],documents=[],jobs=[],editing=null,job=null,busy=false,dragged=null;
+let componentDrag=null;
+const layoutEditors=new Set();
+let libraryState={folders:[],order:[],assignments:{}},libraryDragged=null;
+function setSidebarCollapsed(collapsed){
+  document.body.classList.toggle('sidebar-collapsed',collapsed);
+  $('toggle-sidebar').textContent=collapsed?'›':'‹';
+  $('toggle-sidebar').title=collapsed?'Espandi menu':'Comprimi menu';
+  $('toggle-sidebar').setAttribute('aria-label',$('toggle-sidebar').title);
+  $('toggle-sidebar').setAttribute('aria-expanded',String(!collapsed));
+  localStorage.setItem('h3slides-sidebar-collapsed',collapsed?'1':'0');
+  requestAnimationFrame(()=>window.dispatchEvent(new Event('resize')));
+}
+setSidebarCollapsed(localStorage.getItem('h3slides-sidebar-collapsed')==='1');
+$('toggle-sidebar').onclick=()=>setSidebarCollapsed(!document.body.classList.contains('sidebar-collapsed'));
 let polling=false;
 let modelInfo=null;
 let apiSettings=null,adminData=null,adminDirty=false,adminLoading=null;
@@ -119,6 +133,14 @@ async function loadProjects(){
   if(current)$('project-list').value=current.id;
   renderLibrary();
 }
+async function loadLibrary(){
+  libraryState=await api('/api/library');
+  renderLibrary();
+}
+async function saveLibrary(){
+  libraryState=await api('/api/library','POST',libraryState);
+  renderLibrary();
+}
 async function loadDocuments(){
   documents=await api('/api/documents');
   renderDocumentLibrary();
@@ -136,11 +158,23 @@ function renderDocumentLibrary(){
   }).join(''):'<p class="muted hint">La libreria è vuota. Il primo documento aggiunto comparirà qui.</p>';
 }
 function renderLibrary(){
-  $('library-grid').innerHTML=projects.length?projects.map(p=>{
+  const byId=new Map(projects.map(project=>[project.id,project]));
+  const ordered=[...libraryState.order,...projects.map(project=>project.id)]
+    .filter((id,index,all)=>byId.has(id)&&all.indexOf(id)===index).map(id=>byId.get(id));
+  const card=p=>{
     const when=new Date(p.updated_at),date=Number.isNaN(when.getTime())?'':when.toLocaleString('it-IT',{dateStyle:'medium',timeStyle:'short'});
-    return '<article class="project-card" data-project="'+esc(p.id)+'"><div class="project-card-mark">H3 / '+p.slide_count+'</div>'+
+    return '<article class="project-card" data-project="'+esc(p.id)+'" draggable="true"><div class="project-card-tools"><div class="project-card-mark">H3 / '+p.slide_count+'</div>'+
+      '<button class="project-delete" type="button" data-delete-project="'+esc(p.id)+'" title="Elimina progetto" aria-label="Elimina '+esc(p.title)+'">🗑</button></div>'+
       '<h2>'+esc(p.title)+'</h2><p>'+p.slide_count+' slide</p><small>Aggiornato '+esc(date)+'</small>'+
-      '<button class="secondary" type="button">Apri progetto →</button></article>';
+      '<button class="secondary" type="button" data-open-project="'+esc(p.id)+'">Apri progetto →</button></article>';
+  };
+  const groups=[...libraryState.folders,{id:'',name:'Senza cartella'}];
+  $('library-grid').innerHTML=(projects.length||libraryState.folders.length)?groups.map(folder=>{
+    const items=ordered.filter(project=>(libraryState.assignments[project.id]||'')===folder.id);
+    return '<section class="project-folder" data-folder-id="'+esc(folder.id)+'"><div class="project-folder-head"><h2>'+esc(folder.name)+
+      '</h2><span>'+items.length+'</span>'+(folder.id?'<button class="quiet" type="button" data-rename-folder="'+esc(folder.id)+'">Rinomina</button>'+
+      '<button class="quiet danger" type="button" data-delete-folder="'+esc(folder.id)+'">Elimina cartella</button>':'')+'</div>'+
+      '<div class="folder-projects">'+(items.length?items.map(card).join(''):'<div class="folder-empty">Trascina qui un progetto</div>')+'</div></section>';
   }).join(''):'<section class="library-empty"><div class="empty-mark">H3 /</div><h2>Nessun progetto salvato.</h2><p>Inizia da un argomento, un PDF o un’immagine.</p></section>';
 }
 async function selectProject(id){
@@ -172,9 +206,67 @@ async function newProject(){
 }
 $('new').onclick=$('library-new').onclick=newProject;
 $('project-list').onchange=e=>e.target.value&&selectProject(e.target.value).then(()=>navigatePage('create')).catch(e=>toast(e.message));
-$('library-grid').onclick=e=>{
+$('library-folder-new').onclick=()=>{
+  const name=prompt('Nome della nuova cartella:','Nuova cartella')?.trim();if(!name)return;
+  libraryState.folders.push({id:crypto.randomUUID(),name:name.slice(0,60)});
+  saveLibrary().catch(error=>toast(error.message));
+};
+$('library-grid').onclick=async e=>{
+  const open=e.target.closest('[data-open-project]');
+  if(open){selectProject(open.dataset.openProject).then(()=>navigatePage('create')).catch(error=>toast(error.message));return}
+  const remove=e.target.closest('[data-delete-project]');
+  if(remove){
+    const project=projects.find(item=>item.id===remove.dataset.deleteProject);if(!project)return;
+    if(!confirm('Eliminare definitivamente «'+project.title+'»? Verranno rimossi progetto, allegati ed esportazioni. Questa operazione non si annulla.'))return;
+    remove.disabled=true;
+    try{
+      await api('/api/projects/'+encodeURIComponent(project.id),'DELETE');
+      if(current?.id===project.id){current=null;localStorage.removeItem('h3slides-project')}
+      await Promise.all([loadProjects(),loadDocuments(),loadLibrary()]);
+      toast('Progetto eliminato definitivamente');
+    }catch(error){toast(error.message);if(remove.isConnected)remove.disabled=false}
+    return;
+  }
+  const rename=e.target.closest('[data-rename-folder]');
+  if(rename){
+    const folder=libraryState.folders.find(item=>item.id===rename.dataset.renameFolder);if(!folder)return;
+    const name=prompt('Nuovo nome della cartella:',folder.name)?.trim();if(!name)return;
+    folder.name=name.slice(0,60);saveLibrary().catch(error=>toast(error.message));return;
+  }
+  const deleteFolder=e.target.closest('[data-delete-folder]');
+  if(deleteFolder){
+    const folder=libraryState.folders.find(item=>item.id===deleteFolder.dataset.deleteFolder);if(!folder)return;
+    if(!confirm('Eliminare la cartella «'+folder.name+'»? I progetti contenuti torneranno in “Senza cartella”.'))return;
+    libraryState.folders=libraryState.folders.filter(item=>item.id!==folder.id);
+    for(const [pid,fid] of Object.entries(libraryState.assignments))if(fid===folder.id)delete libraryState.assignments[pid];
+    saveLibrary().catch(error=>toast(error.message));
+  }
+};
+$('library-grid').ondragstart=e=>{
   const card=e.target.closest('[data-project]');if(!card)return;
-  selectProject(card.dataset.project).then(()=>navigatePage('create')).catch(error=>toast(error.message));
+  libraryDragged=card.dataset.project;card.classList.add('dragging');
+  e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',libraryDragged);
+};
+$('library-grid').ondragover=e=>{
+  if(!libraryDragged)return;e.preventDefault();e.dataTransfer.dropEffect='move';
+  document.querySelectorAll('.project-drop-target,.folder-drop-target').forEach(item=>item.classList.remove('project-drop-target','folder-drop-target'));
+  const card=e.target.closest('[data-project]');
+  if(card&&card.dataset.project!==libraryDragged)card.classList.add('project-drop-target');
+  else e.target.closest('[data-folder-id]')?.classList.add('folder-drop-target');
+};
+$('library-grid').ondrop=e=>{
+  if(!libraryDragged)return;e.preventDefault();
+  const pid=libraryDragged,targetCard=e.target.closest('[data-project]'),folder=e.target.closest('[data-folder-id]');
+  libraryDragged=null;document.querySelectorAll('.dragging,.project-drop-target,.folder-drop-target').forEach(item=>item.classList.remove('dragging','project-drop-target','folder-drop-target'));
+  const folderId=folder?.dataset.folderId||'';
+  if(folderId)libraryState.assignments[pid]=folderId;else delete libraryState.assignments[pid];
+  const order=[...libraryState.order,...projects.map(project=>project.id)].filter((id,index,all)=>id!==pid&&all.indexOf(id)===index);
+  const targetIndex=targetCard?order.indexOf(targetCard.dataset.project):-1;
+  if(targetIndex>=0)order.splice(targetIndex,0,pid);else order.push(pid);
+  libraryState.order=order;saveLibrary().catch(error=>toast(error.message));
+};
+$('library-grid').ondragend=()=>{
+  libraryDragged=null;document.querySelectorAll('.dragging,.project-drop-target,.folder-drop-target').forEach(item=>item.classList.remove('dragging','project-drop-target','folder-drop-target'));
 };
 $('files').onchange=async e=>{
   const files=[...e.target.files];e.target.value='';if(!files.length)return;
@@ -223,12 +315,12 @@ $('browse-model').onclick=()=>connectLocalModel('pick');
 $('register-model').onclick=()=>connectLocalModel('register');
 $('refresh-models').onclick=()=>models().catch(e=>toast(e.message));
 $('unload').onclick=async()=>{try{await api('/api/llm/stop','POST',{});await models();toast('Modello di H3-slides scaricato')}catch(e){toast(e.message)}};
-async function generate(slideId=null,diagramOnly=false,regenerateAll=false,replaceDiagrams=false){
+async function generate(slideId=null,diagramOnly=false,regenerateAll=false,replaceDiagrams=false,providedInstructions=null){
   if(busy)return;busy=true;$('generate').disabled=true;
   try{
     await finishInlineEdits();
     if(regenerateAll&&current?.slides.length&&!confirm('Rigenerare tutte le slide? I contenuti attuali saranno sostituiti; brief, fonti, tema, ordine e scaletta restano invariati.'))return;
-    if(replaceDiagrams&&!confirm('Riprogettare tutti i diagrammi con il modello? I testi delle slide restano invariati.'))return;
+    if(replaceDiagrams&&!slideId&&!confirm('Riprogettare tutti i diagrammi con il modello? I testi delle slide restano invariati.'))return;
     if($('provider').value==='local'&&adminDirty){
       navigatePage(true);throw new Error('Salva il profilo llama.cpp modificato in Admin prima di generare.');
     }
@@ -247,8 +339,8 @@ async function generate(slideId=null,diagramOnly=false,regenerateAll=false,repla
     }
     if(!diagramOnly&&current.web_enabled&&!$('web-consent').checked)throw new Error('Conferma la query da inviare al motore di ricerca');
     savePrefs();
-    const instructions=slideId?prompt(diagramOnly?'Descrivi cosa deve spiegare il diagramma Manim:':'Istruzioni per rigenerare questa slide:',
-      diagramOnly?(current.slides.find(s=>s.id===slideId)?.content.diagram?.brief||current.slides.find(s=>s.id===slideId)?.content.title||''):current.prompt):$('prompt').value;
+    const instructions=providedInstructions??(slideId?prompt(diagramOnly?'Descrivi cosa deve spiegare il diagramma Manim:':'Istruzioni per rigenerare questa slide:',
+      diagramOnly?(current.slides.find(s=>s.id===slideId)?.content.diagram?.brief||current.slides.find(s=>s.id===slideId)?.content.title||''):current.prompt):$('prompt').value);
     if(instructions===null)return;
     job=await api('/api/projects/'+current.id+'/generate','POST',{provider:selected,prompt:instructions,count:Number($('count').value),slide_id:slideId,
       diagram_only:diagramOnly,replace_diagrams:replaceDiagrams,regenerate_all:regenerateAll,
@@ -339,8 +431,9 @@ function render(){
   for(const [index,slide] of (current?.slides||[]).entries()){
     ids.add(slide.id);let card=document.getElementById('slide-'+slide.id);
     if(!card){card=document.createElement('section');card.id='slide-'+slide.id;card.draggable=true;container.append(card)}
-    card.className='slide-card '+slide.status;card.dataset.id=slide.id;
-    const signature=JSON.stringify([slide,display.theme,design(),index]);
+    const arranging=layoutEditors.has(slide.id);
+    card.className='slide-card '+slide.status+(arranging?' layout-editing':'');card.dataset.id=slide.id;card.draggable=!arranging;
+    const signature=JSON.stringify([slide,display.theme,design(),index,arranging]);
     if(card.dataset.signature!==signature&&!card.dataset.saving&&!card.querySelector('[contenteditable="plaintext-only"]')){
       card.dataset.signature=signature;
       card.innerHTML='<div class="slide-top"><span class="slide-label">⠿ '+String(index+1).padStart(2,'0')+' / '+esc(slide.status==='ready'?'Pronta':slide.status==='generating'?'Generazione…':'In attesa')+'</span>'+
@@ -348,18 +441,26 @@ function render(){
         '<button class="quiet" data-action="edit">Modifica</button><button class="quiet" data-action="regenerate">Rigenera</button>'+
         (current.use_manim_diagrams?'<button class="quiet diagram-action" data-action="'+
           (slide.content.diagram?.kind==='manim'&&slide.content.diagram?.scene&&!slide.diagram_render?.asset?'render':'diagram')+'">'+
-          (slide.diagram_render?.engine==='manim'?'Riproggetta Manim':slide.content.diagram?.kind==='manim'&&slide.content.diagram?.scene?'Renderizza Manim':'Progetta Manim')+'</button>':'')+'</div>'+
+          (slide.diagram_render?.engine==='manim'?'Riprogetta Manim':slide.content.diagram?.kind==='manim'&&slide.content.diagram?.scene?'Renderizza Manim':'Progetta Manim')+'</button>':'')+'</div>'+
         '<div class="composition-tools"><label>Composizione <select data-slide-layout '+(slide.status!=='ready'?'disabled':'')+'>'+layoutOptions(slide.content.layout)+'</select></label>'+
+        '<button class="'+(arranging?'secondary':'quiet')+'" data-action="arrange" '+(slide.status!=='ready'?'disabled':'')+'>'+(arranging?'✓ Fine disposizione':'⠿ Disponi nella slide')+'</button>'+
         '<button class="quiet" data-action="recompose" '+(slide.status!=='ready'?'disabled':'')+'>↻ Ricomponi</button>'+
-        '<button class="quiet" data-action="split" '+(slide.status!=='ready'?'disabled':'')+'>Dividi</button><span class="composition-status" aria-live="polite"></span></div>'+
-        '<div class="slide-preview" title="Doppio clic su un testo per modificarlo">'+slideHTML(display,slide,index,
+        '<button class="quiet" data-action="split" '+(slide.status!=='ready'?'disabled':'')+'>Dividi</button><span class="composition-status" aria-live="polite"></span>'+
+        (arranging?'<span class="arrange-hint">Trascina diagramma/immagine oppure riordina i testi.</span>':'')+'</div>'+
+        '<div class="slide-preview" title="'+(arranging?'Trascina gli elementi nelle zone evidenziate':'Doppio clic su un testo per modificarlo')+'">'+slideHTML(display,slide,index,
           slide.diagram_render?.asset?'/api/assets/'+current.id+'/'+slide.diagram_render.asset:
-          slide.content.image_id?'/api/assets/'+current.id+'/'+slide.content.image_id:'')+'</div>'+
+          slide.content.image_id?'/api/assets/'+current.id+'/'+slide.content.image_id:'')+
+          (slide.diagram_render?.engine==='manim'?'<button type="button" class="diagram-live-action" data-action="diagram-live">↻ Riprogetta Manim</button>':'')+
+          '<div class="layout-dropzones" aria-hidden="true"><span class="layout-zone zone-left" data-visual-layout="visual-left">Visuale a sinistra</span>'+
+          '<span class="layout-zone zone-top" data-visual-layout="visual-top">Visuale in alto</span>'+
+          '<span class="layout-zone zone-right" data-visual-layout="visual-right">Visuale a destra</span></div></div>'+
         (slide.content.diagram?.kind!=='none'&&!slide.diagram_render?.asset?
           '<p class="diagram-pending">'+(slide.content.diagram?.kind==='manim'&&slide.content.diagram?.scene?
             'La scena è valida ma il render va aggiornato. Usa Renderizza Manim.':'Il vecchio diagramma va riprogettato con Manim.')+'</p>':'');
       const select=card.querySelector('[data-slide-layout]');
       select.value=({split:'visual-right',statement:'focus'})[slide.content.layout]||slide.content.layout||'content';
+      for(const item of card.querySelectorAll('.prose-box,li'))item.draggable=arranging;
+      const visualElement=card.querySelector('.visual');if(visualElement)visualElement.draggable=arranging;
       resize.observe(card.querySelector('.slide-preview'));
       const fit=()=>{
         if(!card.isConnected)return;
@@ -507,12 +608,33 @@ async function move(id,index){
   const ids=current.slides.map(s=>s.id),old=ids.indexOf(id);ids.splice(old,1);ids.splice(Math.max(0,Math.min(ids.length,index)),0,id);
   current=await api('/api/projects/'+current.id+'/reorder','POST',{ids});render();
 }
+function redesignLiveDiagram(id){
+  const slide=current.slides.find(item=>item.id===id),card=document.getElementById('slide-'+id);
+  const frame=card?.querySelector('.slide-frame'),visual=frame?.querySelector('.visual');
+  if(!slide||!frame||!visual){toast('Il diagramma non è ancora visibile nella slide');return}
+  const base=slide.content.diagram?.brief||slide.content.title||'';
+  const correction=prompt('Cosa deve correggere o rappresentare il nuovo diagramma Manim?',base);
+  if(correction===null)return;
+  const frameRect=frame.getBoundingClientRect(),visualRect=visual.getBoundingClientRect();
+  const scale=frameRect.width/1280||1,width=Math.round(visualRect.width/scale),height=Math.round(visualRect.height/scale);
+  const instructions=correction.trim()+
+    '\nCORREZIONE NELLA COMPOSIZIONE CORRENTE: il diagramma occupa uno spazio di circa '+width+' × '+height+
+    ' px, posizione '+(layouts[frame.dataset.layout]||frame.dataset.layout)+
+    '. Progetta la scena Manim per essere leggibile in questo riquadro: gerarchia, etichette, proporzioni e densità devono adattarsi. '+
+    'Usa il canvas sicuro 12 × 8 previsto dall’app; non modificare i testi della slide.';
+  generate(id,true,false,true,instructions);
+}
 $('slides').onclick=e=>{
   const button=e.target.closest('button[data-action]');if(!button)return;
   const id=button.closest('.slide-card').dataset.id,index=current.slides.findIndex(s=>s.id===id);
   if(button.dataset.action==='edit')editSlide(id);
+  if(button.dataset.action==='arrange'){
+    if(layoutEditors.has(id))layoutEditors.delete(id);else layoutEditors.add(id);
+    delete button.closest('.slide-card').dataset.signature;render();
+  }
   if(button.dataset.action==='regenerate')generate(id);
   if(button.dataset.action==='diagram')generate(id,true);
+  if(button.dataset.action==='diagram-live')redesignLiveDiagram(id);
   if(button.dataset.action==='render')rerenderDiagram(id).catch(error=>toast(error.message));
   if(button.dataset.action==='recompose')changeLayout(id,'content',true).catch(e=>toast(e.message));
   if(button.dataset.action==='split')splitSlide(id).catch(e=>toast(e.message));
@@ -528,6 +650,19 @@ async function changeLayout(id,layout,recompose=false){
     const updated=await api('/api/projects/'+pid+'/slides/'+id,'PATCH',{revision:slide.revision,content});
     if(current?.id===pid)current.slides[current.slides.findIndex(s=>s.id===id)]=updated;
     toast('Composizione salvata. Nessun testo riscritto e nessuna chiamata al modello.');
+  }finally{delete card.dataset.saving;delete card.dataset.signature;render()}
+}
+async function reorderSlideItems(id,field,from,to){
+  await finishInlineEdits();
+  const pid=current.id,slide=current.slides.find(s=>s.id===id),content=structuredClone(slide.content);
+  const items=content[field];
+  if(!Array.isArray(items)||from===to||from<0||to<0||from>=items.length||to>=items.length)return;
+  const [item]=items.splice(from,1);items.splice(to,0,item);
+  const card=document.getElementById('slide-'+id);card.dataset.saving='1';
+  try{
+    const updated=await api('/api/projects/'+pid+'/slides/'+id,'PATCH',{revision:slide.revision,content});
+    if(current?.id===pid)current.slides[current.slides.findIndex(s=>s.id===id)]=updated;
+    toast('Ordine dei testi salvato; impaginazione ricalcolata.');
   }finally{delete card.dataset.saving;delete card.dataset.signature;render()}
 }
 async function splitSlide(id){
@@ -565,10 +700,70 @@ $('slides').ondblclick=e=>{
     finally{inlineSaves.delete(pending);delete card.dataset.saving;render()}
   };
 };
-$('slides').ondragstart=e=>{const card=e.target.closest('.slide-card');if(card){dragged=card.dataset.id;card.classList.add('dragging')}};
-$('slides').ondragend=()=>document.querySelectorAll('.dragging').forEach(c=>c.classList.remove('dragging'));
-$('slides').ondragover=e=>e.preventDefault();
-$('slides').ondrop=e=>{e.preventDefault();const card=e.target.closest('.slide-card');if(card&&dragged)move(dragged,current.slides.findIndex(s=>s.id===card.dataset.id)).catch(e=>toast(e.message));dragged=null};
+function clearComponentDrag(){
+  componentDrag=null;
+  document.querySelectorAll('.component-dragging,.visual-dragging,.item-drop-target,.layout-zone.active').forEach(element=>
+    element.classList.remove('component-dragging','visual-dragging','item-drop-target','active'));
+}
+$('slides').ondragstart=e=>{
+  const card=e.target.closest('.slide-card');
+  if(card?.classList.contains('layout-editing')){
+    const visual=e.target.closest('.visual'),block=e.target.closest('[data-block-index]'),bullet=e.target.closest('[data-bullet-index]');
+    if(visual){
+      componentDrag={type:'visual',id:card.dataset.id};card.classList.add('component-dragging','visual-dragging');
+      e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain','visual');return;
+    }
+    const item=block||bullet;
+    if(item){
+      componentDrag={type:block?'blocks':'bullets',id:card.dataset.id,
+        from:Number(block?item.dataset.blockIndex:item.dataset.bulletIndex)};
+      card.classList.add('component-dragging');item.classList.add('dragging');
+      e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',componentDrag.type);return;
+    }
+  }
+  if(card){dragged=card.dataset.id;card.classList.add('dragging')}
+};
+$('slides').ondragend=()=>{
+  document.querySelectorAll('.dragging').forEach(c=>c.classList.remove('dragging'));
+  dragged=null;clearComponentDrag();
+};
+$('slides').ondragover=e=>{
+  if(componentDrag){
+    const card=e.target.closest('.slide-card');if(!card||card.dataset.id!==componentDrag.id)return;
+    e.preventDefault();e.dataTransfer.dropEffect='move';
+    document.querySelectorAll('.item-drop-target,.layout-zone.active').forEach(element=>element.classList.remove('item-drop-target','active'));
+    if(componentDrag.type==='visual')e.target.closest('[data-visual-layout]')?.classList.add('active');
+    else{
+      const selector=componentDrag.type==='blocks'?'[data-block-index]':'[data-bullet-index]';
+      e.target.closest(selector)?.classList.add('item-drop-target');
+    }
+    return;
+  }
+  e.preventDefault();
+};
+$('slides').ondrop=e=>{
+  e.preventDefault();
+  if(componentDrag){
+    const drag={...componentDrag},card=e.target.closest('.slide-card');clearComponentDrag();
+    if(!card||card.dataset.id!==drag.id)return;
+    if(drag.type==='visual'){
+      let layout=e.target.closest('[data-visual-layout]')?.dataset.visualLayout;
+      if(!layout){
+        const rect=card.querySelector('.slide-preview').getBoundingClientRect();
+        layout=e.clientY<rect.top+rect.height*.32?'visual-top':e.clientX<rect.left+rect.width/2?'visual-left':'visual-right';
+      }
+      changeLayout(drag.id,layout).catch(error=>toast(error.message));
+    }else{
+      const selector=drag.type==='blocks'?'[data-block-index]':'[data-bullet-index]';
+      const target=e.target.closest(selector),key=drag.type==='blocks'?'blockIndex':'bulletIndex';
+      if(target)reorderSlideItems(drag.id,drag.type,drag.from,Number(target.dataset[key])).catch(error=>toast(error.message));
+    }
+    return;
+  }
+  const card=e.target.closest('.slide-card');
+  if(card&&dragged)move(dragged,current.slides.findIndex(s=>s.id===card.dataset.id)).catch(error=>toast(error.message));
+  dragged=null;
+};
 for(const action of ['pause','cancel'])$(action).onclick=async()=>{
   if(!job)return;try{const command=action==='pause'&&job.status==='paused'?'resume':action;
   await api('/api/jobs/'+job.id+'/'+command,'POST',{});await poll()}catch(e){toast(e.message)}
@@ -602,7 +797,7 @@ async function poll(){
   }catch(error){$('connection').textContent='● App non raggiungibile'}finally{polling=false}
 }
 async function init(){
-  try{await Promise.all([loadProjects(),loadDocuments(),models()]);const id=new URLSearchParams(location.search).get('project')||localStorage.getItem('h3slides-project');
+  try{await Promise.all([loadProjects(),loadLibrary(),loadDocuments(),models()]);const id=new URLSearchParams(location.search).get('project')||localStorage.getItem('h3slides-project');
     if(projects.some(p=>p.id===id))await selectProject(id);await poll();
   }catch(error){toast(error.message)}
   setInterval(poll,1500);
@@ -649,7 +844,7 @@ function navigatePage(page,push=true){
   document.title=admin?'Admin · H3-slides':library?'Progetti · H3-slides':'H3-slides · Studio';
   const path=admin?'/admin':library?'/library':'/';
   if(push&&location.pathname!==path)history.pushState({},'',path+location.search);
-  if(admin)loadAdmin();else if(library){loadProjects()}else{render();requestAnimationFrame(()=>window.dispatchEvent(new Event('resize')))}
+  if(admin)loadAdmin();else if(library){Promise.all([loadProjects(),loadLibrary()]).catch(error=>toast(error.message))}else{render();requestAnimationFrame(()=>window.dispatchEvent(new Event('resize')))}
 }
 $('open-admin').onclick=()=>navigatePage('admin');
 $('open-library').onclick=()=>navigatePage('library');

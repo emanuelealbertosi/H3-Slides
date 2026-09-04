@@ -116,6 +116,19 @@ class ReuseSource(BaseModel):
     source_id: str = Field(min_length=1, max_length=80)
 
 
+class LibraryFolder(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: str = Field(min_length=1, max_length=80)
+    name: str = Field(min_length=1, max_length=60)
+
+
+class LibraryInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    folders: list[LibraryFolder] = Field(default_factory=list, max_length=50)
+    order: list[str] = Field(default_factory=list, max_length=5000)
+    assignments: dict[str, str] = Field(default_factory=dict, max_length=5000)
+
+
 class SlideEdit(BaseModel):
     revision: int
     content: SlideContent

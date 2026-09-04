@@ -14,9 +14,23 @@ try{
   await page.locator('#library').waitFor();
   assert.equal(new URL(page.url()).pathname,'/library');
   assert.equal(await page.locator('.project-card[data-project="'+pid+'"]').count(),1);
-  await page.locator('.project-card[data-project="'+pid+'"] button').click();
+  await page.locator('.project-card[data-project="'+pid+'"] [data-open-project]').click();
   await page.locator('.slide-card').waitFor();
   assert.equal(new URL(page.url()).pathname,'/');
+  await page.locator('#toggle-sidebar').click();
+  assert.equal(await page.locator('body').evaluate(body=>body.classList.contains('sidebar-collapsed')),true);
+  await page.reload();
+  assert.equal(await page.locator('body').evaluate(body=>body.classList.contains('sidebar-collapsed')),true);
+  await page.locator('#toggle-sidebar').click();
+  await page.locator('[data-action="arrange"]').first().click();
+  assert.equal(await page.locator('.slide-card').first().evaluate(card=>card.classList.contains('layout-editing')),true);
+  const boxes=page.locator('.slide-card').first().locator('.prose-box');
+  if(await boxes.count()>1){
+    const reordered=page.waitForResponse(r=>r.url().includes('/slides/')&&r.request().method()==='PATCH');
+    await boxes.first().dragTo(boxes.nth(1));
+    assert.equal((await reordered).status(),200);
+  }
+  await page.locator('[data-action="arrange"]').first().click();
   await page.getByRole('button',{name:'Modifica',exact:true}).click();
   await page.locator('#edit-title').fill('Modifica verificata nel browser');
   await page.getByRole('button',{name:'Salva modifica',exact:true}).click();

@@ -114,7 +114,11 @@ try{
   assert.equal(await page.locator('#remote-fields').isVisible(),false);
   assert.equal(await page.locator('#local-fields').isVisible(),true);
   await page.setViewportSize({width:390,height:844});
-  assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);
+  const mobileLayout=await page.evaluate(()=>({fits:document.documentElement.scrollWidth<=window.innerWidth,
+    width:document.documentElement.scrollWidth,viewport:window.innerWidth,
+    offenders:[...document.querySelectorAll('body *')].filter(element=>element.getBoundingClientRect().right>window.innerWidth+1)
+      .slice(0,8).map(element=>({tag:element.tagName,id:element.id,class:element.className,right:Math.round(element.getBoundingClientRect().right)}))}));
+  assert.equal(mobileLayout.fits,true,JSON.stringify(mobileLayout));
   assert.deepEqual(errors,[]);
   console.log('Model selector UI passed: discovery, refresh, per-server memory, reload, submitted model, credentials, manual fallback and local mode.');
 }finally{await browser.close()}
