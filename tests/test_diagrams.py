@@ -4,7 +4,7 @@ from PIL import Image
 import pytest
 from h3_slides.diagram_layout import route_connection
 from h3_slides.diagram_spec import Element, ManimSceneSpec
-from h3_slides.diagrams import ManimRenderer
+from h3_slides.diagrams import ManimRenderer, normalize_scene_geometry
 from h3_slides.models import Generation, ProjectInput, SlideContent
 from h3_slides.storage import Store
 from h3_slides.worker import Worker
@@ -46,6 +46,19 @@ def test_router_avoids_every_unrelated_element():
     route = route_connection(scene.elements[0], scene.elements[2], scene.elements)
     assert len(route) >= 4  # The processing block forces a real detour.
     assert route[0] != route[-1]
+
+
+def test_small_canvas_drift_is_repaired_without_changing_scene_meaning():
+    value = sample_scene()
+    value["elements"][0].update(x=.4, width=2.6)
+    value["elements"][2].update(x=11.6, width=2.6)
+    repaired, changed = normalize_scene_geometry(value)
+    scene = ManimSceneSpec.model_validate(repaired)
+    assert changed is True
+    assert scene.elements[0].text == "Dati grezzi"
+    assert scene.elements[2].text == "Risultato"
+    assert scene.elements[0].x-scene.elements[0].width/2 >= .15
+    assert scene.elements[2].x+scene.elements[2].width/2 <= 11.85
 
 
 @pytest.mark.asyncio
@@ -113,4 +126,44 @@ async def test_diagram_design_uses_the_selected_local_or_remote_client(tmp_path,
     assert selected[0][0] == mode
     assert result["slides"][0]["content"]["diagram"]["scene"]["title"] == "Dal dato alla decisione"
     assert result["slides"][0]["diagram_render"]["engine"] == "manim"
+    store.db.close()
+
+
+@pytest.mark.asyncio
+async def test_invalid_optional_diagram_does_not_abort_slide_generation(tmp_path):
+    store = Store(tmp_path / "fallback")
+    project = store.create(ProjectInput(prompt="Spiega una ricerca", count=1,
+                                        use_manim_diagrams=True).model_dump())
+    project["slides"] = [{"id":"slide-1","revision":1,"status":"ready","purpose":"Ricerca",
+                          "content":SlideContent(title="Ricerca").model_dump()}]
+    store.save_project(project)
+
+    class InvalidDiagramLLM:
+        def __init__(self, *_):
+            pass
+        async def prepare(self):
+            pass
+        async def json(self, prompt, **kwargs):
+            if "PROGETTA UNA SCENA MANIM" in prompt:
+                broken = sample_scene()
+                broken["elements"][1]["x"] = broken["elements"][0]["x"]
+                broken["elements"][1]["y"] = broken["elements"][0]["y"]
+                return broken
+            return SlideContent(title="Ricerca aggiornata", blocks=[
+                {"heading":"Metodo","text":"La ricerca controlla ogni elemento in ordine e termina quando trova il valore desiderato oppure raggiunge la fine della collezione."}
+            ], diagram={"kind":"manim","brief":"Mostra la ricerca"}).model_dump()
+
+    worker = Worker(store, SimpleNamespace())
+    worker.clients = InvalidDiagramLLM
+    request = Generation(provider={"mode":"local","model":"fake"}, prompt="Rigenera",
+                         count=1, slide_id="slide-1")
+    job = worker.submit(project["id"], request)
+    await worker.tasks[job["id"]]
+    result = store.project(project["id"])
+    assert store.job(job["id"])["status"] == "completed"
+    assert result["slides"][0]["content"]["title"] == "Ricerca aggiornata"
+    assert result["slides"][0]["content"]["diagram"]["kind"] == "none"
+    assert "diagram_render" not in result["slides"][0]
+    assert any("slide viene salvata senza diagramma" in event["message"]
+               for event in store.job(job["id"])["events"])
     store.db.close()

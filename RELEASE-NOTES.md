@@ -9,6 +9,8 @@
 - Editor strutturato delle scene e aggiornamento deterministico del render.
 - Rigenerazione in blocco di tutte le slide, conservando scaletta, fonti,
   ordine e impostazioni del progetto.
+- Riparazione deterministica dei piccoli sconfinamenti dal canvas Manim;
+  un diagramma opzionale non valido non interrompe più il resto del deck.
 - Interfaccia chiara ispirata a H3-documentary, con sezioni Crea, Progetti e
   Admin e font OFL inclusi.
 

@@ -350,11 +350,16 @@ class Worker:
                 rendered = None
                 if content.diagram.kind == "manim":
                     content.diagram.scene = None
-                    diagram, rendered = await design_diagram(
-                        client, self.renderer, pid, project, content, context,
-                        content.diagram.brief or slide.get("purpose", ""),
-                        lambda message: self.store.event(jid, message), lambda: self.checkpoint(jid))
-                    content.diagram = type(content.diagram).model_validate(diagram)
+                    try:
+                        diagram, rendered = await design_diagram(
+                            client, self.renderer, pid, project, content, context,
+                            content.diagram.brief or slide.get("purpose", ""),
+                            lambda message: self.store.event(jid, message), lambda: self.checkpoint(jid))
+                        content.diagram = type(content.diagram).model_validate(diagram)
+                    except ValueError as exc:
+                        self.store.event(jid, "Diagramma Manim saltato; la slide viene salvata senza diagramma · " +
+                                         str(exc)[:220])
+                        content.diagram = type(content.diagram)()
                 if content.image_id and content.image_id not in valid_images:
                     raise ValueError("Il modello ha indicato un'immagine inesistente")
                 await self.checkpoint(jid)

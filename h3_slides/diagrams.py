@@ -1,5 +1,6 @@
 """Manim render cache and the dedicated diagram-design LLM stage."""
 import asyncio
+import copy
 import hashlib
 import json
 import os
@@ -12,6 +13,35 @@ from .diagram_spec import ManimSceneSpec, SCENE_PROMPT, legacy_scene
 
 RENDER_VERSION = 1
 STYLE_KEYS = ("theme", "font", "background_color", "accent_color")
+
+
+def normalize_scene_geometry(value):
+    """Repair harmless numeric canvas drift without changing scene semantics."""
+    if not isinstance(value, dict) or not isinstance(value.get("elements"), list):
+        return value, False
+    result, changed = copy.deepcopy(value), False
+    for element in result["elements"]:
+        if not isinstance(element, dict):
+            continue
+        kind = element.get("type")
+        defaults = {"width": 2.8, "height": 1.2, "x": 6.0, "y": 4.0}
+        numbers = {}
+        for key, fallback in defaults.items():
+            raw = element.get(key, fallback)
+            if not isinstance(raw, (int, float)) or isinstance(raw, bool):
+                continue
+            numbers[key] = float(raw)
+        if len(numbers) != 4:
+            continue
+        width = min(11.0, max(4.0 if kind in ("grid", "bars", "plot") else .6, numbers["width"]))
+        height = min(6.0, max(2.5 if kind in ("grid", "bars", "plot") else .5, numbers["height"]))
+        x = min(11.84-width/2, max(.16+width/2, numbers["x"]))
+        y = min(7.24-height/2, max(1.06+height/2, numbers["y"]))
+        repaired = {"width": width, "height": height, "x": x, "y": y}
+        for key, new_value in repaired.items():
+            if element.get(key, defaults[key]) != new_value:
+                element[key], changed = new_value, True
+    return result, changed
 
 
 def scene_for(diagram):
@@ -97,8 +127,11 @@ async def design_diagram(client, renderer, pid, project, content, context, instr
         await checkpoint()
         event("Progettazione scena Manim" if not attempt else "Correzione della scena Manim prima del rendering")
         result = await client.json(prompt + correction, schema=ManimSceneSpec.model_json_schema())
+        candidate, repaired = normalize_scene_geometry(result)
+        if repaired:
+            event("Manim · ingombri riportati automaticamente entro il canvas")
         try:
-            scene = ManimSceneSpec.model_validate(result)
+            scene = ManimSceneSpec.model_validate(candidate)
             diagram = {"kind": "manim", "labels": [], "brief": content.diagram.brief, "scene": scene.model_dump()}
             await checkpoint()
             event("Rendering Manim · 1800 × 1200 · verifica testi, ingombri e collegamenti")
@@ -110,4 +143,4 @@ async def design_diagram(client, renderer, pid, project, content, context, instr
             if attempt == 2:
                 raise ValueError("Diagramma Manim non completato: " + reason[:400]) from None
             correction = ("\nCORREGGI GEOMETRIA/TESTI: " + reason[:700] +
-                          "\nSCENA PRECEDENTE (dati):\n" + json.dumps(result, ensure_ascii=False)[:12000])
+                          "\nSCENA PRECEDENTE (dati):\n" + json.dumps(candidate, ensure_ascii=False)[:12000])

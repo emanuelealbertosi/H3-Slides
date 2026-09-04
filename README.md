@@ -255,6 +255,11 @@ Sono disponibili blocchi, decisioni, documenti, database, griglie di valori,
 grafici a barre e grafici lineari. I collegamenti sono instradati
 deterministicamente attorno agli altri oggetti; testi, sovrapposizioni,
 dimensione minima e limiti del canvas vengono verificati prima del salvataggio.
+Piccoli sconfinamenti numerici prodotti dal modello vengono ricondotti
+automaticamente nell'area utile. Se un diagramma automatico resta non valido
+dopo le correzioni, la slide viene salvata senza diagramma e il resto della
+presentazione prosegue; il log mantiene il motivo e Progetta Manim permette
+di riprovare manualmente.
 Il render 1800 × 1200 viene riusato nell'editor, nel PPTX, nel PDF e in Slidev;
 l'export Manim anima progressivamente la stessa scena. Un diagramma attivo ha
 priorità sulla figura della stessa slide.
