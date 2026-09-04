@@ -145,6 +145,7 @@ document per file; circle per entità; grid per pixel/matrici (valori 0..1); bar
 gantt per attività temporali (labels e coppie inizio,fine in values); timeline per eventi ordinati
 (labels e posizioni crescenti facoltative in values); tree per gerarchie (labels e indice del genitore
 di ogni nodo dopo la radice in values); network per grafi (labels e coppie di indici collegate in values).
+values accetta ESCLUSIVAMENTE numeri JSON, mai formule, parole, null, unità o valori come "O(n)".
 Usa un solo elemento composto venn/gantt/timeline/tree/network grande almeno width=5,height=3
 (Gantt height>=4), anziché approssimarlo con riquadri. Non forzare grafici numerici su argomenti senza dati.
 Tu progetti elementi e relazioni, Manim costruisce e renderizza la scena.

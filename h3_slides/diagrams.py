@@ -46,6 +46,26 @@ def normalize_scene_geometry(value):
     if not isinstance(value, dict) or not isinstance(value.get("elements"), list):
         return value, False
     result, changed = copy.deepcopy(value), False
+    scene_keys = {"title", "takeaway", "elements", "connections"}
+    element_keys = {"id", "type", "x", "y", "width", "height", "text", "caption",
+                    "tone", "stage", "values", "labels", "columns"}
+    connection_keys = {"source", "target", "label", "tone"}
+    if any(key not in scene_keys for key in result):
+        result = {key: item for key, item in result.items() if key in scene_keys}
+        changed = True
+    for element in result["elements"]:
+        if isinstance(element, dict) and any(key not in element_keys for key in element):
+            extra_free = {key: item for key, item in element.items() if key in element_keys}
+            element.clear()
+            element.update(extra_free)
+            changed = True
+    if isinstance(result.get("connections"), list):
+        for edge in result["connections"]:
+            if isinstance(edge, dict) and any(key not in connection_keys for key in edge):
+                extra_free = {key: item for key, item in edge.items() if key in connection_keys}
+                edge.clear()
+                edge.update(extra_free)
+                changed = True
     for key, limit in (("title", 75), ("takeaway", 130)):
         repaired = _shorten(result.get(key), limit)
         if repaired != result.get(key):
@@ -128,7 +148,7 @@ def normalize_scene_geometry(value):
         for key, new_value in repaired.items():
             if element.get(key, defaults[key]) != new_value:
                 element[key], changed = new_value, True
-    placed = []
+    placed, unplaced = [], False
     for index, element in enumerate(result["elements"]):
         if not isinstance(element, dict) or not all(isinstance(element.get(key), (int, float))
                                                     for key in ("x", "y", "width", "height")):
@@ -159,7 +179,30 @@ def normalize_scene_geometry(value):
             if found:
                 element["x"], element["y"] = found
                 x, y, changed = found[0], found[1], True
+            else:
+                unplaced = True
         placed.append({"x":x, "y":y, "width":width, "height":height})
+    atomic = {"box", "decision", "circle", "database", "document", "text"}
+    if unplaced and 2 <= len(result["elements"]) <= 8 and all(
+            isinstance(element, dict) and element.get("type") in atomic
+            for element in result["elements"]):
+        count = len(result["elements"])
+        columns = 3 if count > 4 else 2
+        rows = math.ceil(count / columns)
+        y_slots = {1: [4.15], 2: [2.65, 5.65], 3: [2.0, 4.2, 6.4]}[rows]
+        for index, element in enumerate(result["elements"]):
+            row, column = divmod(index, columns)
+            in_row = min(columns, count-row*columns)
+            x_slots = [12*(slot+1)/(in_row+1) for slot in range(in_row)]
+            element.update(
+                x=x_slots[column], y=y_slots[row],
+                width=min(float(element.get("width", 2.8)), 2.8 if columns == 3 else 3.6),
+                height=min(float(element.get("height", 1.4)),
+                           1.6 if element.get("type") in ("decision", "circle") else 1.4),
+                text=_shorten(element.get("text") or "", 30),
+                caption=_shorten(element.get("caption") or "", 20),
+            )
+        changed = True
     return result, changed
 
 
@@ -321,7 +364,12 @@ async def design_diagram(client, renderer, pid, project, content, context, instr
             await checkpoint()
             return diagram, rendered
         except ValueError as exc:
-            reason = "; ".join(e["msg"] for e in exc.errors(include_input=False)[:3]) if hasattr(exc, "errors") else str(exc)
+            if hasattr(exc, "errors"):
+                reason = "; ".join(
+                    ".".join(str(part) for part in error.get("loc", ())) + ": " + error["msg"]
+                    for error in exc.errors(include_input=False)[:3])
+            else:
+                reason = str(exc)
             if attempt == 2:
                 if "etichetta di una freccia" in reason and "scene" in locals():
                     # Geometry and semantics are already valid.  Do not throw

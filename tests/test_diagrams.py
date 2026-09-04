@@ -102,6 +102,22 @@ def test_overlapping_model_elements_are_repositioned_deterministically():
     assert (scene.elements[1].x, scene.elements[1].y) != (scene.elements[0].x, scene.elements[0].y)
 
 
+def test_dense_atomic_scene_is_relaid_out_and_unknown_model_fields_are_dropped():
+    value = {"title":"Flusso","comment":"non appartiene alla DSL","elements":[
+        {"id":f"n{i}","type":"decision" if i == 2 else "box","x":6,"y":4,
+         "width":5,"height":2,"text":f"Passaggio molto lungo numero {i}",
+         "python":"never executed"} for i in range(6)],
+        "connections":[{"source":f"n{i}","target":f"n{i+1}","label":"continua",
+                        "curve":"unsupported"} for i in range(5)]}
+    repaired, changed = normalize_scene_geometry(value)
+    scene = ManimSceneSpec.model_validate(repaired)
+    assert changed is True
+    assert len(scene.elements) == 6 and len(scene.connections) == 5
+    assert all(element.width <= 2.8 for element in scene.elements)
+    assert all("python" not in element for element in repaired["elements"])
+    assert "comment" not in repaired
+
+
 def test_common_remote_scene_type_and_length_errors_are_repaired():
     value = sample_scene()
     value["title"], value["takeaway"] = "Titolo " * 30, "Conclusione " * 30
