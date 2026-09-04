@@ -207,10 +207,11 @@ $('browse-model').onclick=()=>connectLocalModel('pick');
 $('register-model').onclick=()=>connectLocalModel('register');
 $('refresh-models').onclick=()=>models().catch(e=>toast(e.message));
 $('unload').onclick=async()=>{try{await api('/api/llm/stop','POST',{});await models();toast('Modello di H3-slides scaricato')}catch(e){toast(e.message)}};
-async function generate(slideId=null,diagramOnly=false){
+async function generate(slideId=null,diagramOnly=false,regenerateAll=false){
   if(busy)return;busy=true;$('generate').disabled=true;
   try{
     await finishInlineEdits();
+    if(regenerateAll&&!confirm('Rigenerare tutte le slide? I contenuti attuali saranno sostituiti; brief, fonti, tema, ordine e scaletta restano invariati.'))return;
     if($('provider').value==='local'&&adminDirty){
       navigatePage(true);throw new Error('Salva il profilo llama.cpp modificato in Admin prima di generare.');
     }
@@ -233,12 +234,13 @@ async function generate(slideId=null,diagramOnly=false){
       diagramOnly?(current.slides.find(s=>s.id===slideId)?.content.diagram?.brief||current.slides.find(s=>s.id===slideId)?.content.title||''):current.prompt):$('prompt').value;
     if(instructions===null)return;
     job=await api('/api/projects/'+current.id+'/generate','POST',{provider:selected,prompt:instructions,count:Number($('count').value),slide_id:slideId,
-      diagram_only:diagramOnly,web_consent:diagramOnly?false:$('web-consent').checked,web_refresh:diagramOnly?false:$('web-refresh').checked});
+      diagram_only:diagramOnly,regenerate_all:regenerateAll,web_consent:diagramOnly?false:$('web-consent').checked,web_refresh:diagramOnly?false:$('web-refresh').checked});
     $('web-consent').checked=false;$('web-refresh').checked=false;
     toast('Generazione avviata');await poll();
   }catch(e){toast(e.message)}finally{busy=false;$('generate').disabled=false}
 }
 $('generate').onclick=()=>generate();
+$('regenerate-all').onclick=()=>generate(null,false,true);
 api('/api/admin/search').then(settings=>{$('searxng-url').value=settings.searxng_url}).catch(e=>{$('search-settings-status').textContent=e.message});
 $('save-search-settings').onclick=async()=>{
   try{
@@ -332,6 +334,7 @@ function render(){
   }
   for(const card of [...container.children])if(!ids.has(card.dataset.id))card.remove();
   document.querySelectorAll('[data-export]').forEach(b=>b.disabled=!current?.slides.length||exporting.has(b.dataset.export));
+  $('regenerate-all').disabled=!current?.slides.length||busy;
 }
 async function rerenderDiagram(id){
   if(busy)throw new Error('Attendi la generazione in corso');

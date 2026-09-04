@@ -40,7 +40,7 @@ class Worker:
             raise ValueError("Slide non trovata")
         if request.diagram_only and not project.get("use_manim_diagrams"):
             raise ValueError("Abilita Diagrammi Manim nel progetto prima di progettarne uno")
-        if not request.diagram_only and not request.slide_id and project["slides"] and all(s["status"] == "ready" for s in project["slides"]):
+        if not request.diagram_only and not request.regenerate_all and not request.slide_id and project["slides"] and all(s["status"] == "ready" for s in project["slides"]):
             raise ValueError("Tutte le slide sono già pronte. Usa Rigenera sulla singola slide.")
         search_options = None
         if project.get("web_enabled") and not request.diagram_only:
@@ -195,6 +195,8 @@ class Worker:
                              "Conoscenza del modello; costruzione della scaletta", progress=0.12)
             await self.checkpoint(jid)
             project = self.store.project(pid)
+            if request.regenerate_all:
+                self.store.event(jid, "Rigenerazione completa · conservo scaletta, ordine e impostazioni del progetto")
             if not project["slides"]:
                 outline_schema = {
                     "type": "object", "additionalProperties": False,
@@ -231,7 +233,7 @@ class Worker:
                     for item in outline]
                 self.store.save_project(project)
             targets = [s["id"] for s in project["slides"]
-                       if s["id"] == request.slide_id or
+                       if request.regenerate_all or s["id"] == request.slide_id or
                        (request.slide_id is None and s["status"] != "ready")]
             if not targets:
                 raise ValueError("Tutte le slide sono già pronte. Usa Rigenera sulla singola slide.")

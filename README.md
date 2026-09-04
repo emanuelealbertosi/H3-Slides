@@ -131,9 +131,17 @@ usare un'API remota. Nessun download di modelli automatico.
    successive richiedono una nuova esportazione.
 
 Il prompt modificato e salvato durante il lavoro viene letto dalle slide successive.
-Un nuovo clic su Genera completa le slide ancora mancanti; per rifare una slide pronta
-usa Rigenera. Non elimina o sovrascrive automaticamente una presentazione già terminata.
-Per un progetto interamente nuovo usa Nuovo progetto.
+Un nuovo clic su Genera completa le slide ancora mancanti. **Rigenera** rifà una
+singola slide; **Rigenera tutte le slide** riscrive in sequenza tutti i contenuti
+di una presentazione terminata, dopo conferma. La rigenerazione completa conserva
+scaletta, ordine, numero di slide, brief, fonti, tema e impostazioni, ma sostituisce
+testi, immagini scelte e diagrammi delle slide. Per un progetto interamente nuovo
+usa Nuovo progetto.
+
+Se **Diagrammi Manim** è attivo, durante Genera o Rigenera il planner sceglie
+automaticamente le slide che beneficiano di una spiegazione visuale e avvia anche
+progettazione e rendering. **Progetta Manim** sulla scheda serve soltanto a
+forzare o riprogettare il diagramma di quella slide.
 
 ### Solo argomento, senza documenti
 
@@ -169,7 +177,7 @@ Se il motore fallisce o non si leggono pagine utilizzabili il job si ferma:
 non presenta conoscenza interna del modello come ricerca effettuata.
 
 La ricerca precede il caricamento del LLM e appare nei log del job. Non aggiorna
-da sola slide già pronte: usare Rigenera per una slide o creare un nuovo progetto.
+da sola slide già pronte: usare Rigenera per una slide oppure Rigenera tutte.
 I risultati vanno verificati dall'utente; il recupero di fonti non elimina
 allucinazioni, errori o incompletezza. Le immagini del web non sono importate
 automaticamente: questa funzione riguarda solo fonti testuali.

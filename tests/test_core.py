@@ -204,6 +204,36 @@ async def test_prompt_only_generation_and_regeneration(store, mode):
     assert "Spiega meglio le cause" in prompts[-1]
 
 
+@pytest.mark.asyncio
+async def test_regenerate_all_rewrites_every_slide_but_keeps_outline(store):
+    p = store.create(ProjectInput(title="Corso", prompt="Spiega il corso", count=2).model_dump())
+    p["slides"] = [
+        {"id":"uno","revision":3,"status":"ready","purpose":"Aprire il tema",
+         "block_count":2,"content":SlideContent(title="Introduzione").model_dump()},
+        {"id":"due","revision":6,"status":"ready","purpose":"Concludere il tema",
+         "block_count":2,"content":SlideContent(title="Conclusione").model_dump()},
+    ]
+    store.save_project(p)
+    calls = []
+    class RegenerateLLM(FakeLLM):
+        async def json(self, prompt, **kwargs):
+            calls.append(prompt)
+            return await super().json(prompt, **kwargs)
+    worker = Worker(store, SimpleNamespace())
+    worker.clients = RegenerateLLM
+    req = Generation(provider={"mode":"local","model":"fake"}, prompt=p["prompt"],
+                     count=2, regenerate_all=True)
+    job = worker.submit(p["id"], req)
+    await worker.tasks[job["id"]]
+    result = store.project(p["id"])
+    assert store.job(job["id"])["status"] == "completed"
+    assert [slide["id"] for slide in result["slides"]] == ["uno", "due"]
+    assert [slide["purpose"] for slide in result["slides"]] == ["Aprire il tema", "Concludere il tema"]
+    assert [slide["revision"] for slide in result["slides"]] == [4, 7]
+    assert all(slide["content"]["title"] == "Titolo dal modello" for slide in result["slides"])
+    assert len(calls) == 2  # La scaletta esistente non viene richiesta di nuovo.
+
+
 def test_blank_topic_is_rejected():
     with pytest.raises(ValueError, match="Scrivi un argomento"):
         Generation(provider={"model":"fake"}, prompt=" \n\t ")

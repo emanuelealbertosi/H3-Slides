@@ -7,6 +7,8 @@
 - Render 1800 × 1200 verificato e condiviso tra anteprima, PPTX, PDF e Slidev;
   export Manim animato per fasi.
 - Editor strutturato delle scene e aggiornamento deterministico del render.
+- Rigenerazione in blocco di tutte le slide, conservando scaletta, fonti,
+  ordine e impostazioni del progetto.
 - Interfaccia chiara ispirata a H3-documentary, con sezioni Crea, Progetti e
   Admin e font OFL inclusi.
 
