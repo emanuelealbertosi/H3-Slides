@@ -11,6 +11,9 @@
   ordine e impostazioni del progetto.
 - Riparazione deterministica dei piccoli sconfinamenti dal canvas Manim;
   un diagramma opzionale non valido non interrompe più il resto del deck.
+- Con Diagrammi Manim attivo ogni slide di contenuto richiede una scena; il nuovo
+  comando Crea diagrammi mancanti completa i progetti esistenti senza riscrivere
+  i testi e il correttore risolve anche le sovrapposizioni quando possibile.
 - Errori dello schema remoto ora indicano campo e causa; durante la rigenerazione
   completa una slide non conforme conserva la versione precedente senza
   interrompere quelle successive.

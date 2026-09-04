@@ -73,8 +73,6 @@ class Generation(BaseModel):
 
     @model_validator(mode="after")
     def diagram_target(self):
-        if self.diagram_only and not self.slide_id:
-            raise ValueError("La progettazione del diagramma richiede una slide esistente")
         if self.regenerate_all and self.slide_id:
             raise ValueError("La rigenerazione completa non accetta una singola slide")
         if self.regenerate_all and self.diagram_only:

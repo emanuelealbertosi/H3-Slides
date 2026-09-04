@@ -241,6 +241,7 @@ async function generate(slideId=null,diagramOnly=false,regenerateAll=false){
 }
 $('generate').onclick=()=>generate();
 $('regenerate-all').onclick=()=>generate(null,false,true);
+$('generate-missing-diagrams').onclick=()=>generate(null,true);
 api('/api/admin/search').then(settings=>{$('searxng-url').value=settings.searxng_url}).catch(e=>{$('search-settings-status').textContent=e.message});
 $('save-search-settings').onclick=async()=>{
   try{
@@ -335,6 +336,10 @@ function render(){
   for(const card of [...container.children])if(!ids.has(card.dataset.id))card.remove();
   document.querySelectorAll('[data-export]').forEach(b=>b.disabled=!current?.slides.length||exporting.has(b.dataset.export));
   $('regenerate-all').disabled=!current?.slides.length||busy;
+  const missingDiagrams=(current?.slides||[]).slice(1).filter(slide=>slide.status==='ready'&&!slide.diagram_render?.asset).length;
+  $('generate-missing-diagrams').hidden=!current?.use_manim_diagrams;
+  $('generate-missing-diagrams').disabled=!missingDiagrams||busy;
+  $('generate-missing-diagrams').textContent='◇ Crea diagrammi mancanti'+(missingDiagrams?' · '+missingDiagrams:'');
 }
 async function rerenderDiagram(id){
   if(busy)throw new Error('Attendi la generazione in corso');

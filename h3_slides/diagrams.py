@@ -3,6 +3,7 @@ import asyncio
 import copy
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import shutil
@@ -41,6 +42,38 @@ def normalize_scene_geometry(value):
         for key, new_value in repaired.items():
             if element.get(key, defaults[key]) != new_value:
                 element[key], changed = new_value, True
+    placed = []
+    for index, element in enumerate(result["elements"]):
+        if not isinstance(element, dict) or not all(isinstance(element.get(key), (int, float))
+                                                    for key in ("x", "y", "width", "height")):
+            continue
+        width, height = float(element["width"]), float(element["height"])
+        x_min, x_max = .16+width/2, 11.84-width/2
+        y_min, y_max = 1.06+height/2, 7.24-height/2
+        obstacles = list(placed)
+        for other in result["elements"][index+1:]:
+            if isinstance(other, dict) and all(isinstance(other.get(key), (int, float))
+                                               for key in ("x", "y", "width", "height")):
+                obstacles.append({key: float(other[key]) for key in ("x", "y", "width", "height")})
+
+        def collides(x, y):
+            # Keep a little more than the schema's .08 clearance so floating
+            # point rounding cannot turn an apparently valid repair invalid.
+            return any(abs(x-other["x"]) < (width+other["width"])/2+.1 and
+                       abs(y-other["y"]) < (height+other["height"])/2+.1
+                       for other in obstacles)
+
+        x, y = float(element["x"]), float(element["y"])
+        if collides(x, y):
+            xs = [x_min+i*.2 for i in range(max(1, math.floor((x_max-x_min)/.2)+1))] + [x_max]
+            ys = [y_min+i*.2 for i in range(max(1, math.floor((y_max-y_min)/.2)+1))] + [y_max]
+            candidates = sorted(((cx, cy) for cx in xs for cy in ys),
+                                key=lambda point: (point[0]-x)**2+(point[1]-y)**2)
+            found = next(((cx, cy) for cx, cy in candidates if not collides(cx, cy)), None)
+            if found:
+                element["x"], element["y"] = found
+                x, y, changed = found[0], found[1], True
+        placed.append({"x":x, "y":y, "width":width, "height":height})
     return result, changed
 
 

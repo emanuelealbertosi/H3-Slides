@@ -61,6 +61,17 @@ def test_small_canvas_drift_is_repaired_without_changing_scene_meaning():
     assert scene.elements[2].x+scene.elements[2].width/2 <= 11.85
 
 
+def test_overlapping_model_elements_are_repositioned_deterministically():
+    value = sample_scene()
+    value["elements"][1].update(x=value["elements"][0]["x"], y=value["elements"][0]["y"])
+    repaired, changed = normalize_scene_geometry(value)
+    scene = ManimSceneSpec.model_validate(repaired)
+    assert changed is True
+    assert scene.elements[0].text == "Dati grezzi"
+    assert scene.elements[1].text == "Elaborazione"
+    assert (scene.elements[1].x, scene.elements[1].y) != (scene.elements[0].x, scene.elements[0].y)
+
+
 def test_first_stage_cannot_inject_or_duplicate_a_manim_scene():
     candidate = normalize_slide_candidate({"title":"Test","layout_variant":9,
         "diagram":{"kind":"manim","labels":["duplicato"],"brief":"Processo",
@@ -68,6 +79,9 @@ def test_first_stage_cannot_inject_or_duplicate_a_manim_scene():
     assert candidate["layout_variant"] == 0
     assert candidate["diagram"]["labels"] == []
     assert candidate["diagram"]["scene"] is None
+    wrapped = normalize_slide_candidate({"id":"slide","revision":2,"status":"ready",
+                                         "content":{"title":"Contenuto corretto"}})
+    assert wrapped == {"title":"Contenuto corretto","layout_variant":0}
 
 
 @pytest.mark.asyncio
@@ -139,6 +153,43 @@ async def test_diagram_design_uses_the_selected_local_or_remote_client(tmp_path,
 
 
 @pytest.mark.asyncio
+async def test_batch_creates_only_missing_diagrams_and_skips_cover(tmp_path):
+    store = Store(tmp_path / "batch")
+    project = store.create(ProjectInput(prompt="Algoritmi", count=3,
+                                        use_manim_diagrams=True).model_dump())
+    project["slides"] = [
+        {"id":f"slide-{index}","revision":1,"status":"ready","purpose":title,
+         "content":SlideContent(title=title, layout="cover" if index == 0 else "content").model_dump()}
+        for index, title in enumerate(("Copertina", "Ricerca lineare", "Bubble sort"))
+    ]
+    store.save_project(project)
+    calls = []
+    class SceneLLM:
+        def __init__(self, *_):
+            pass
+        async def prepare(self):
+            pass
+        async def json(self, prompt, **kwargs):
+            calls.append(prompt)
+            return sample_scene()
+    class Renderer:
+        async def render(self, pid, diagram, current):
+            return {"engine":"manim","asset":"manim-"+str(len(calls))+".png",
+                    "fingerprint":str(len(calls)),"width":1800,"height":1200,"report":{"ok":True}}
+    worker = Worker(store, SimpleNamespace())
+    worker.clients, worker.renderer = SceneLLM, Renderer()
+    job = worker.submit(project["id"], Generation(provider={"mode":"local","model":"fake"},
+                        prompt="Inserisci diagrammi", count=3, diagram_only=True))
+    await worker.tasks[job["id"]]
+    result = store.project(project["id"])
+    assert store.job(job["id"])["status"] == "completed"
+    assert "diagram_render" not in result["slides"][0]
+    assert all(slide["diagram_render"]["engine"] == "manim" for slide in result["slides"][1:])
+    assert len(calls) == 2
+    store.db.close()
+
+
+@pytest.mark.asyncio
 async def test_invalid_optional_diagram_does_not_abort_slide_generation(tmp_path):
     store = Store(tmp_path / "fallback")
     project = store.create(ProjectInput(prompt="Spiega una ricerca", count=1,
@@ -155,8 +206,7 @@ async def test_invalid_optional_diagram_does_not_abort_slide_generation(tmp_path
         async def json(self, prompt, **kwargs):
             if "PROGETTA UNA SCENA MANIM" in prompt:
                 broken = sample_scene()
-                broken["elements"][1]["x"] = broken["elements"][0]["x"]
-                broken["elements"][1]["y"] = broken["elements"][0]["y"]
+                broken["elements"][1]["id"] = broken["elements"][0]["id"]
                 return broken
             return SlideContent(title="Ricerca aggiornata", blocks=[
                 {"heading":"Metodo","text":"La ricerca controlla ogni elemento in ordine e termina quando trova il valore desiderato oppure raggiunge la fine della collezione."}

@@ -34,6 +34,8 @@ def normalize_slide_candidate(value):
     """Remove fields reserved for the trusted second-stage diagram compiler."""
     if not isinstance(value, dict):
         return value
+    if not value.get("title") and isinstance(value.get("content"), dict):
+        value = value["content"]
     result = {**value, "layout_variant": 0}
     diagram = result.get("diagram")
     if isinstance(diagram, dict) and diagram.get("kind") in ("manim", "none"):
@@ -196,25 +198,49 @@ class Worker:
                 context = context[:12000] + "\n\n" + web_context(research)
             if request.diagram_only:
                 project = self.store.project(pid)
-                slide = next(s for s in project["slides"] if s["id"] == request.slide_id)
-                expected_revision = slide["revision"]
-                content = SlideContent.model_validate(slide["content"])
-                if content.diagram.kind == "none":
-                    content.diagram.kind = "manim"
-                content.diagram.brief = request.prompt[:400]
-                diagram, rendered = await design_diagram(
-                    client, self.renderer, pid, project, content, context, request.prompt,
-                    lambda message: self.store.event(jid, message), lambda: self.checkpoint(jid))
-                project = self.store.project(pid)
-                current = next((s for s in project["slides"] if s["id"] == request.slide_id), None)
-                if not current or current["revision"] != expected_revision:
-                    raise ValueError("La slide è stata modificata durante il rendering: il diagramma non è stato applicato")
-                current["content"]["diagram"] = diagram
-                current["diagram_render"] = rendered
-                current["revision"] += 1
-                current["status"] = "ready"
-                self.store.save_project(project)
-                self.store.event(jid, "Diagramma Manim progettato, renderizzato e verificato",
+                targets = [s["id"] for i, s in enumerate(project["slides"])
+                           if (s["id"] == request.slide_id if request.slide_id else
+                               i > 0 and s["status"] == "ready" and not s.get("diagram_render", {}).get("asset"))]
+                if not targets:
+                    self.store.event(jid, "Nessun diagramma Manim mancante", status="completed", progress=1)
+                    return
+                for index, sid in enumerate(targets):
+                    await self.checkpoint(jid)
+                    project = self.store.project(pid)
+                    slide = next(s for s in project["slides"] if s["id"] == sid)
+                    expected_revision = slide["revision"]
+                    content = SlideContent.model_validate(slide["content"])
+                    brief = content.diagram.brief or slide.get("purpose", "") or content.title
+                    try:
+                        if content.diagram.kind == "manim" and content.diagram.scene:
+                            diagram = content.diagram.model_dump()
+                            rendered = await self.renderer.render(pid, diagram, project)
+                        else:
+                            content.diagram.kind, content.diagram.brief = "manim", brief[:400]
+                            instructions = brief + "\nRichiesta generale del progetto: " + request.prompt[:2000]
+                            diagram, rendered = await design_diagram(
+                                client, self.renderer, pid, project, content, context, instructions,
+                                lambda message: self.store.event(jid, message), lambda: self.checkpoint(jid))
+                    except ValueError as exc:
+                        if request.slide_id:
+                            raise
+                        self.store.event(jid, f"Diagramma {index + 1}/{len(targets)} non creato · " + str(exc)[:300],
+                                         progress=(index + 1) / len(targets))
+                        continue
+                    project = self.store.project(pid)
+                    current = next((s for s in project["slides"] if s["id"] == sid), None)
+                    if not current or current["revision"] != expected_revision:
+                        if request.slide_id:
+                            raise ValueError("La slide è stata modificata durante il rendering: il diagramma non è stato applicato")
+                        continue
+                    current["content"]["diagram"] = diagram
+                    current["diagram_render"] = rendered
+                    current["revision"] += 1
+                    current["status"] = "ready"
+                    self.store.save_project(project)
+                    self.store.event(jid, f"Diagramma Manim {index + 1}/{len(targets)} progettato e verificato",
+                                     progress=(index + 1) / len(targets))
+                self.store.event(jid, "Generazione dei diagrammi mancanti completata",
                                  status="completed", progress=1)
                 return
             self.store.event(jid, "Fonti lette; costruzione della scaletta" if project["sources"] or research else
@@ -288,10 +314,10 @@ class Worker:
                     "\nOPZIONI VISIVE VINCOLANTI:\n" +
                     ("Puoi scegliere una figura pertinente. " if project.get("use_source_images", True) else
                      "Immagini delle fonti disattivate: image_id deve essere vuoto. ") +
-                    ("Diagrammi Manim attivi: quando una relazione, un meccanismo, una struttura o dati trarrebbero "
-                     "beneficio da una spiegazione visiva, scegli diagram.kind=manim, labels=[], scene=null e scrivi "
-                     "in diagram.brief cosa deve dimostrare la scena. Non proporre un diagramma decorativo e non "
-                     "duplicare i box. La progettazione geometrica e il rendering avverranno in un passaggio dedicato. "
+                    ("Diagrammi Manim attivi: per ogni slide non di apertura DEVI scegliere diagram.kind=manim, "
+                     "labels=[], scene=null e scrivere in diagram.brief cosa deve dimostrare la scena. Il diagramma "
+                     "deve spiegare il concetto specifico con una struttura, un processo o dati pertinenti: non deve "
+                     "essere decorativo né duplicare i box. Geometria e rendering avverranno nel passaggio dedicato. "
                      if project.get("use_manim_diagrams", False) else
                      "Diagrammi disattivati: diagram.kind=none, labels=[], brief='', scene=null. "))
                 content_schema, prose_rules = content_contract(project, slide.get("block_count"))
@@ -385,6 +411,10 @@ class Worker:
                 if not project.get("use_manim_diagrams", False):
                     content.diagram.kind, content.diagram.labels = "none", []
                     content.diagram.brief, content.diagram.scene = "", None
+                elif position > 0 and content.diagram.kind == "none":
+                    content.diagram.kind = "manim"
+                    content.diagram.brief = (slide.get("purpose", "") or content.title)[:400]
+                    self.store.event(jid, "Diagramma Manim richiesto dalle opzioni del progetto")
                 if content.diagram.kind not in ("none", "manim") and len(content.diagram.labels) < 2:
                     raise ValueError("Un diagramma precedente richiede almeno due elementi")
                 rendered = None

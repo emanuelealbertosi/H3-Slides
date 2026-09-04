@@ -138,10 +138,11 @@ scaletta, ordine, numero di slide, brief, fonti, tema e impostazioni, ma sostitu
 testi, immagini scelte e diagrammi delle slide. Per un progetto interamente nuovo
 usa Nuovo progetto.
 
-Se **Diagrammi Manim** è attivo, durante Genera o Rigenera il planner sceglie
-automaticamente le slide che beneficiano di una spiegazione visuale e avvia anche
-progettazione e rendering. **Progetta Manim** sulla scheda serve soltanto a
-forzare o riprogettare il diagramma di quella slide.
+Se **Diagrammi Manim** è attivo, durante Genera o Rigenera ogni slide di contenuto
+riceve un diagramma pertinente; soltanto la copertina viene esclusa. L'opzione è
+vincolante anche se il modello restituisce diagram.kind=none. **Crea diagrammi
+mancanti** completa un progetto esistente senza rigenerarne i testi; **Progetta
+Manim** sulla singola scheda forza o riprogetta soltanto quella scena.
 
 ### Solo argomento, senza documenti
 
@@ -255,11 +256,12 @@ Sono disponibili blocchi, decisioni, documenti, database, griglie di valori,
 grafici a barre e grafici lineari. I collegamenti sono instradati
 deterministicamente attorno agli altri oggetti; testi, sovrapposizioni,
 dimensione minima e limiti del canvas vengono verificati prima del salvataggio.
-Piccoli sconfinamenti numerici prodotti dal modello vengono ricondotti
-automaticamente nell'area utile. Se un diagramma automatico resta non valido
-dopo le correzioni, la slide viene salvata senza diagramma e il resto della
-presentazione prosegue; il log mantiene il motivo e Progetta Manim permette
-di riprovare manualmente.
+Piccoli sconfinamenti e sovrapposizioni geometriche prodotti dal modello vengono
+corretti deterministicamente tenendo conto dell'intera scena. Se un diagramma
+automatico resta non valido dopo le correzioni, la slide viene salvata senza
+diagramma e il resto della presentazione prosegue; il log mantiene il motivo.
+**Crea diagrammi mancanti** riprova in blocco senza toccare i testi e continua
+anche se una singola scena non riesce; **Progetta Manim** riprova la sola slide.
 Il render 1800 × 1200 viene riusato nell'editor, nel PPTX, nel PDF e in Slidev;
 l'export Manim anima progressivamente la stessa scena. Un diagramma attivo ha
 priorità sulla figura della stessa slide.
