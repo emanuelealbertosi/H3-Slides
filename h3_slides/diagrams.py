@@ -183,7 +183,32 @@ def normalize_scene_geometry(value):
                 unplaced = True
         placed.append({"x":x, "y":y, "width":width, "height":height})
     atomic = {"box", "decision", "circle", "database", "document", "text"}
-    if unplaced and 2 <= len(result["elements"]) <= 8 and all(
+    visual = {"grid", "bars", "plot", "venn", "gantt", "timeline", "tree", "network"}
+    visual_elements = [element for element in result["elements"]
+                       if isinstance(element, dict) and element.get("type") in visual]
+    atomic_elements = [element for element in result["elements"]
+                       if isinstance(element, dict) and element.get("type") in atomic]
+    if (unplaced and len(visual_elements) == 1 and 1 <= len(atomic_elements) <= 4 and
+            len(visual_elements) + len(atomic_elements) == len(result["elements"])):
+        # General mixed composition: reserve a large, predictable canvas for
+        # the data visual and a separate rail for explanatory annotations.
+        chart = visual_elements[0]
+        chart.update(x=4.1, y=4.15, width=7.4, height=min(float(chart.get("height", 5.6)), 5.6))
+        if chart.get("type") in ("gantt", "tree"):
+            chart["height"] = max(4.0, chart["height"])
+        else:
+            chart["height"] = max(3.0, chart["height"])
+        count = len(atomic_elements)
+        y_slots = [1.65 + index*(5.0/max(1, count-1)) for index in range(count)] if count > 1 else [4.15]
+        for element, y in zip(atomic_elements, y_slots):
+            element.update(
+                x=10.05, y=y, width=min(float(element.get("width", 2.9)), 2.9),
+                height=min(float(element.get("height", 1.25)), 1.25),
+                text=_shorten(element.get("text") or "", 26),
+                caption=_shorten(element.get("caption") or "", 16),
+            )
+        changed = True
+    elif unplaced and 2 <= len(result["elements"]) <= 8 and all(
             isinstance(element, dict) and element.get("type") in atomic
             for element in result["elements"]):
         count = len(result["elements"])

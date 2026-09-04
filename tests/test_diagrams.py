@@ -118,6 +118,21 @@ def test_dense_atomic_scene_is_relaid_out_and_unknown_model_fields_are_dropped()
     assert "comment" not in repaired
 
 
+def test_overlapping_chart_and_annotation_get_separate_general_regions():
+    value = {"title":"Crescita","elements":[
+        {"id":"chart","type":"plot","x":6,"y":4.1,"width":10,"height":5.5,
+         "text":"Andamento","values":[1,2,4,8,16]},
+        {"id":"note","type":"text","x":9.5,"y":4.1,"width":3.5,"height":1.5,
+         "text":"La dimensione dell'input cresce"}],
+        "connections":[]}
+    repaired, changed = normalize_scene_geometry(value)
+    scene = ManimSceneSpec.model_validate(repaired)
+    chart, note = scene.elements
+    assert changed is True
+    assert chart.type == "plot" and note.type == "text"
+    assert chart.x+chart.width/2 < note.x-note.width/2
+
+
 def test_common_remote_scene_type_and_length_errors_are_repaired():
     value = sample_scene()
     value["title"], value["takeaway"] = "Titolo " * 30, "Conclusione " * 30
