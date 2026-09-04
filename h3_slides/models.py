@@ -45,6 +45,7 @@ class SlideContent(BaseModel):
                     "cards", "steps", "timeline", "focus", "quote", "visual-left",
                     "visual-right", "visual-top", "visual-bottom", "visual-left-wide",
                     "visual-right-wide", "stack"] = "content"
+    layout_locked: bool = False
     layout_variant: int = Field(default=0, ge=0, le=10000)
     heading_position: Literal["top", "bottom"] = "top"
     heading_align: Literal["left", "center", "right"] = "left"

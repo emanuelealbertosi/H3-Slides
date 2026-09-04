@@ -27,6 +27,8 @@ test('old prose can change layout; recomposition is stable and preserves input',
   assert.equal(layoutCandidates(visual,content,0,true)[0],'visual-left');
   content.layout='visual-top';
   assert.equal(layoutCandidates(visual,content,0,true)[0],'visual-top');
+  content.layout='visual-bottom';content.layout_locked=true;
+  assert.deepEqual(layoutCandidates(visual,content,0,true),['visual-bottom']);
 });
 
 test('invisible visual anchors cover compact, wide, top and bottom placements',()=>{

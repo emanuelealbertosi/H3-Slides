@@ -22,6 +22,8 @@ export function layoutCandidates(project,content,index=0,visual=false){
   // A short panoramic strip is useful for photos, but makes diagram labels too small.
   if(project.use_manim_diagrams&&content.diagram?.kind&&content.diagram.kind!=='none')
     auto=auto.filter(k=>k!=='visual-top');
+  if(content.layout_locked&&Object.hasOwn(layouts,requested)&&(!requested.startsWith('visual-')||visual))
+    return [requested];
   const rotation=(index+Number(content.layout_variant||0))%auto.length;
   auto=[...auto.slice(rotation),...auto.slice(0,rotation)];
   const primary=Object.hasOwn(layouts,requested)?requested:content.layout_variant?auto[0]:Object.hasOwn(layouts,preference)?preference:auto[0];

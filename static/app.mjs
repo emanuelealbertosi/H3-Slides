@@ -702,7 +702,8 @@ $('slides').onclick=e=>{
 async function changeLayout(id,layout,recompose=false){
   await finishInlineEdits();
   const pid=current.id,slide=current.slides.find(s=>s.id===id),content=structuredClone(slide.content);
-  content.layout=layout;content.layout_variant=recompose?((content.layout_variant||0)+1)%10001:0;
+  content.layout=layout;content.layout_locked=!recompose&&Object.hasOwn(layouts,layout);
+  content.layout_variant=recompose?((content.layout_variant||0)+1)%10001:0;
   const card=document.getElementById('slide-'+id);card.dataset.saving='1';
   try{
     const updated=await api('/api/projects/'+pid+'/slides/'+id,'PATCH',{revision:slide.revision,content});
