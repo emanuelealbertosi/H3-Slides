@@ -275,16 +275,31 @@ class LLM:
             if schema:
                 body["response_format"]["schema"] = schema
         headers = {"Authorization": "Bearer " + self.provider.api_key} if self.provider.mode == "remote" and self.provider.api_key else {}
-        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=sampling.get("timeout_seconds", 360))) as session:
-            async with session.post(self.url + "/chat/completions", json=body, headers=headers,
-                                    allow_redirects=False) as response:
-                if 300 <= response.status < 400:
-                    raise ValueError("Il server API reindirizza la richiesta: configura il suo indirizzo finale. "
-                                     "Prompt, documenti e chiave non vengono inoltrati altrove.")
-                if response.status >= 400:
-                    # Never log remote response bodies: they may echo keys or source contents.
-                    raise RuntimeError(f"LLM HTTP {response.status}: verifica modello, supporto vision, contesto e credenziali")
-                result = await response.json()
+        timeout = sampling.get("timeout_seconds", 360)
+        try:
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
+                for attempt in range(2):
+                    async with session.post(self.url + "/chat/completions", json=body, headers=headers,
+                                            allow_redirects=False) as response:
+                        if 300 <= response.status < 400:
+                            raise ValueError("Il server API reindirizza la richiesta: configura il suo indirizzo finale. "
+                                             "Prompt, documenti e chiave non vengono inoltrati altrove.")
+                        if response.status >= 400:
+                            # Inspect only for a fixed category; never expose or
+                            # log a body that could echo documents or secrets.
+                            payload = await response.content.read(65536)
+                            message, context_error = _remote_http_problem(response.status, payload)
+                            if (attempt == 0 and context_error and body.get("max_tokens", 0) > 1600):
+                                body["max_tokens"] = 1600
+                                continue
+                            raise RuntimeError(message)
+                        result = await response.json()
+                        break
+        except TimeoutError:
+            raise ValueError(f"Il server LLM non ha risposto entro {timeout} secondi. "
+                             "Il job è terminato: controlla il server e riprova.") from None
+        except aiohttp.ClientError:
+            raise ValueError("Connessione al server LLM interrotta; controlla indirizzo e stato del server.") from None
         self.manager.last_used = time.time()
         usage = result.get("usage", {})
         logging.info("LLM completato: input=%s output=%s finish=%s",
@@ -300,3 +315,25 @@ class LLM:
             return parse_json(raw)
         except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
             raise ValueError("Il modello non ha restituito JSON valido; cambia modello o riduci il prompt") from exc
+def _remote_http_problem(status, payload):
+    """Classify a bounded provider error without exposing its response body."""
+    text = payload.decode("utf-8", "ignore").casefold()
+    context = any(term in text for term in (
+        "context length", "context window", "maximum context", "max context",
+        "too many tokens", "prompt is too long", "n_ctx", "max_seq_len"))
+    if status == 400 and context:
+        return ("LLM HTTP 400: richiesta oltre il contesto del modello/server. "
+                "L'app ha già ridotto le fonti; aumenta il contesto nel server oppure riduci allegati o slide.", True)
+    if status == 400 and any(term in text for term in ("response_format", "json schema", "json_schema")):
+        return ("LLM HTTP 400: il provider non accetta il formato JSON richiesto. "
+                "Aggiorna il server o scegli un modello/API compatibile OpenAI.", False)
+    if status in (401, 403):
+        return (f"LLM HTTP {status}: chiave API assente/non valida o permessi insufficienti.", False)
+    if status == 404 or (status == 400 and "model" in text):
+        return (f"LLM HTTP {status}: modello o endpoint non disponibile; aggiorna la tendina in Admin.", False)
+    if status == 429:
+        return ("LLM HTTP 429: provider temporaneamente limitato; attendi e riprova.", False)
+    if status == 400 and any(term in text for term in ("image", "vision", "multimodal")):
+        return ("LLM HTTP 400: il modello selezionato non accetta le immagini inviate.", False)
+    return (f"LLM HTTP {status}: il provider ha rifiutato la richiesta. "
+            "Verifica modello, contesto e parametri in Admin.", False)

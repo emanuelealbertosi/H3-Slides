@@ -13,6 +13,11 @@ def content_contract(project, block_count=None):
     density = project.get("text_density", "detailed")
     schema = SlideContent.model_json_schema()
     schema["$defs"]["DiagramSpec"]["properties"]["scene"] = {"type": "null"}
+    # The first LLM stage can only request a diagram brief; geometry is
+    # designed later with its dedicated schema. Remove now-unreachable Manim
+    # definitions so smaller remote context windows are not wasted.
+    for name in ("Connection", "Element", "ManimSceneSpec"):
+        schema["$defs"].pop(name, None)
     schema["properties"]["layout_variant"]["const"] = 0  # Variants are a deterministic editor control.
     if density == "brief":
         schema["properties"]["bullets"].update(maxItems=3, items={"type": "string", "maxLength": 90})

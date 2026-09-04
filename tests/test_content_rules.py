@@ -3,6 +3,12 @@ from h3_slides.models import ProjectInput, SlideContent
 from h3_slides.content_rules import content_contract, validate_content, fit_complete_sentences
 
 
+def test_slide_generation_schema_omits_deferred_manim_geometry():
+    schema, _ = content_contract({"text_density": "detailed"}, None)
+    assert schema["$defs"]["DiagramSpec"]["properties"]["scene"] == {"type": "null"}
+    assert not {"Connection", "Element", "ManimSceneSpec"} & schema["$defs"].keys()
+
+
 def test_old_slides_remain_valid():
     old = SlideContent(title="Vecchia slide", bullets=["Testo conservato"])
     assert old.blocks == []

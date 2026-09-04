@@ -104,3 +104,37 @@ def test_invalid_api_inference_is_rejected(setting):
 def test_legacy_api_request_defaults_are_preserved():
     assert Provider(mode="remote").inference.model_dump() == {
         "max_tokens": 3500, "temperature": .35, "top_p": .95, "timeout_seconds": 360}
+
+
+@pytest.mark.asyncio
+async def test_remote_context_400_retries_with_smaller_output_without_leaking_body():
+    requested = []
+    async def complete(request):
+        body = await request.json();requested.append(body["max_tokens"])
+        if len(requested) == 1:
+            return web.json_response({"error": {"message":
+                "maximum context length exceeded PRIVATE DOCUMENT"}}, status=400)
+        return web.json_response({"choices": [{"finish_reason": "stop",
+            "message": {"content": '{"ok":true}'}}]})
+    app = web.Application();app.router.add_post("/v1/chat/completions", complete)
+    async with TestServer(app) as server:
+        provider = Provider(mode="remote", model="test", remote_consent=True,
+                            base_url=str(server.make_url("/")))
+        client = LLM(provider, SimpleNamespace(last_used=0));await client.prepare()
+        assert await client.json("Synthetic content") == {"ok": True}
+    assert requested == [3500, 1600]
+
+
+@pytest.mark.asyncio
+async def test_remote_400_category_is_helpful_but_body_stays_private():
+    async def complete(request):
+        return web.json_response({"error": {"message":
+            "json_schema unsupported PRIVATE DOCUMENT"}}, status=400)
+    app = web.Application();app.router.add_post("/v1/chat/completions", complete)
+    async with TestServer(app) as server:
+        provider = Provider(mode="remote", model="test", remote_consent=True,
+                            base_url=str(server.make_url("/")))
+        client = LLM(provider, SimpleNamespace(last_used=0));await client.prepare()
+        with pytest.raises(RuntimeError, match="formato JSON") as error:
+            await client.json("Synthetic content")
+    assert "PRIVATE" not in str(error.value)
