@@ -326,7 +326,7 @@ Non cambiare il bind da localhost senza aggiungere autenticazione.
 
 | Uscita | Contenuto |
 |---|---|
-| PPTX modificabile | Testi e immagini nativi PowerPoint; diagrammi Manim come render ad alta risoluzione; note e fonti nelle note relatore |
+| PPTX modificabile | Testi e immagini nativi PowerPoint; formule come grafica tipografica; diagrammi Manim come render ad alta risoluzione; note e fonti nelle note relatore |
 | PDF | Rendering statico delle slide dell'editor, con verifica dei principali overflow |
 | Slidev | Sorgenti Markdown e immagini nello ZIP; anteprima live sulla porta 3031 |
 | Manim | MP4 e presentazione HTML con pause; oggetti e relazioni della scena appaiono per fasi |
@@ -336,9 +336,13 @@ usano lo stesso progetto strutturato, ma il loro layout non è identico al pixel
 Le animazioni non diventano animazioni native PowerPoint e il PDF è statico.
 L'HTML Manim incorpora i video; il framework RevealJS può richiedere Internet.
 
-Il renderer usa testo, immagini e scene dichiarative e non richiede LaTeX.
-Grafici specialistici, formule LaTeX e codice Manim libero restano fuori dallo
-schema. L'LLM non può eseguire Python o JavaScript arbitrario sul computer.
+Il renderer usa testo, immagini e scene dichiarative. KaTeX è incluso
+nell'app: le parentesi LaTeX compongono formule in linea o isolate in
+anteprima, PDF, PPTX e Slidev. Il sorgente resta modificabile nell'editor.
+Il tipo Manim function_plot traccia deterministicamente funzioni di x,
+dominio, intervallo visibile e asintoti; sono ammessi operatori aritmetici e
+sin, cos, tan, sqrt, log, ln, exp, abs. Il parser non usa eval:
+l'LLM non può eseguire Python o JavaScript arbitrario sul computer.
 
 Importazione: PDF completi fino a 1.500 pagine, 250 MB/file e 12 milioni di
 caratteri; Markdown fino a 240.000 caratteri; PNG/JPG/WEBP fino a 40 megapixel.

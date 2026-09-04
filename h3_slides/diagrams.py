@@ -5,6 +5,7 @@ import hashlib
 import json
 import math
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -18,6 +19,8 @@ STYLE_KEYS = ("theme", "font", "background_color", "accent_color")
 
 def requested_family(value):
     text = (value or "").casefold()
+    if re.search(r"\b(?:y|f\s*\(\s*x\s*\))\s*=", text):
+        return "function_plot"
     families = (
         ("gantt", ("gantt",)),
         ("venn", ("venn",)),
@@ -25,6 +28,7 @@ def requested_family(value):
         ("tree", ("diagramma ad albero", "albero decisionale", "gerarchia")),
         ("network", ("diagramma di rete", "grafo", "network")),
         ("flowchart", ("diagramma di flusso", "flowchart")),
+        ("function_plot", ("grafico della funzione", "grafico di funzione")),
     )
     return next((family for family, names in families if any(name in text for name in names)), "")
 
@@ -48,7 +52,8 @@ def normalize_scene_geometry(value):
     result, changed = copy.deepcopy(value), False
     scene_keys = {"title", "takeaway", "elements", "connections"}
     element_keys = {"id", "type", "x", "y", "width", "height", "text", "caption",
-                    "tone", "stage", "values", "labels", "columns"}
+                    "tone", "stage", "values", "labels", "columns", "expression",
+                    "x_min", "x_max", "y_min", "y_max", "asymptotes"}
     connection_keys = {"source", "target", "label", "tone"}
     if any(key not in scene_keys for key in result):
         result = {key: item for key, item in result.items() if key in scene_keys}
@@ -73,7 +78,7 @@ def normalize_scene_geometry(value):
     for element in result["elements"]:
         if not isinstance(element, dict):
             continue
-        for key in ("x", "y", "width", "height"):
+        for key in ("x", "y", "width", "height", "x_min", "x_max", "y_min", "y_max"):
             raw = element.get(key)
             if isinstance(raw, str):
                 try:
@@ -99,6 +104,16 @@ def normalize_scene_geometry(value):
                         pass
                 repaired_values.append(raw)
             element["values"] = repaired_values
+        if isinstance(element.get("asymptotes"), list):
+            repaired_asymptotes = []
+            for raw in element["asymptotes"]:
+                if isinstance(raw, str):
+                    try:
+                        raw, changed = float(raw.replace(",", ".")), True
+                    except ValueError:
+                        pass
+                repaired_asymptotes.append(raw)
+            element["asymptotes"] = repaired_asymptotes
         for key, limit in (("text", 48), ("caption", 36)):
             repaired = _shorten(element.get(key), limit)
             if repaired != element.get(key):
@@ -108,7 +123,7 @@ def normalize_scene_geometry(value):
             if repaired != element["labels"]:
                 element["labels"], changed = repaired, True
         kind = element.get("type")
-        if kind not in ("grid", "bars", "plot", "venn", "gantt", "timeline", "tree", "network"):
+        if kind not in ("grid", "bars", "plot", "function_plot", "venn", "gantt", "timeline", "tree", "network"):
             minimum_width = 2.0
             minimum_height = 1.6 if kind in ("decision", "circle") and element.get("caption") else (
                 1.3 if element.get("caption") else .9)
@@ -136,7 +151,7 @@ def normalize_scene_geometry(value):
             numbers[key] = float(raw)
         if len(numbers) != 4:
             continue
-        compound = kind in ("venn", "gantt", "timeline", "tree", "network")
+        compound = kind in ("function_plot", "venn", "gantt", "timeline", "tree", "network")
         min_width = 5.0 if compound else (4.0 if kind in ("grid", "bars", "plot") else .6)
         min_height = 4.0 if kind in ("gantt", "tree") else (
             3.0 if compound else (2.5 if kind in ("grid", "bars", "plot") else .5))
@@ -183,7 +198,7 @@ def normalize_scene_geometry(value):
                 unplaced = True
         placed.append({"x":x, "y":y, "width":width, "height":height})
     atomic = {"box", "decision", "circle", "database", "document", "text"}
-    visual = {"grid", "bars", "plot", "venn", "gantt", "timeline", "tree", "network"}
+    visual = {"grid", "bars", "plot", "function_plot", "venn", "gantt", "timeline", "tree", "network"}
     visual_elements = [element for element in result["elements"]
                        if isinstance(element, dict) and element.get("type") in visual]
     atomic_elements = [element for element in result["elements"]

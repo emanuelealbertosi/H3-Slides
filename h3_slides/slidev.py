@@ -7,6 +7,9 @@ from pathlib import Path
 def write_slidev(project, assets, output, strict=False):
     output.mkdir(parents=True, exist_ok=True)
     root = Path(__file__).resolve().parents[1]
+    katex_fonts = root / "static" / "vendor" / "katex" / "fonts"
+    if katex_fonts.exists():
+        shutil.copytree(katex_fonts, output / "fonts", dirs_exist_ok=True)
     for n, slide in enumerate(project["slides"]):
         c = slide["content"]
         diagram = project.get("use_manim_diagrams") and c.get("diagram", {}).get("kind", "none") != "none"

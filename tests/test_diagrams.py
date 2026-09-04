@@ -176,6 +176,7 @@ def test_legacy_flow_fallback_uses_flowchart_shapes():
         "circle", "box", "decision", "circle"]
     assert requested_family("Prepara un diagramma di Gantt") == "gantt"
     assert requested_family("Mostra un diagramma di Venn") == "venn"
+    assert requested_family("Fai il grafico della funzione y = 1/x") == "function_plot"
     with pytest.raises(ValueError, match="vero diagramma gantt"):
         fallback_diagram(content, content.diagram.model_dump(), "gantt")
 

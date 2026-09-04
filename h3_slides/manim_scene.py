@@ -3,9 +3,10 @@ import math
 import textwrap
 import numpy as np
 from manim import (VGroup, Text, RoundedRectangle, Rectangle, Ellipse, Polygon,
-                   Line, Arrow, VMobject, Dot, Axes, ManimColor, interpolate_color)
+                   Line, DashedLine, Arrow, VMobject, Dot, Axes, ManimColor, interpolate_color)
 from .diagram_spec import ManimSceneSpec
 from .diagram_layout import bounds, route_connection
+from .math_expression import sample_expression
 
 
 def point(x, y):
@@ -74,7 +75,7 @@ def build_scene(value, project):
         e, tone = element, colors[element.tone]
         w, h = e.width, e.height
         group = VGroup()
-        if e.type in ("grid", "bars", "plot", "venn", "gantt", "timeline", "tree", "network"):
+        if e.type in ("grid", "bars", "plot", "function_plot", "venn", "gantt", "timeline", "tree", "network"):
             panel = RoundedRectangle(width=w, height=h, corner_radius=.13, stroke_width=1.5,
                 color=mix(colors["bg"], tone, .55), fill_color=mix(colors["bg"], tone, .055), fill_opacity=1)
             group.add(panel)
@@ -130,6 +131,37 @@ def build_scene(value, project):
                 for value in (lo, hi):
                     number = copy(f"{value:g}", .65, .3, size=20, minimum=20).next_to(axes.c2p(0, value), [-1, 0, 0], buff=.05)
                     group.add(number)
+            elif e.type == "function_plot":
+                x_step = max((e.x_max-e.x_min)/5, 1e-8)
+                y_step = max((e.y_max-e.y_min)/5, 1e-8)
+                axes = Axes(x_range=[e.x_min, e.x_max, x_step],
+                            y_range=[e.y_min, e.y_max, y_step],
+                            x_length=inner_w-.35, y_length=inner_h-.2,
+                            axis_config={"include_tip": False, "color": colors["muted"],
+                                         "stroke_width": 2, "include_ticks": True,
+                                         "tick_size": .045}).move_to([0, -.08, 0])
+                group.add(axes)
+                segments = sample_expression(e.expression, e.x_min, e.x_max, e.y_min, e.y_max,
+                                             e.asymptotes)
+                if not segments:
+                    raise ValueError(f"Funzione {e.id}: nessun tratto visibile nell'intervallo scelto")
+                for segment in segments:
+                    curve = VMobject(color=tone, stroke_width=4)
+                    curve.set_points_as_corners([axes.c2p(x, y) for x, y in segment])
+                    group.add(curve)
+                for asymptote in e.asymptotes:
+                    group.add(DashedLine(axes.c2p(asymptote, e.y_min),
+                                         axes.c2p(asymptote, e.y_max),
+                                         color=colors["red"], stroke_width=2, dash_length=.09))
+                for value, axis in ((e.x_min, "x"), (e.x_max, "x"), (e.y_min, "y"), (e.y_max, "y")):
+                    label = copy(f"{value:g}", .65, .3, size=20, minimum=20)
+                    if axis == "x":
+                        label.next_to(axes.c2p(value, 0 if e.y_min <= 0 <= e.y_max else e.y_min),
+                                      [0, -1, 0], buff=.04)
+                    else:
+                        label.next_to(axes.c2p(0 if e.x_min <= 0 <= e.x_max else e.x_min, value),
+                                      [-1, 0, 0], buff=.04)
+                    group.add(label)
             elif e.type == "venn":
                 count = len(e.labels)
                 if count == 2:

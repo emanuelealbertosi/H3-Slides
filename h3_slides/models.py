@@ -158,6 +158,10 @@ interi in prosa, non elenchi mascherati e non semplici frasi isolate.
 Ogni box ha heading, text, kind (explanation, example, key o quote), source.
 Le spiegazioni importanti devono essere visibili nei box, NON solo nelle note.
 Titoli preferibilmente sotto 65 caratteri, nessun Markdown nei testi.
+Per formule matematiche usa LaTeX: \\(...\\) in linea e \\[...\\] per una formula isolata.
+Conserva esattamente variabili, operatori, frazioni, apici e pedici; non simulare formule
+con caratteri decorativi. Il grafico di una funzione va richiesto come diagramma Manim,
+indicando nel brief la funzione, il dominio e gli eventuali asintoti.
 Un box quote è un brano testuale ESATTO di un documento allegato recuperato,
 con fonte e pagina se disponibile. Non mettere virgolette attorno a una
 parafrasi e non chiamarla citazione. Senza allegati non usare quote.

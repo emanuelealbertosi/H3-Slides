@@ -1,5 +1,6 @@
 import {slideHTML,slideCSS,visualFor,fitSlide} from '../static/deck.mjs';
 import {fileURLToPath} from 'node:url';
+import fs from 'node:fs/promises';
 let input='';for await(const chunk of process.stdin)input+=chunk;
 const project=JSON.parse(input);
 process.env.PLAYWRIGHT_BROWSERS_PATH ||= fileURLToPath(new URL('../runtime/browsers',import.meta.url));
@@ -25,4 +26,5 @@ project.slides.forEach((s,i)=>{
     '<!--',String(s.content.notes||'').replace(/-->/g,'—>'),'',...(s.content.sources||[]).map(s=>String(s).replace(/-->/g,'—>')),'-->','');
 });
 if(!project.slides.length)lines.push('# La presentazione è in preparazione');
-process.stdout.write(JSON.stringify({markdown:lines.join('\n'),css:slideCSS,overflow}));
+const katexCSS=await fs.readFile(new URL('../static/vendor/katex/katex.min.css',import.meta.url),'utf8');
+process.stdout.write(JSON.stringify({markdown:lines.join('\n'),css:katexCSS+slideCSS,overflow}));

@@ -12,8 +12,9 @@ export async function measureLayouts(page){
     const origin=node.getBoundingClientRect();
     const rect=e=>{const r=e.getBoundingClientRect();return {x:(r.x-origin.x)/96,y:(r.y-origin.y)/96,w:r.width/96,h:r.height/96}};
     const visible=e=>e.textContent.trim()&&e.getClientRects().length&&getComputedStyle(e).display!=='none';
-    const texts=[...node.querySelectorAll('.kicker,h1,.subtitle,.prose-box h2,.prose-box p,.prose-source,.block-number,.bullet-mark,.bullet-text,.footer span')].filter(visible).map(e=>{
-      const c=getComputedStyle(e);return {...rect(e),value:e.textContent,size:parseFloat(c.fontSize)*.75,
+    const texts=[...node.querySelectorAll('.kicker,h1,.subtitle,.prose-box h2,.prose-box p,.prose-source,.block-number,.bullet-mark,.bullet-text,.footer span')].map((e,domIndex)=>({e,domIndex})).filter(({e})=>visible(e)).map(({e,domIndex})=>{
+      const c=getComputedStyle(e);return {...rect(e),domIndex,formula:Boolean(e.querySelector('.katex')),
+        value:e.dataset.editRaw??e.textContent,size:parseFloat(c.fontSize)*.75,
         font:c.fontFamily.split(',')[0].replaceAll('"',''),bold:Number(c.fontWeight)>=600,
         italic:c.fontStyle==='italic',color:c.color,lineHeight:parseFloat(c.lineHeight)*.75};
     });
@@ -50,12 +51,25 @@ export async function buildExports(project,assetsDir,outDir,format){
   const browser=await chromium.launch({headless:true});
   try{
     const page=await browser.newPage({viewport:{width:1280,height:720}});
-    await page.setContent('<!doctype html><meta charset="utf-8"><style>'+slideCSS+
+    const katexRoot=fileURLToPath(new URL('../static/vendor/katex/',import.meta.url)).replaceAll('\\','/');
+    const katexCSS=(await fs.readFile(new URL('../static/vendor/katex/katex.min.css',import.meta.url),'utf8'))
+      .replaceAll('url(fonts/','url(file:///'+katexRoot+'/fonts/');
+    await page.setContent('<!doctype html><meta charset="utf-8"><style>'+katexCSS+slideCSS+
       'html,body{margin:0}@page{size:1280px 720px;margin:0}.slide-frame{break-after:page;print-color-adjust:exact}</style>'+
       articles.join(''),{waitUntil:'load'});
     await page.evaluate(()=>document.fonts.ready);
     await page.evaluate(()=>Promise.all([...document.images].map(i=>i.decode())));
     const measured=await measureLayouts(page);
+    const textSelector='.kicker,h1,.subtitle,.prose-box h2,.prose-box p,.prose-source,.block-number,.bullet-mark,.bullet-text,.footer span';
+    const formulaImages=[];
+    for(const [slideIndex,layout] of measured.entries()){
+      const items=[];
+      for(const text of layout.texts){
+        items.push(text.formula?'data:image/png;base64,'+(await page.locator('.slide-frame').nth(slideIndex)
+          .locator(textSelector).nth(text.domIndex).screenshot({omitBackground:true})).toString('base64'):null);
+      }
+      formulaImages.push(items);
+    }
     await fs.writeFile(path.join(outDir,'layout-report.json'),JSON.stringify(measured.map((m,i)=>({slide:i+1,layout:m.layout,overflow:m.overflow})),null,2));
     const bad=measured.flatMap((m,i)=>m.overflow?[i+1]:[]);
     if(bad.length)throw new Error('Testo fuori dallo spazio nelle slide '+bad.join(', ')+': il composer ha provato altre disposizioni. Dividi il contenuto in più slide o modifica il testo; nessuna parte viene nascosta nell’export.');
@@ -80,9 +94,12 @@ export async function buildExports(project,assetsDir,outDir,format){
             w:i%2?0:b.w,h:i%2?b.h:0,line:{color:hex(edge.color),width:edge.width}});
         });
       }
-      for(const b of layout.texts)s.addText(b.value,{x:b.x,y:b.y,w:b.w,h:b.h+.025,fontFace:b.font,
-        fontSize:b.size,bold:b.bold,italic:b.italic,color:hex(b.color),margin:0,breakLine:false,
-        valign:'top',fit:'shrink',paraSpaceAfterPt:0,...(Number.isFinite(b.lineHeight)?{lineSpacingMultiple:b.lineHeight/b.size}:{} )});
+      for(const [textIndex,b] of layout.texts.entries()){
+        if(b.formula)s.addImage({data:formulaImages[index][textIndex],x:b.x,y:b.y,w:b.w,h:b.h});
+        else s.addText(b.value,{x:b.x,y:b.y,w:b.w,h:b.h+.025,fontFace:b.font,
+          fontSize:b.size,bold:b.bold,italic:b.italic,color:hex(b.color),margin:0,breakLine:false,
+          valign:'top',fit:'shrink',paraSpaceAfterPt:0,...(Number.isFinite(b.lineHeight)?{lineSpacingMultiple:b.lineHeight/b.size}:{} )});
+      }
       s.addShape(pptx.ShapeType.line,{x:layout.footer.x,y:layout.footer.y,w:layout.footer.w,h:0,line:{color:t.line.slice(1),width:.75}});
       const frame=layout.visual;
       if(visual.image&&frame){

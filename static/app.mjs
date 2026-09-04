@@ -541,13 +541,14 @@ function editSlide(id){
 }
 const elementTypes={box:'Riquadro',decision:'Decisione',circle:'Entità',database:'Archivio',document:'Documento',
   text:'Annotazione',grid:'Griglia / pixel',bars:'Grafico a barre',plot:'Grafico lineare',
+  function_plot:'Grafico di funzione',
   venn:'Diagramma di Venn',gantt:'Diagramma di Gantt',timeline:'Timeline',
   tree:'Albero / gerarchia',network:'Rete / grafo'};
 const tones={accent:'Accento',blue:'Blu',amber:'Ambra',red:'Rosso',violet:'Viola',neutral:'Neutro'};
 function options(values,current){return Object.entries(values).map(([value,label])=>'<option value="'+value+'" '+(value===current?'selected':'')+'>'+label+'</option>').join('')}
 function addSceneElement(value={}){
   const n=$('scene-elements').children.length;
-  const defaults={id:'oggetto'+(n+1),type:'box',x:2+(n%3)*4,y:2.4+Math.floor(n/3)*2.6,width:3,height:1.3,text:'',caption:'',tone:'accent',stage:n+1,values:[],labels:[],columns:4};
+  const defaults={id:'oggetto'+(n+1),type:'box',x:2+(n%3)*4,y:2.4+Math.floor(n/3)*2.6,width:3,height:1.3,text:'',caption:'',tone:'accent',stage:n+1,values:[],labels:[],columns:4,expression:'',x_min:-5,x_max:5,y_min:-5,y_max:5,asymptotes:[]};
   value={...defaults,...value};const row=document.createElement('fieldset');row.className='scene-item';
   row.innerHTML='<div class="row"><label>ID<input data-scene="id" maxlength="32" pattern="[A-Za-z][A-Za-z0-9_-]{0,31}" required></label>'+
     '<label>Oggetto<select data-scene="type">'+options(elementTypes,value.type)+'</select></label>'+
@@ -557,8 +558,18 @@ function addSceneElement(value={}){
       '<input data-scene="'+key+'" type="number" step="'+(key==='stage'||key==='columns'?'1':'.1')+'" required></label>').join('')+'</div>'+
     '<div class="row"><label>Valori · separati da virgola<textarea data-scene="values" rows="2"></textarea></label>'+
     '<label>Etichette · una per riga<textarea data-scene="labels" rows="2"></textarea></label></div>'+
+    '<label>Funzione di x (es. 1/x, sin(x), x^2)<input data-scene="expression" maxlength="120"></label>'+
+    '<div class="scene-geometry">'+['x_min','x_max','y_min','y_max'].map(key=>'<label>'+key+
+      '<input data-scene="'+key+'" type="number" step=".1" required></label>').join('')+'</div>'+
+    '<label>Asintoti verticali · separati da virgola<input data-scene="asymptotes"></label>'+
     '<button type="button" class="quiet danger" data-remove-scene>Rimuovi oggetto</button>';
   for(const [key,item] of Object.entries(value)){const input=row.querySelector('[data-scene="'+key+'"]');if(input)input.value=Array.isArray(item)?item.join(key==='labels'?'\n':', '):item}
+  row.querySelector('[data-scene="type"]').onchange=event=>{
+    if(event.target.value!=='function_plot')return;
+    row.querySelector('[data-scene="width"]').value=Math.max(5,Number(row.querySelector('[data-scene="width"]').value));
+    row.querySelector('[data-scene="height"]').value=Math.max(3.5,Number(row.querySelector('[data-scene="height"]').value));
+    if(!row.querySelector('[data-scene="expression"]').value)row.querySelector('[data-scene="expression"]').value='1/x';
+  };
   row.querySelector('[data-remove-scene]').onclick=()=>row.remove();$('scene-elements').append(row);
 }
 function addSceneConnection(value={}){
@@ -582,9 +593,10 @@ function showSceneEditor(){
 function sceneFromEditor(){
   const elements=[...$('scene-elements').children].map(row=>{
     const item=Object.fromEntries([...row.querySelectorAll('[data-scene]')].map(input=>[input.dataset.scene,input.value.trim()]));
-    for(const key of ['x','y','width','height','stage','columns'])item[key]=Number(item[key]);
+    for(const key of ['x','y','width','height','stage','columns','x_min','x_max','y_min','y_max'])item[key]=Number(item[key]);
     item.values=item.values.split(/[\s,;]+/).filter(Boolean).map(Number);
     item.labels=item.labels.split('\n').map(value=>value.trim()).filter(Boolean);
+    item.asymptotes=item.asymptotes.split(/[\s,;]+/).filter(Boolean).map(Number);
     return item;
   });
   const connections=[...$('scene-connections').children].map(row=>
@@ -740,7 +752,8 @@ $('slides').ondblclick=e=>{
   const field=e.target.closest('[data-edit-field]');if(!field||field.isContentEditable)return;
   const card=field.closest('.slide-card'),slide=current.slides.find(s=>s.id===card.dataset.id);
   if(slide.status!=='ready'){toast('Attendi che questa scheda sia pronta');return}
-  const original=field.textContent,content=structuredClone(slide.content),revision=slide.revision,pid=current.id;
+  const original=field.dataset.editRaw??field.textContent,content=structuredClone(slide.content),revision=slide.revision,pid=current.id;
+  field.textContent=original;
   field.contentEditable='plaintext-only';field.focus();card.draggable=false;
   let cancelled=false;
   field.onkeydown=event=>{if(event.key==='Escape'){cancelled=true;field.textContent=original;field.blur()}else if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();field.blur()}};

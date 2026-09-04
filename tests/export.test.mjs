@@ -1,7 +1,7 @@
 import './browser-env.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {slideHTML,themeFor,blockColors,autoText,contrast,slideCSS} from '../static/deck.mjs';
+import {slideHTML,themeFor,blockColors,autoText,contrast,slideCSS,mathHTML} from '../static/deck.mjs';
 import {diagramGeometry,diagramSVG} from '../static/diagram.mjs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -11,6 +11,21 @@ test('slide renderer escapes source text and HTML',()=>{
   const html=slideHTML({title:'Project',theme:'ink'},{content:{layout:'content',title:'<script>alert(1)</script>',subtitle:'',bullets:['<img onerror=x>']}},0);
   assert.ok(!html.includes('<script>'));
   assert.ok(html.includes('&lt;script&gt;'));
+});
+test('mathematical formulas render with KaTeX, preserve source and export to PowerPoint',async()=>{
+  const formula='La funzione \\(f(x)=1/x\\) non è definita per \\(x=0\\).';
+  const html=slideHTML({title:'Analisi',theme:'paper'},{content:{
+    layout:'content',title:'y=1/x',subtitle:'',bullets:[formula]}},0);
+  assert.ok(html.includes('class="katex"'));
+  assert.ok(html.includes('data-edit-raw="La funzione'));
+  assert.ok(!html.includes('<script>'));
+  assert.ok(mathHTML('\\[x^2+1\\]').includes('katex-display'));
+  const {buildExports}=await import('../scripts/export.mjs');
+  const out=await fs.mkdtemp(path.join(os.tmpdir(),'h3-math-'));
+  const project={title:'Analisi',theme:'paper',slides:[{content:{
+    layout:'content',title:'y=1/x',subtitle:'',bullets:[formula],blocks:[],sources:[]}}]};
+  const output=await buildExports(project,out,out,'pptx');
+  assert.ok((await fs.stat(output)).size>500);
 });
 test('visual toggles apply to old slides without losing references',()=>{
   const content={layout:'content',title:'Title',subtitle:'',bullets:['A'],image_id:'abc.jpg',diagram:{kind:'flow',labels:['A','B']}};

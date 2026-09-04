@@ -1,6 +1,26 @@
 import {layoutCandidates,composerCSS} from './composer.mjs';
+import katex from './vendor/katex/katex.mjs';
 export {layouts,layoutCandidates,fitSlide,visualAnchorAt} from './composer.mjs';
 export const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const formulaHTML=(source,displayMode=false)=>{
+  try{return katex.renderToString(source,{displayMode,throwOnError:false,strict:'warn',trust:false,output:'htmlAndMathml'})}
+  catch{return esc(source)}
+};
+export function mathHTML(value){
+  const source=String(value??'');
+  let found=false,last=0,html='';
+  const pattern=/\\\[([\s\S]*?)\\\]|\\\(([\s\S]*?)\\\)/g;
+  for(const match of source.matchAll(pattern)){
+    found=true;html+=esc(source.slice(last,match.index));
+    html+=formulaHTML(match[1]??match[2],match[1]!==undefined);
+    last=match.index+match[0].length;
+  }
+  if(found)return html+esc(source.slice(last));
+  if(/^\s*(?:[A-Za-z]\w*(?:\([^)]*\))?|[A-Za-z])\s*=/.test(source))
+    return formulaHTML(source.replace(/^\s*y\s*=\s*/i,'y='),false);
+  return esc(source);
+}
+const rawAttr=value=>' data-edit-raw="'+esc(value)+'"';
 export const themes = {
   ink: {bg:'#141b2c',fg:'#f6f7fb',muted:'#c1c9d8',accent:'#b1f1ce'},
   paper: {bg:'#ffffff',fg:'#17243a',muted:'#526078',accent:'#18794e'},
@@ -42,7 +62,7 @@ export function blockColors(project,block,index=0){
 }
 export function contentBlocks(content){return content.blocks||[]}
 
-export const slideCSS = '*{box-sizing:border-box}.slide-frame{width:1280px;height:720px;position:relative;overflow:hidden;font-family:var(--font,Arial),sans-serif;background:var(--bg);color:var(--fg);display:flex;flex-direction:column}.slide-frame .heading{flex:none}.slide-frame h1{color:var(--heading)}.slide-frame .slide-columns{display:flex}.slide-frame .footer{position:absolute;display:flex;justify-content:space-between;gap:20px;color:var(--muted);border-top:1px solid var(--line)}.slide-frame .footer span:first-child{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}' + composerCSS;
+export const slideCSS = '*{box-sizing:border-box}.slide-frame{width:1280px;height:720px;position:relative;overflow:hidden;font-family:var(--font,Arial),sans-serif;background:var(--bg);color:var(--fg);display:flex;flex-direction:column}.slide-frame .heading{flex:none}.slide-frame h1{color:var(--heading)}.slide-frame .slide-columns{display:flex}.slide-frame .footer{position:absolute;display:flex;justify-content:space-between;gap:20px;color:var(--muted);border-top:1px solid var(--line)}.slide-frame .footer span:first-child{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.slide-frame .katex-display{margin:.25em 0}.slide-frame .katex{font-size:1.04em}.slide-frame [data-edit-field] .katex{pointer-events:none}' + composerCSS;
 
 export function slideHTML(project,slide,index,imageUrl=''){
   const c=slide.content,t=themeFor(project),visual=visualFor(project,c,slide),template=templateFor(project,c,index,slide);
@@ -53,15 +73,15 @@ export function slideHTML(project,slide,index,imageUrl=''){
     ';--card-bg:'+card.bg+';--card-fg:'+card.fg+';--card-border:'+card.border+';--card-border-width:'+(d.border_width??1)+'px'+
     ';--box-border-width:'+(d.border_width||0)+'px;--box-radius:'+(d.box_radius??18)+'px'+
     (d.title_size?';--title-size:'+d.title_size+'px':'')+(d.body_size?';--custom-body-size:'+d.body_size+'px':'');
-  const point=(b,i)=>'<li><span class="bullet-mark">'+String(i+1).padStart(2,'0')+'</span><span class="bullet-text" data-edit-field="bullets" data-index="'+i+'">'+esc(b)+'</span></li>';
+  const point=(b,i)=>'<li><span class="bullet-mark">'+String(i+1).padStart(2,'0')+'</span><span class="bullet-text" data-edit-field="bullets" data-index="'+i+'"'+rawAttr(b)+'>'+mathHTML(b)+'</span></li>';
   const blocks=contentBlocks(c);
   const box=(b,i)=>{
     const colors=blockColors(project,b,i);
     return '<section class="prose-box kind-'+esc(b.kind)+'" data-block-index="'+i+'" style="--box-bg:'+colors.bg+';--box-fg:'+colors.fg+';--box-border:'+colors.border+'">'+
       '<div class="block-number">'+String(i+1).padStart(2,'0')+'</div>'+
-      '<h2 data-edit-field="block-heading" data-index="'+i+'">'+esc(b.heading)+'</h2>'+
-      '<p data-edit-field="block-text" data-index="'+i+'">'+esc(b.text)+'</p>'+
-      '<div class="prose-source" data-edit-field="block-source" data-index="'+i+'">'+esc(b.source)+'</div></section>';
+      '<h2 data-edit-field="block-heading" data-index="'+i+'"'+rawAttr(b.heading)+'>'+mathHTML(b.heading)+'</h2>'+
+      '<p data-edit-field="block-text" data-index="'+i+'"'+rawAttr(b.text)+'>'+mathHTML(b.text)+'</p>'+
+      '<div class="prose-source" data-edit-field="block-source" data-index="'+i+'"'+rawAttr(b.source)+'>'+mathHTML(b.source)+'</div></section>';
   };
   return '<article class="slide-frame tpl-'+esc(template)+' density-'+esc(project.text_density||'detailed')+
     (visual.diagram||visual.image?' has-visual':'')+(visual.diagram?' has-diagram':'')+(blocks.reduce((n,b)=>n+b.text.length,0)>1100?' copy-dense':'')+
@@ -69,8 +89,8 @@ export function slideHTML(project,slide,index,imageUrl=''){
     (d.title_size?' custom-title-size':'')+(d.body_size?' custom-body-size':'')+'" data-candidates="'+esc(JSON.stringify(candidates))+'" data-layout="'+esc(template)+'" style="'+style+';--item-count:'+(blocks.length||c.bullets?.length||1)+'">'+
     '<div class="slide-accent"></div>'+
     '<div class="kicker">H3 SLIDES <span>/ '+String(index+1).padStart(2,'0')+'</span></div><div class="heading">'+
-    '<h1 data-edit-field="title">'+esc(c.title)+'</h1>'+
-    (c.subtitle?'<p class="subtitle" data-edit-field="subtitle">'+esc(c.subtitle)+'</p>':'')+'</div>'+
+    '<h1 data-edit-field="title"'+rawAttr(c.title)+'>'+mathHTML(c.title)+'</h1>'+
+    (c.subtitle?'<p class="subtitle" data-edit-field="subtitle"'+rawAttr(c.subtitle)+'>'+mathHTML(c.subtitle)+'</p>':'')+'</div>'+
     '<div class="slide-columns"><div class="copy">'+(blocks.length?
       '<div class="prose-grid count-'+blocks.length+'">'+blocks.map(box).join('')+'</div>':
       '<ul>'+(c.bullets||[]).map((item,i)=>point(item,i).replace('<li>','<li data-bullet-index="'+i+'">')).join('')+'</ul>')+'</div>'+

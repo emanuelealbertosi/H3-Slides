@@ -4,6 +4,7 @@ runtime/
 data/
 logs/
 outputs/
+media/
 dist/
 !vendor/pptxgenjs/dist/
 !vendor/pptxgenjs/dist/pptxgen.cjs.js
