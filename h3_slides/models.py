@@ -34,6 +34,20 @@ class TextBlock(BaseModel):
         return self
 
 
+class FreePlacement(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    x: int = Field(ge=0, le=1279)
+    y: int = Field(ge=0, le=679)
+    w: int = Field(ge=80, le=1280)
+    h: int = Field(ge=44, le=680)
+
+    @model_validator(mode="after")
+    def inside_canvas(self):
+        if self.x + self.w > 1280 or self.y + self.h > 680:
+            raise ValueError("La posizione libera deve restare dentro il canvas della slide")
+        return self
+
+
 class SlideContent(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str = Field(min_length=1, max_length=110)
@@ -44,11 +58,17 @@ class SlideContent(BaseModel):
     layout: Literal["cover", "content", "split", "statement", "editorial", "comparison",
                     "cards", "steps", "timeline", "focus", "quote", "visual-left",
                     "visual-right", "visual-top", "visual-bottom", "visual-left-wide",
-                    "visual-right-wide", "stack"] = "content"
+                    "visual-right-wide", "stack", "freeform"] = "content"
     layout_locked: bool = False
     layout_variant: int = Field(default=0, ge=0, le=10000)
     heading_position: Literal["top", "bottom"] = "top"
     heading_align: Literal["left", "center", "right"] = "left"
+    freeform: dict[Annotated[str, Field(pattern=r"^(heading|visual|block-[0-3]|bullet-[0-4])$")],
+                   FreePlacement] = Field(default_factory=dict, max_length=11)
+    freeform_base: Literal["cover", "editorial", "comparison", "cards", "steps", "timeline", "focus",
+                           "quote", "visual-left", "visual-right", "visual-top", "visual-bottom",
+                           "visual-left-wide", "visual-right-wide", "stack"] = "editorial"
+    freeform_compact: bool = False
     image_id: str = ""
     sources: list[str] = Field(default_factory=list, max_length=12)
     animation: Literal["none", "reveal"] = "none"

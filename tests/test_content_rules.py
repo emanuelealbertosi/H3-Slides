@@ -7,6 +7,20 @@ def test_slide_generation_schema_omits_deferred_manim_geometry():
     schema, _ = content_contract({"text_density": "detailed"}, None)
     assert schema["$defs"]["DiagramSpec"]["properties"]["scene"] == {"type": "null"}
     assert not {"Connection", "Element", "ManimSceneSpec"} & schema["$defs"].keys()
+    assert "freeform" not in schema["properties"]
+    assert "freeform_base" not in schema["properties"]
+    assert "freeform_compact" not in schema["properties"]
+    assert "freeform" not in schema["properties"]["layout"]["enum"]
+
+
+def test_freeform_geometry_is_editor_owned_and_bounded():
+    content = SlideContent(title="Libera", layout="freeform", blocks=[{"text": "Testo."}],
+                           freeform={"heading": {"x": 48, "y": 60, "w": 1184, "h": 120},
+                                     "block-0": {"x": 48, "y": 200, "w": 380, "h": 440}})
+    assert content.freeform["block-0"].w == 380
+    with pytest.raises(ValueError, match="canvas"):
+        SlideContent(title="Fuori", layout="freeform", blocks=[{"text": "Testo."}],
+                     freeform={"block-0": {"x": 1200, "y": 200, "w": 380, "h": 440}})
 
 
 def test_old_slides_remain_valid():

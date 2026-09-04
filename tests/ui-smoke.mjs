@@ -71,6 +71,54 @@ try{
   await page.locator('[data-slide-layout]').waitFor();
   assert.equal(await page.locator('[data-slide-layout]').inputValue(),'comparison');
   assert.deepEqual(await page.locator('.prose-box p').allTextContents(),paragraphs);
+  const measured=await page.locator('.slide-frame').first().evaluate(frame=>{
+    const root=frame.getBoundingClientRect(),scale=root.width/1280;
+    return Object.fromEntries([...frame.querySelectorAll('[data-free-key]')].map(element=>{
+      const box=element.getBoundingClientRect();
+      return [element.dataset.freeKey,{x:(box.left-root.left)/scale,y:(box.top-root.top)/scale,
+        w:box.width/scale,h:box.height/scale}];
+    }));
+  });
+  const appearanceBefore=await page.locator('.prose-box').first().evaluate(element=>{
+    const style=getComputedStyle(element);
+    return [style.padding,style.borderTopWidth,style.borderLeftWidth,style.borderRadius,style.boxShadow];
+  });
+  savedLayout=page.waitForResponse(r=>r.url().includes('/slides/')&&r.request().method()==='PATCH');
+  await page.locator('[data-slide-layout]').selectOption('freeform');
+  assert.equal((await savedLayout).status(),200);
+  await page.locator('.slide-frame.tpl-freeform').waitFor();
+  const converted=await page.locator('.slide-frame').first().evaluate(frame=>Object.fromEntries(
+    [...frame.querySelectorAll('[data-free-key]')].map(element=>[element.dataset.freeKey,
+      ['x','y','w','h'].map(key=>Number(element.dataset['free'+key.toUpperCase()]))])));
+  for(const [key,box] of Object.entries(measured))
+    assert.ok(['x','y','w','h'].every((name,index)=>Math.abs(box[name]-converted[key][index])<=2),
+      'conversione libera non fedele per '+key);
+  assert.deepEqual(await page.locator('.prose-box').first().evaluate(element=>{
+    const style=getComputedStyle(element);
+    return [style.padding,style.borderTopWidth,style.borderLeftWidth,style.borderRadius,style.boxShadow];
+  }),appearanceBefore);
+  const freeBlock=page.locator('[data-block-index="0"]').first(),freeBox=await freeBlock.boundingBox();
+  const oldFreeX=Number(await freeBlock.getAttribute('data-free-x'));
+  await page.mouse.move(freeBox.x+freeBox.width/2,freeBox.y+freeBox.height/2);
+  await page.mouse.down();await page.mouse.move(freeBox.x+freeBox.width/2+90,freeBox.y+freeBox.height/2,{steps:10});
+  assert.notEqual(Number(await freeBlock.getAttribute('data-free-x')),oldFreeX);
+  const freeSaved=page.waitForResponse(r=>r.url().includes('/slides/')&&r.request().method()==='PATCH');
+  await page.mouse.up();assert.equal((await freeSaved).status(),200);
+  await page.reload();await page.locator('.slide-frame.tpl-freeform').waitFor();
+  assert.notEqual(Number(await page.locator('[data-block-index="0"]').first().getAttribute('data-free-x')),oldFreeX);
+  const resizedBlock=page.locator('[data-block-index="0"]').first();
+  const oldFreeW=Number(await resizedBlock.getAttribute('data-free-w'));
+  const resizeHandle=page.locator('[data-free-resize="block-0"]').first(),resizeBox=await resizeHandle.boundingBox();
+  await page.mouse.move(resizeBox.x+resizeBox.width/2,resizeBox.y+resizeBox.height/2);
+  await page.mouse.down();await page.mouse.move(resizeBox.x+resizeBox.width/2+80,resizeBox.y+resizeBox.height/2,{steps:10});
+  assert.notEqual(Number(await resizedBlock.getAttribute('data-free-w')),oldFreeW);
+  const resizeSaved=page.waitForResponse(r=>r.url().includes('/slides/')&&r.request().method()==='PATCH');
+  await page.mouse.up();assert.equal((await resizeSaved).status(),200);
+  await page.reload();await page.locator('.slide-frame.tpl-freeform').waitFor();
+  assert.notEqual(Number(await page.locator('[data-block-index="0"]').first().getAttribute('data-free-w')),oldFreeW);
+  savedLayout=page.waitForResponse(r=>r.url().includes('/slides/')&&r.request().method()==='PATCH');
+  await page.locator('[data-slide-layout]').selectOption('comparison');
+  assert.equal((await savedLayout).status(),200);
   savedLayout=page.waitForResponse(r=>r.url().includes('/slides/')&&r.request().method()==='PATCH');
   await page.locator('[data-action="recompose"]').click();
   assert.equal((await savedLayout).status(),200);

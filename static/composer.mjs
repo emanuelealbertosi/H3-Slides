@@ -5,7 +5,8 @@ export const layouts = {
   quote:'Citazione in evidenza', 'visual-left':'Immagine a sinistra',
   'visual-right':'Immagine a destra', 'visual-left-wide':'Immagine grande a sinistra',
   'visual-right-wide':'Immagine grande a destra', 'visual-top':'Immagine panoramica in alto',
-  'visual-bottom':'Immagine panoramica in basso', stack:'Paragrafi a fasce'
+  'visual-bottom':'Immagine panoramica in basso', stack:'Paragrafi a fasce',
+  freeform:'Libero · griglia invisibile'
 };
 const aliases={content:'auto',split:'visual-right',statement:'focus',minimal:'focus',prose:'editorial'};
 export function layoutCandidates(project,content,index=0,visual=false){
@@ -50,6 +51,7 @@ export function fitSlide(frame){
   const apply=(layout,compact)=>{
     for(const c of [...frame.classList])if(c.startsWith('tpl-'))frame.classList.remove(c);
     frame.classList.add('tpl-'+layout);frame.classList.toggle('compact-spacing',compact);
+    if(layout==='freeform'&&frame.dataset.freeBase)frame.classList.add('tpl-'+frame.dataset.freeBase);
     frame.dataset.layout=layout;
   };
   const inspect=()=>{
@@ -68,7 +70,8 @@ export function fitSlide(frame){
     return excess;
   };
   let best={layout:candidates[0],compact:false,excess:Infinity};
-  for(const compact of [false,true])for(const layout of candidates){
+  const compactModes=candidates[0]==='freeform'?[frame.dataset.freeCompact==='true']:[false,true];
+  for(const compact of compactModes)for(const layout of candidates){
     apply(layout,compact);const excess=inspect();
     if(excess<best.excess)best={layout,compact,excess};
     if(excess<1){frame.dataset.overflow='false';return {layout,overflow:false,adjusted:layout!==candidates[0],compact}}
@@ -168,4 +171,16 @@ export const composerCSS=`
 .slide-frame.custom-title-size h1{font-size:var(--title-size)}
 .slide-frame.custom-body-size .prose-box p,.slide-frame.custom-body-size li{font-size:var(--custom-body-size)!important}
 .slide-frame [contenteditable="plaintext-only"]{outline:2px solid var(--accent);outline-offset:4px;min-width:40px;cursor:text}
+.slide-frame.tpl-freeform{display:block;padding:0!important}
+.slide-frame.tpl-freeform .kicker{position:absolute;left:48px;top:24px;margin:0}
+.slide-frame.tpl-freeform .slide-columns,.slide-frame.tpl-freeform .copy,.slide-frame.tpl-freeform .prose-grid,.slide-frame.tpl-freeform ul{display:contents}
+.slide-frame.tpl-freeform .heading,.slide-frame.tpl-freeform .prose-box,.slide-frame.tpl-freeform li,.slide-frame.tpl-freeform .visual{
+  position:absolute!important;left:var(--free-x);top:var(--free-y);
+  width:var(--free-w)!important;height:var(--free-h)!important;
+  min-width:0;min-height:0;max-width:none;max-height:none;margin:0!important;overflow:hidden
+}
+.slide-frame.tpl-freeform .heading{display:flex;flex-direction:column;justify-content:center}
+.slide-frame.tpl-freeform .heading h1{margin:0}.slide-frame.tpl-freeform .heading .subtitle{margin-top:8px}
+.slide-frame.tpl-freeform .visual{object-fit:contain;align-self:auto}
+.slide-frame.tpl-freeform .footer{left:48px;right:48px;bottom:21px}
 `;

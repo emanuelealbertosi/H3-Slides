@@ -12,6 +12,13 @@ def paragraph_budget(project):
 def content_contract(project, block_count=None):
     density = project.get("text_density", "detailed")
     schema = SlideContent.model_json_schema()
+    schema["properties"].pop("freeform", None)  # Geometry belongs to the deterministic editor, never to the LLM.
+    schema["properties"].pop("freeform_base", None)
+    schema["properties"].pop("freeform_compact", None)
+    schema["$defs"].pop("FreePlacement", None)
+    schema["properties"]["layout"]["enum"] = [
+        value for value in schema["properties"]["layout"]["enum"] if value != "freeform"
+    ]
     schema["$defs"]["DiagramSpec"]["properties"]["scene"] = {"type": "null"}
     # The first LLM stage can only request a diagram brief; geometry is
     # designed later with its dedicated schema. Remove now-unreachable Manim

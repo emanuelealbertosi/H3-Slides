@@ -422,7 +422,7 @@ $('document-library').onclick=async event=>{
 };
 const resize=new ResizeObserver(entries=>{for(const entry of entries){
   entry.target.style.setProperty('--slide-scale',entry.contentRect.width/1280);
-  positionVisualActions(entry.target.closest('.slide-card'));
+  const card=entry.target.closest('.slide-card');positionVisualActions(card);positionFreeformHandles(card);
 }});
 function elementDeleteButton(kind,index,label){
   const button=document.createElement('button');
@@ -437,6 +437,26 @@ function positionVisualActions(card){
   const root=frame.getBoundingClientRect(),box=visual.getBoundingClientRect();
   actions.style.left=((box.right-root.left)/Math.max(1,root.width)*100)+'%';
   actions.style.top=((box.top-root.top)/Math.max(1,root.height)*100)+'%';
+}
+function positionFreeformHandles(card){
+  const frame=card?.querySelector('.slide-frame');if(!frame)return;
+  for(const handle of frame.querySelectorAll('.free-resize-handle')){
+    const element=frame.querySelector('[data-free-key="'+handle.dataset.freeResize+'"]');
+    if(!element)continue;
+    const x=Number(element.dataset.freeX),y=Number(element.dataset.freeY);
+    const w=Number(element.dataset.freeW),h=Number(element.dataset.freeH);
+    handle.style.left=(x+w-13)+'px';handle.style.top=(y+h-13)+'px';
+  }
+}
+function installFreeformHandles(card,slide){
+  if(slide.content.layout!=='freeform')return;
+  const frame=card.querySelector('.slide-frame');
+  for(const element of frame.querySelectorAll('[data-free-key]')){
+    const handle=document.createElement('span');handle.className='free-resize-handle';
+    handle.dataset.freeResize=element.dataset.freeKey;handle.title='Trascina per ridimensionare';
+    handle.setAttribute('aria-hidden','true');frame.append(handle);
+  }
+  positionFreeformHandles(card);
 }
 function installElementControls(card,slide){
   const targets=[
@@ -509,7 +529,9 @@ function render(){
         '<button class="quiet" data-action="add-diagram" '+(slide.status!=='ready'?'disabled':'')+'>＋ Diagramma</button>'+
         '<button class="quiet" data-action="recompose" '+(slide.status!=='ready'?'disabled':'')+'>↻ Ricomponi</button>'+
         '<button class="quiet" data-action="split" '+(slide.status!=='ready'?'disabled':'')+'>Dividi</button><span class="composition-status" aria-live="polite"></span>'+
-        (arranging?'<span class="arrange-hint">Trascina titolo e contenuti; immagini e diagrammi sono sempre spostabili.</span>':'')+'</div>'+
+        (arranging||slide.content.layout==='freeform'?'<span class="arrange-hint">'+
+          (slide.content.layout==='freeform'?'Modalità libera: trascina titolo, box e diagramma in qualsiasi punto. La griglia resta invisibile.':
+          'Trascina titolo e contenuti; immagini e diagrammi sono sempre spostabili.')+'</span>':'')+'</div>'+
         '<div class="slide-preview" title="'+(arranging?'Trascina gli elementi nelle zone evidenziate':'Doppio clic su un testo per modificarlo')+'">'+slideHTML(display,slide,index,
           slide.diagram_render?.asset?'/api/assets/'+current.id+'/'+slide.diagram_render.asset:
           slide.content.image_id?'/api/assets/'+current.id+'/'+slide.content.image_id:'')+
@@ -520,9 +542,10 @@ function render(){
       const select=card.querySelector('[data-slide-layout]');
       select.value=({split:'visual-right',statement:'focus'})[slide.content.layout]||slide.content.layout||'content';
       for(const item of card.querySelectorAll('.prose-box,li'))item.draggable=false;
-      const headingElement=card.querySelector('.heading');if(headingElement)headingElement.draggable=slide.status==='ready';
-      const visualElement=card.querySelector('.visual');if(visualElement)visualElement.draggable=slide.status==='ready';
-      if(slide.status==='ready')installElementControls(card,slide);
+      const freeform=slide.content.layout==='freeform';
+      const headingElement=card.querySelector('.heading');if(headingElement)headingElement.draggable=slide.status==='ready'&&!freeform;
+      const visualElement=card.querySelector('.visual');if(visualElement)visualElement.draggable=slide.status==='ready'&&!freeform;
+      if(slide.status==='ready'){installElementControls(card,slide);installFreeformHandles(card,slide)}
       resize.observe(card.querySelector('.slide-preview'));
       const fit=()=>{
         if(!card.isConnected)return;
@@ -711,15 +734,30 @@ function deleteSlideElement(id,kind,index){
   return saveContentChange(id,content=>{
     if(kind==='title'){content.title='\u00a0';content.subtitle=''}
     else if(kind==='subtitle')content.subtitle='';
-    else if(kind==='block')content.blocks.splice(index,1);
-    else if(kind==='bullet')content.bullets.splice(index,1);
+    else if(kind==='block'){
+      content.blocks.splice(index,1);shiftFreeformSlots(content,'block-',index);
+    }else if(kind==='bullet'){
+      content.bullets.splice(index,1);shiftFreeformSlots(content,'bullet-',index);
+    }
     else if(kind==='visual'){
       if(content.diagram?.kind&&content.diagram.kind!=='none')
         content.diagram={kind:'none',labels:[],brief:'',scene:null};
       else content.image_id='';
+      if(content.freeform)delete content.freeform.visual;
     }
     content.layout='content';content.layout_locked=false;content.layout_variant=0;
   },'Elemento eliminato e composizione ricalcolata.');
+}
+function shiftFreeformSlots(content,prefix,removed){
+  if(!content.freeform)return;
+  const updated={};
+  for(const [key,value] of Object.entries(content.freeform)){
+    if(!key.startsWith(prefix)){updated[key]=value;continue}
+    const index=Number(key.slice(prefix.length));
+    if(index<removed)updated[key]=value;
+    else if(index>removed)updated[prefix+(index-1)]=value;
+  }
+  content.freeform=updated;
 }
 async function addImageBlock(id,imageId){
   if(!imageId)return;
@@ -774,12 +812,33 @@ $('slides').onclick=e=>{
   if(button.dataset.action==='up')move(id,index-1).catch(e=>toast(e.message));
   if(button.dataset.action==='down')move(id,index+1).catch(e=>toast(e.message));
 };
+function measureFreeform(card){
+  const frame=card?.querySelector('.slide-frame'),root=frame?.getBoundingClientRect();
+  if(!frame||!root?.width)return {};
+  const scale=root.width/1280,placements={};
+  for(const element of frame.querySelectorAll('[data-free-key]')){
+    const box=element.getBoundingClientRect();
+    let x=Math.round((box.left-root.left)/scale),y=Math.round((box.top-root.top)/scale);
+    let w=Math.max(80,Math.round(box.width/scale)),h=Math.max(44,Math.round(box.height/scale));
+    w=Math.min(1280,w);h=Math.min(680,h);
+    x=Math.max(0,Math.min(1280-w,x));y=Math.max(0,Math.min(680-h,y));
+    placements[element.dataset.freeKey]={x,y,w,h};
+  }
+  return placements;
+}
 async function changeLayout(id,layout,recompose=false){
   await finishInlineEdits();
   const pid=current.id,slide=current.slides.find(s=>s.id===id),content=structuredClone(slide.content);
+  const card=document.getElementById('slide-'+id);
+  if(layout==='freeform'&&content.layout!=='freeform'){
+    const frame=card.querySelector('.slide-frame');
+    content.freeform=measureFreeform(card);
+    content.freeform_base=frame.dataset.layout==='freeform'?'editorial':frame.dataset.layout;
+    content.freeform_compact=frame.classList.contains('compact-spacing');
+  }
   content.layout=layout;content.layout_locked=!recompose&&Object.hasOwn(layouts,layout);
   content.layout_variant=recompose?((content.layout_variant||0)+1)%10001:0;
-  const card=document.getElementById('slide-'+id);card.dataset.saving='1';
+  card.dataset.saving='1';
   try{
     const updated=await api('/api/projects/'+pid+'/slides/'+id,'PATCH',{revision:slide.revision,content});
     if(current?.id===pid)current.slides[current.slides.findIndex(s=>s.id===id)]=updated;
@@ -791,13 +850,26 @@ async function reorderSlideItems(id,field,from,to){
   const pid=current.id,slide=current.slides.find(s=>s.id===id),content=structuredClone(slide.content);
   const items=content[field];
   if(!Array.isArray(items)||from===to||from<0||to<0||from>=items.length||to>=items.length)return;
+  const prefix=field==='blocks'?'block-':'bullet-';
+  const placements=items.map((_,index)=>content.freeform?.[prefix+index]);
   const [item]=items.splice(from,1);items.splice(to,0,item);
+  const [placement]=placements.splice(from,1);placements.splice(to,0,placement);
+  if(content.freeform)for(let index=0;index<placements.length;index++){
+    delete content.freeform[prefix+index];
+    if(placements[index])content.freeform[prefix+index]=placements[index];
+  }
   const card=document.getElementById('slide-'+id);card.dataset.saving='1';
   try{
     const updated=await api('/api/projects/'+pid+'/slides/'+id,'PATCH',{revision:slide.revision,content});
     if(current?.id===pid)current.slides[current.slides.findIndex(s=>s.id===id)]=updated;
     toast('Ordine dei testi salvato; impaginazione ricalcolata.');
   }finally{delete card.dataset.saving;delete card.dataset.signature;render()}
+}
+async function saveFreePlacement(id,key,placement){
+  return saveContentChange(id,content=>{
+    content.layout='freeform';content.layout_locked=true;
+    content.freeform={...(content.freeform||{}),[key]:placement};
+  },'Posizione libera salvata; testi e diagramma invariati.');
 }
 async function splitSlide(id){
   await finishInlineEdits();
@@ -852,6 +924,52 @@ function finishItemDragPreview(drag,restore){
   const frame=card?.querySelector('.slide-frame');
   if(frame)fitSlide(frame);
   positionVisualActions(card);
+}
+function applyFreePlacement(element,placement){
+  for(const key of ['x','y','w','h']){
+    element.dataset['free'+key.toUpperCase()]=String(placement[key]);
+    element.style.setProperty('--free-'+key,placement[key]+'px');
+  }
+  positionFreeformHandles(element.closest('.slide-card'));
+}
+function beginFreePointerDrag(pointer){
+  const {card,item}=pointer;
+  const placement={
+    x:Number(item.dataset.freeX),y:Number(item.dataset.freeY),
+    w:Number(item.dataset.freeW),h:Number(item.dataset.freeH)
+  };
+  const frame=card.querySelector('.slide-frame'),root=frame.getBoundingClientRect(),box=item.getBoundingClientRect();
+  const scale=root.width/1280||1;
+  componentDrag={type:'freeform',id:card.dataset.id,key:item.dataset.freeKey,source:item,
+    original:{...placement},placement:{...placement}};
+  pointer.offsetX=(pointer.startX-box.left)/scale;pointer.offsetY=(pointer.startY-box.top)/scale;
+  card.classList.add('component-dragging');item.classList.add('dragging','free-item-dragging');
+  const indicator=card.querySelector('.anchor-indicator');
+  if(indicator)indicator.textContent=pointer.mode==='resize'?'Dimensioni libere · trascina l’angolo':
+    'Posizione libera · trascina, rilascio per salvare';
+}
+function previewFreePosition(card,x,y){
+  const drag=componentDrag,frame=card.querySelector('.slide-frame'),root=frame.getBoundingClientRect();
+  if(drag?.type!=='freeform'||!root.width)return;
+  const scale=root.width/1280,snap=8;
+  let placement;
+  if(itemPointer.mode==='resize'){
+    const w=Math.max(80,Math.min(1280-drag.original.x,
+      Math.round(((x-root.left)/scale-drag.original.x)/snap)*snap));
+    const h=Math.max(44,Math.min(680-drag.original.y,
+      Math.round(((y-root.top)/scale-drag.original.y)/snap)*snap));
+    placement={...drag.original,w,h};
+  }else{
+    const {w,h}=drag.original;
+    const rawX=(x-root.left)/scale-itemPointer.offsetX,rawY=(y-root.top)/scale-itemPointer.offsetY;
+    placement={x:Math.max(0,Math.min(1280-w,Math.round(rawX/snap)*snap)),
+      y:Math.max(0,Math.min(680-h,Math.round(rawY/snap)*snap)),w,h};
+  }
+  drag.placement=placement;applyFreePlacement(drag.source,placement);positionVisualActions(card);
+  const indicator=card.querySelector('.anchor-indicator');
+  if(indicator)indicator.textContent=itemPointer.mode==='resize'?
+    placement.w+' × '+placement.h+' px · rilascio per salvare':
+    'x '+placement.x+' · y '+placement.y+' · rilascio per salvare';
 }
 function beginItemPointerDrag(pointer){
   const {card,item,block}=pointer;
@@ -912,12 +1030,13 @@ function endItemPointer(){
 function clearComponentDrag(restore=true){
   const drag=componentDrag;componentDrag=null;
   finishItemDragPreview(drag,restore);
+  if(restore&&drag?.type==='freeform'&&drag.source)applyFreePlacement(drag.source,drag.original);
   document.querySelectorAll('.slide-frame[data-drag-candidates]').forEach(frame=>{
     if(restore){frame.dataset.candidates=frame.dataset.dragCandidates;fitSlide(frame)}
     delete frame.dataset.dragCandidates;
   });
-  document.querySelectorAll('.component-dragging,.visual-dragging,.item-drop-target,.drag-preview-source').forEach(element=>
-    element.classList.remove('component-dragging','visual-dragging','item-drop-target','drag-preview-source'));
+  document.querySelectorAll('.component-dragging,.visual-dragging,.item-drop-target,.drag-preview-source,.free-item-dragging').forEach(element=>
+    element.classList.remove('component-dragging','visual-dragging','item-drop-target','drag-preview-source','free-item-dragging'));
   document.querySelectorAll('.anchor-indicator').forEach(element=>element.textContent='');
   if(restore&&drag?.type==='heading'){
     const frame=document.getElementById('slide-'+drag.id)?.querySelector('.slide-frame');
@@ -978,7 +1097,9 @@ function commitComponentDrag(event,pointedOnly=false){
   const validCard=card?.dataset.id===drag.id;
   clearComponentDrag(!validCard);
   if(!validCard)return true;
-  if(drag.type==='visual'){
+  if(drag.type==='freeform'){
+    saveFreePlacement(drag.id,drag.key,drag.placement).catch(error=>toast(error.message));
+  }else if(drag.type==='visual'){
     let layout=drag.layout;
     if(!layout){
       const rect=card.querySelector('.slide-preview').getBoundingClientRect();
@@ -1020,11 +1141,16 @@ $('slides').ondragover=e=>{
 };
 $('slides').onpointerdown=e=>{
   if(e.button!==0||e.target.closest('button,input,select,textarea,[contenteditable]'))return;
-  const item=e.target.closest('[data-block-index],[data-bullet-index]');
+  const resizeHandle=e.target.closest('[data-free-resize]');
+  const candidate=resizeHandle||e.target.closest('[data-free-key],[data-block-index],[data-bullet-index]');
+  const frame=candidate?.closest('.slide-frame');
+  const freeItem=frame?.dataset.layout==='freeform'?
+    (resizeHandle?frame.querySelector('[data-free-key="'+resizeHandle.dataset.freeResize+'"]'):e.target.closest('[data-free-key]')):null;
+  const item=freeItem||e.target.closest('[data-block-index],[data-bullet-index]');
   const card=item?.closest('.slide-card');
   if(!item||!card||!card.classList.contains('ready'))return;
   const originalCardDraggable=card.draggable;card.draggable=false;
-  itemPointer={item,card,block:item.hasAttribute('data-block-index'),pointerId:e.pointerId,
+  itemPointer={item,card,mode:resizeHandle?'resize':freeItem?'freeform':'order',block:item.hasAttribute('data-block-index'),pointerId:e.pointerId,
     startX:e.clientX,startY:e.clientY,active:false,originalCardDraggable};
 };
 $('slides').onpointermove=e=>{
@@ -1033,9 +1159,12 @@ $('slides').onpointermove=e=>{
     if(Math.hypot(e.clientX-itemPointer.startX,e.clientY-itemPointer.startY)<7)return;
     itemPointer.active=true;
     try{itemPointer.item.setPointerCapture(e.pointerId)}catch{}
-    beginItemPointerDrag(itemPointer);
+    if(itemPointer.mode==='freeform'||itemPointer.mode==='resize')beginFreePointerDrag(itemPointer);
+    else beginItemPointerDrag(itemPointer);
   }
-  e.preventDefault();previewItemOrder(itemPointer.card,e.clientX,e.clientY);
+  e.preventDefault();
+  if(componentDrag?.type==='freeform')previewFreePosition(itemPointer.card,e.clientX,e.clientY);
+  else previewItemOrder(itemPointer.card,e.clientX,e.clientY);
 };
 $('slides').onpointerup=e=>{
   if(!itemPointer||e.pointerId!==itemPointer.pointerId)return;

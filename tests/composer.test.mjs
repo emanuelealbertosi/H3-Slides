@@ -49,11 +49,12 @@ test('heading placement is persisted as renderer classes',()=>{
 test('all compositions fit and native exports use the same measured layouts',async()=>{
   const browser=await chromium.launch();
   const manimAsset='manim-'+'0'.repeat(64)+'.png';
+  const data='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XMG8WQAAAABJRU5ErkJggg==';
   const project={title:'Verifica composer',theme:'paper',font:'Segoe UI',template:'auto',text_density:'detailed',use_manim_diagrams:true,slides:[]};
   for(const layout of Object.keys(layouts)){
     const c=make(layout,layout==='cover'?1:layout==='cards'||layout==='timeline'?3:2);
     const slide={content:c};
-    if(layout.startsWith('visual-')){
+    if(layout.startsWith('visual-')||layout==='freeform'){
       c.diagram={kind:'manim',labels:[],brief:'Sorgente e risultato',scene:{}};
       slide.diagram_render={engine:'manim',asset:manimAsset};
     }
@@ -62,11 +63,16 @@ test('all compositions fit and native exports use the same measured layouts',asy
   try{
     const page=await browser.newPage({viewport:{width:1280,height:720}});
     await page.setContent('<!doctype html><style>'+slideCSS+'body{margin:0}</style>'+
-      project.slides.map((s,i)=>slideHTML(project,s,i)).join(''));
+      project.slides.map((s,i)=>slideHTML(project,s,i,s.diagram_render?.asset?data:'')).join(''));
     await page.evaluate(()=>document.fonts.ready);
     const measured=await measureLayouts(page);
     assert.deepEqual(measured.map(m=>m.layout),Object.keys(layouts));
     assert.ok(measured.every(m=>!m.overflow));
+    const freeFrame=page.locator('.slide-frame').nth(Object.keys(layouts).indexOf('freeform'));
+    const freeOrder=await freeFrame.locator('[data-free-key="block-0"],[data-free-key="visual"],[data-free-key="block-1"]')
+      .evaluateAll(elements=>Object.fromEntries(elements.map(element=>[element.dataset.freeKey,element.getBoundingClientRect().x])));
+    assert.ok(freeOrder['block-0']<freeOrder.visual&&freeOrder.visual<freeOrder['block-1'],
+      'The freeform default with two texts and one diagram must be left-center-right');
     const silhouettes=new Set(measured.map(m=>m.boxes.map(b=>[Math.round(b.x*96),Math.round(b.y*96),Math.round(b.w*96),Math.round(b.h*96)]).join(';')));
     assert.ok(silhouettes.size>=8,'Expected materially different silhouettes');
     const before=await page.locator('.slide-frame').allTextContents();
