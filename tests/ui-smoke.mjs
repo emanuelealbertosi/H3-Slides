@@ -33,9 +33,24 @@ try{
   assert.equal((await headingMoved).status(),200);
   const boxes=page.locator('.slide-card').first().locator('.prose-box');
   if(await boxes.count()>1){
+    const source=page.locator('.slide-card').first().locator('[data-block-index="0"]');
+    const target=page.locator('.slide-card').first().locator('[data-block-index="1"]');
+    const sourceText=await source.locator('p').textContent();
+    const transfer=await page.evaluateHandle(()=>new DataTransfer());
+    await source.dispatchEvent('dragstart',{dataTransfer:transfer});
+    await page.waitForTimeout(50);
+    const targetBox=await target.boundingBox();
+    await target.dispatchEvent('dragover',{dataTransfer:transfer,
+      clientX:targetBox.x+targetBox.width/2,clientY:targetBox.y+targetBox.height-2});
+    assert.equal(await page.locator('.item-drag-placeholder').count(),1);
+    assert.ok((await page.locator('.item-drag-placeholder').textContent()).includes(sourceText));
+    assert.equal(await source.evaluate(item=>item.classList.contains('drag-preview-source')),true);
+    assert.match(await page.locator('.anchor-indicator').first().textContent(),/anteprima live/);
     const reordered=page.waitForResponse(r=>r.url().includes('/slides/')&&r.request().method()==='PATCH');
-    await boxes.first().dragTo(boxes.nth(1));
+    await target.dispatchEvent('drop',{dataTransfer:transfer,
+      clientX:targetBox.x+targetBox.width/2,clientY:targetBox.y+targetBox.height-2});
     assert.equal((await reordered).status(),200);
+    assert.equal(await page.locator('.item-drag-placeholder').count(),0);
   }
   await page.locator('[data-action="arrange"]').first().click();
   assert.equal(await page.locator('.slide-card').first().evaluate(card=>card.classList.contains('layout-editing')),true);

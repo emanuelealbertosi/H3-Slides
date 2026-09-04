@@ -57,6 +57,7 @@ export function fitSlide(frame){
     const footer=frame.querySelector('.footer').getBoundingClientRect();
     let excess=0;
     for(const e of frame.querySelectorAll('h1,.subtitle,.prose-box,.prose-box h2,.prose-box p,.prose-source,li,.bullet-text,.visual')){
+      if(e.closest('.drag-preview-source'))continue;
       if(!e.getClientRects().length)continue;
       const r=e.getBoundingClientRect(),box=e.closest('.prose-box');
       const parent=box&&box!==e?box.getBoundingClientRect():null;
