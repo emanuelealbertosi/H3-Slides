@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {chromium} from 'playwright-chromium';
-import {slideHTML,slideCSS,layouts,layoutCandidates,fitSlide} from '../static/deck.mjs';
+import {slideHTML,slideCSS,layouts,layoutCandidates,fitSlide,visualAnchorAt} from '../static/deck.mjs';
 import {buildExports,measureLayouts} from '../scripts/export.mjs';
 process.env.PLAYWRIGHT_BROWSERS_PATH ||= fileURLToPath(new URL('../runtime/browsers',import.meta.url));
 const text='Un concetto diventa più chiaro quando colleghiamo la spiegazione a un esempio concreto. Le relazioni tra le parti aiutano a capire il risultato.';
@@ -29,7 +29,22 @@ test('old prose can change layout; recomposition is stable and preserves input',
   assert.equal(layoutCandidates(visual,content,0,true)[0],'visual-top');
 });
 
-test('all twelve compositions fit and native exports use the same measured layouts',async()=>{
+test('invisible visual anchors cover compact, wide, top and bottom placements',()=>{
+  assert.equal(visualAnchorAt(500,20,1000,600),'visual-top');
+  assert.equal(visualAnchorAt(500,590,1000,600),'visual-bottom');
+  assert.equal(visualAnchorAt(50,300,1000,600),'visual-left-wide');
+  assert.equal(visualAnchorAt(300,300,1000,600),'visual-left');
+  assert.equal(visualAnchorAt(700,300,1000,600),'visual-right');
+  assert.equal(visualAnchorAt(950,300,1000,600),'visual-right-wide');
+});
+
+test('heading placement is persisted as renderer classes',()=>{
+  const content=make('editorial');content.heading_position='bottom';content.heading_align='right';
+  const html=slideHTML({title:'Test',theme:'paper'},{content},0);
+  assert.match(html,/heading-bottom heading-align-right/);
+});
+
+test('all compositions fit and native exports use the same measured layouts',async()=>{
   const browser=await chromium.launch();
   const manimAsset='manim-'+'0'.repeat(64)+'.png';
   const project={title:'Verifica composer',theme:'paper',font:'Segoe UI',template:'auto',text_density:'detailed',use_manim_diagrams:true,slides:[]};

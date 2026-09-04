@@ -1,4 +1,4 @@
-import {esc,slideHTML,slideCSS,themes,themeFor,blockColors,contrast,layouts,fitSlide} from './deck.mjs';
+import {esc,slideHTML,slideCSS,themes,themeFor,blockColors,contrast,layouts,fitSlide,visualAnchorAt} from './deck.mjs';
 import {createRemoteModelSelector} from './remote-models.mjs';
 import {createApiSettings} from './api-settings.mjs';
 const $=id=>document.getElementById(id);
@@ -158,6 +158,7 @@ function renderDocumentLibrary(){
   }).join(''):'<p class="muted hint">La libreria è vuota. Il primo documento aggiunto comparirà qui.</p>';
 }
 function renderLibrary(){
+  $('restore-delete-confirmation').hidden=localStorage.getItem('h3slides-skip-delete-confirmation')!=='1';
   const byId=new Map(projects.map(project=>[project.id,project]));
   const ordered=[...libraryState.order,...projects.map(project=>project.id)]
     .filter((id,index,all)=>byId.has(id)&&all.indexOf(id)===index).map(id=>byId.get(id));
@@ -177,6 +178,24 @@ function renderLibrary(){
       '<div class="folder-projects">'+(items.length?items.map(card).join(''):'<div class="folder-empty">Trascina qui un progetto</div>')+'</div></section>';
   }).join(''):'<section class="library-empty"><div class="empty-mark">H3 /</div><h2>Nessun progetto salvato.</h2><p>Inizia da un argomento, un PDF o un’immagine.</p></section>';
 }
+function confirmProjectDeletion(project){
+  if(localStorage.getItem('h3slides-skip-delete-confirmation')==='1')return Promise.resolve(true);
+  const dialog=$('delete-project-dialog');
+  $('delete-project-name').textContent='«'+project.title+'»';
+  $('skip-delete-confirmation').checked=false;dialog.returnValue='cancel';dialog.showModal();
+  return new Promise(resolve=>dialog.addEventListener('close',()=>{
+    const accepted=dialog.returnValue==='delete';
+    if(accepted&&$('skip-delete-confirmation').checked){
+      localStorage.setItem('h3slides-skip-delete-confirmation','1');
+      $('restore-delete-confirmation').hidden=false;
+    }
+    resolve(accepted);
+  },{once:true}));
+}
+$('restore-delete-confirmation').onclick=()=>{
+  localStorage.removeItem('h3slides-skip-delete-confirmation');
+  $('restore-delete-confirmation').hidden=true;toast('Conferma di eliminazione riattivata');
+};
 async function selectProject(id){
   await finishInlineEdits();
   if(drafts.has('brief')&&!confirm('Ci sono modifiche al brief non salvate. Cambiare progetto?'))return;
@@ -217,7 +236,7 @@ $('library-grid').onclick=async e=>{
   const remove=e.target.closest('[data-delete-project]');
   if(remove){
     const project=projects.find(item=>item.id===remove.dataset.deleteProject);if(!project)return;
-    if(!confirm('Eliminare definitivamente «'+project.title+'»? Verranno rimossi progetto, allegati ed esportazioni. Questa operazione non si annulla.'))return;
+    if(!await confirmProjectDeletion(project))return;
     remove.disabled=true;
     try{
       await api('/api/projects/'+encodeURIComponent(project.id),'DELETE');
@@ -444,23 +463,26 @@ function render(){
           (slide.diagram_render?.engine==='manim'?'Riprogetta Manim':slide.content.diagram?.kind==='manim'&&slide.content.diagram?.scene?'Renderizza Manim':'Progetta Manim')+'</button>':'')+'</div>'+
         '<div class="composition-tools"><label>Composizione <select data-slide-layout '+(slide.status!=='ready'?'disabled':'')+'>'+layoutOptions(slide.content.layout)+'</select></label>'+
         '<button class="'+(arranging?'secondary':'quiet')+'" data-action="arrange" '+(slide.status!=='ready'?'disabled':'')+'>'+(arranging?'✓ Fine disposizione':'⠿ Disponi nella slide')+'</button>'+
+        '<button class="quiet" data-action="add-text" '+(slide.status!=='ready'||(slide.content.blocks||[]).length>=4?'disabled':'')+'>＋ Testo</button>'+
+        '<select data-live-image '+(slide.status!=='ready'||!current.sources.some(source=>source.images.length)?'disabled':'')+' aria-label="Aggiungi o cambia immagine"><option value="">＋ Immagine…</option>'+
+          current.sources.flatMap(source=>source.images).map(image=>'<option value="'+esc(image.id)+'">'+esc(image.label)+'</option>').join('')+'</select>'+
+        '<button class="quiet" data-action="add-diagram" '+(slide.status!=='ready'?'disabled':'')+'>＋ Diagramma</button>'+
         '<button class="quiet" data-action="recompose" '+(slide.status!=='ready'?'disabled':'')+'>↻ Ricomponi</button>'+
         '<button class="quiet" data-action="split" '+(slide.status!=='ready'?'disabled':'')+'>Dividi</button><span class="composition-status" aria-live="polite"></span>'+
-        (arranging?'<span class="arrange-hint">Trascina diagramma/immagine oppure riordina i testi.</span>':'')+'</div>'+
+        (arranging?'<span class="arrange-hint">Trascina titolo e contenuti; immagini e diagrammi sono sempre spostabili.</span>':'')+'</div>'+
         '<div class="slide-preview" title="'+(arranging?'Trascina gli elementi nelle zone evidenziate':'Doppio clic su un testo per modificarlo')+'">'+slideHTML(display,slide,index,
           slide.diagram_render?.asset?'/api/assets/'+current.id+'/'+slide.diagram_render.asset:
           slide.content.image_id?'/api/assets/'+current.id+'/'+slide.content.image_id:'')+
           (slide.diagram_render?.engine==='manim'?'<button type="button" class="diagram-live-action" data-action="diagram-live">↻ Riprogetta Manim</button>':'')+
-          '<div class="layout-dropzones" aria-hidden="true"><span class="layout-zone zone-left" data-visual-layout="visual-left">Visuale a sinistra</span>'+
-          '<span class="layout-zone zone-top" data-visual-layout="visual-top">Visuale in alto</span>'+
-          '<span class="layout-zone zone-right" data-visual-layout="visual-right">Visuale a destra</span></div></div>'+
+          '<div class="anchor-indicator" aria-live="polite"></div></div>'+
         (slide.content.diagram?.kind!=='none'&&!slide.diagram_render?.asset?
           '<p class="diagram-pending">'+(slide.content.diagram?.kind==='manim'&&slide.content.diagram?.scene?
             'La scena è valida ma il render va aggiornato. Usa Renderizza Manim.':'Il vecchio diagramma va riprogettato con Manim.')+'</p>':'');
       const select=card.querySelector('[data-slide-layout]');
       select.value=({split:'visual-right',statement:'focus'})[slide.content.layout]||slide.content.layout||'content';
       for(const item of card.querySelectorAll('.prose-box,li'))item.draggable=arranging;
-      const visualElement=card.querySelector('.visual');if(visualElement)visualElement.draggable=arranging;
+      const headingElement=card.querySelector('.heading');if(headingElement)headingElement.draggable=arranging;
+      const visualElement=card.querySelector('.visual');if(visualElement)visualElement.draggable=slide.status==='ready';
       resize.observe(card.querySelector('.slide-preview'));
       const fit=()=>{
         if(!card.isConnected)return;
@@ -608,6 +630,40 @@ async function move(id,index){
   const ids=current.slides.map(s=>s.id),old=ids.indexOf(id);ids.splice(old,1);ids.splice(Math.max(0,Math.min(ids.length,index)),0,id);
   current=await api('/api/projects/'+current.id+'/reorder','POST',{ids});render();
 }
+async function saveContentChange(id,mutate,message){
+  await finishInlineEdits();
+  const pid=current.id,slide=current.slides.find(item=>item.id===id),content=structuredClone(slide.content);
+  mutate(content);
+  const card=document.getElementById('slide-'+id);card.dataset.saving='1';
+  try{
+    const updated=await api('/api/projects/'+pid+'/slides/'+id,'PATCH',{revision:slide.revision,content});
+    if(current?.id===pid)current.slides[current.slides.findIndex(item=>item.id===id)]=updated;
+    toast(message);
+  }finally{delete card.dataset.saving;delete card.dataset.signature;render()}
+}
+function addTextBlock(id){
+  return saveContentChange(id,content=>{
+    content.blocks=content.blocks||[];
+    if(content.blocks.length>=4)throw new Error('Massimo 4 blocchi di testo per slide');
+    content.blocks.push({heading:'Nuovo blocco',text:'Doppio clic per scrivere il contenuto.',kind:'explanation',source:''});
+  },'Blocco di testo aggiunto: fai doppio clic per modificarlo.');
+}
+async function addImageBlock(id,imageId){
+  if(!imageId)return;
+  if(!$('source-images').checked){$('source-images').checked=true;drafts.add('brief');await saveProject()}
+  return saveContentChange(id,content=>{
+    content.image_id=imageId;
+    if(!String(content.layout||'').startsWith('visual-'))content.layout='visual-right';
+  },'Immagine aggiunta e impaginazione ricalcolata.');
+}
+async function addDiagramBlock(id){
+  if(!$('manim-diagrams').checked){$('manim-diagrams').checked=true;drafts.add('brief');await saveProject()}
+  return generate(id,true,false,true);
+}
+async function saveHeadingLayout(id,position,align){
+  return saveContentChange(id,content=>{content.heading_position=position;content.heading_align=align},
+    'Titolo riposizionato e slide riadattata.');
+}
 function redesignLiveDiagram(id){
   const slide=current.slides.find(item=>item.id===id),card=document.getElementById('slide-'+id);
   const frame=card?.querySelector('.slide-frame'),visual=frame?.querySelector('.visual');
@@ -633,6 +689,8 @@ $('slides').onclick=e=>{
     delete button.closest('.slide-card').dataset.signature;render();
   }
   if(button.dataset.action==='regenerate')generate(id);
+  if(button.dataset.action==='add-text')addTextBlock(id).catch(error=>toast(error.message));
+  if(button.dataset.action==='add-diagram')addDiagramBlock(id).catch(error=>toast(error.message));
   if(button.dataset.action==='diagram')generate(id,true);
   if(button.dataset.action==='diagram-live')redesignLiveDiagram(id);
   if(button.dataset.action==='render')rerenderDiagram(id).catch(error=>toast(error.message));
@@ -675,6 +733,7 @@ async function splitSlide(id){
 }
 $('slides').onchange=e=>{
   if(e.target.matches('[data-slide-layout]'))changeLayout(e.target.closest('.slide-card').dataset.id,e.target.value).catch(error=>toast(error.message));
+  if(e.target.matches('[data-live-image]'))addImageBlock(e.target.closest('.slide-card').dataset.id,e.target.value).catch(error=>toast(error.message));
 };
 $('slides').ondblclick=e=>{
   const field=e.target.closest('[data-edit-field]');if(!field||field.isContentEditable)return;
@@ -700,18 +759,57 @@ $('slides').ondblclick=e=>{
     finally{inlineSaves.delete(pending);delete card.dataset.saving;render()}
   };
 };
-function clearComponentDrag(){
-  componentDrag=null;
-  document.querySelectorAll('.component-dragging,.visual-dragging,.item-drop-target,.layout-zone.active').forEach(element=>
-    element.classList.remove('component-dragging','visual-dragging','item-drop-target','active'));
+function clearComponentDrag(restore=true){
+  const drag=componentDrag;componentDrag=null;
+  document.querySelectorAll('.slide-frame[data-drag-candidates]').forEach(frame=>{
+    if(restore){frame.dataset.candidates=frame.dataset.dragCandidates;fitSlide(frame)}
+    delete frame.dataset.dragCandidates;
+  });
+  document.querySelectorAll('.component-dragging,.visual-dragging,.item-drop-target').forEach(element=>
+    element.classList.remove('component-dragging','visual-dragging','item-drop-target'));
+  document.querySelectorAll('.anchor-indicator').forEach(element=>element.textContent='');
+  if(restore&&drag?.type==='heading'){
+    const frame=document.getElementById('slide-'+drag.id)?.querySelector('.slide-frame');
+    if(frame){
+      for(const name of [...frame.classList])if(name.startsWith('heading-align-')||name==='heading-top'||name==='heading-bottom')frame.classList.remove(name);
+      frame.classList.add('heading-'+drag.originalPosition,'heading-align-'+drag.originalAlign);fitSlide(frame);
+    }
+  }
+}
+function previewVisualLayout(card,layout){
+  const frame=card.querySelector('.slide-frame');if(!frame)return;
+  if(!frame.dataset.dragCandidates)frame.dataset.dragCandidates=frame.dataset.candidates;
+  frame.dataset.candidates=JSON.stringify([layout]);fitSlide(frame);
+  const indicator=card.querySelector('.anchor-indicator');
+  if(indicator)indicator.textContent=layouts[layout]+' · rilascio per salvare';
+  componentDrag.layout=layout;
+}
+function previewHeadingLayout(card,x,y){
+  const frame=card.querySelector('.slide-frame'),rect=card.querySelector('.slide-preview').getBoundingClientRect();
+  const position=y-rect.top>rect.height*.58?'bottom':'top';
+  const ratio=(x-rect.left)/Math.max(1,rect.width),align=ratio<.34?'left':ratio>.66?'right':'center';
+  for(const name of [...frame.classList])if(name.startsWith('heading-align-')||name==='heading-top'||name==='heading-bottom')frame.classList.remove(name);
+  frame.classList.add('heading-'+position,'heading-align-'+align);fitSlide(frame);
+  card.querySelector('.anchor-indicator').textContent='Titolo '+(position==='top'?'in alto':'in basso')+' · '+({left:'sinistra',center:'centro',right:'destra'})[align];
+  componentDrag.position=position;componentDrag.align=align;
 }
 $('slides').ondragstart=e=>{
   const card=e.target.closest('.slide-card');
+  const visual=e.target.closest('.visual');
+  if(card&&visual){
+    componentDrag={type:'visual',id:card.dataset.id,layout:card.querySelector('.slide-frame')?.dataset.layout};
+    card.classList.add('component-dragging','visual-dragging');
+    e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain','visual');return;
+  }
   if(card?.classList.contains('layout-editing')){
-    const visual=e.target.closest('.visual'),block=e.target.closest('[data-block-index]'),bullet=e.target.closest('[data-bullet-index]');
-    if(visual){
-      componentDrag={type:'visual',id:card.dataset.id};card.classList.add('component-dragging','visual-dragging');
-      e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain','visual');return;
+    const heading=e.target.closest('.heading'),block=e.target.closest('[data-block-index]'),bullet=e.target.closest('[data-bullet-index]');
+    if(heading){
+      const slide=current.slides.find(item=>item.id===card.dataset.id);
+      componentDrag={type:'heading',id:card.dataset.id,position:slide.content.heading_position||'top',
+        align:slide.content.heading_align||'left',originalPosition:slide.content.heading_position||'top',
+        originalAlign:slide.content.heading_align||'left'};
+      card.classList.add('component-dragging');heading.classList.add('dragging');
+      e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain','heading');return;
     }
     const item=block||bullet;
     if(item){
@@ -723,19 +821,58 @@ $('slides').ondragstart=e=>{
   }
   if(card){dragged=card.dataset.id;card.classList.add('dragging')}
 };
-$('slides').ondragend=()=>{
+function commitComponentDrag(event){
+  if(!componentDrag)return false;
+  const drag={...componentDrag};
+  const pointed=document.elementFromPoint(event.clientX||0,event.clientY||0);
+  const card=pointed?.closest('.slide-card')||event.target?.closest?.('.slide-card');
+  const validCard=card?.dataset.id===drag.id;
+  clearComponentDrag(!validCard);
+  if(!validCard)return true;
+  if(drag.type==='visual'){
+    let layout=drag.layout;
+    if(!layout){
+      const rect=card.querySelector('.slide-preview').getBoundingClientRect();
+      layout=visualAnchorAt(event.clientX-rect.left,event.clientY-rect.top,rect.width,rect.height);
+    }
+    changeLayout(drag.id,layout).catch(error=>toast(error.message));
+  }else if(drag.type==='heading'){
+    saveHeadingLayout(drag.id,drag.position,drag.align).catch(error=>toast(error.message));
+  }else{
+    const selector=drag.type==='blocks'?'[data-block-index]':'[data-bullet-index]';
+    const target=pointed?.closest(selector)||event.target?.closest?.(selector);
+    const key=drag.type==='blocks'?'blockIndex':'bulletIndex';
+    const to=Number.isInteger(drag.to)?drag.to:Number(target?.dataset[key]);
+    if(Number.isInteger(to))reorderSlideItems(drag.id,drag.type,drag.from,to).catch(error=>toast(error.message));
+  }
+  return true;
+}
+$('slides').ondragend=e=>{
   document.querySelectorAll('.dragging').forEach(c=>c.classList.remove('dragging'));
-  dragged=null;clearComponentDrag();
+  dragged=null;
+  if(!commitComponentDrag(e))clearComponentDrag();
 };
 $('slides').ondragover=e=>{
   if(componentDrag){
     const card=e.target.closest('.slide-card');if(!card||card.dataset.id!==componentDrag.id)return;
     e.preventDefault();e.dataTransfer.dropEffect='move';
-    document.querySelectorAll('.item-drop-target,.layout-zone.active').forEach(element=>element.classList.remove('item-drop-target','active'));
-    if(componentDrag.type==='visual')e.target.closest('[data-visual-layout]')?.classList.add('active');
-    else{
+    document.querySelectorAll('.item-drop-target').forEach(element=>element.classList.remove('item-drop-target'));
+    if(componentDrag.type==='visual'){
+      const rect=card.querySelector('.slide-preview').getBoundingClientRect();
+      previewVisualLayout(card,visualAnchorAt(e.clientX-rect.left,e.clientY-rect.top,rect.width,rect.height));
+    }else if(componentDrag.type==='heading'){
+      previewHeadingLayout(card,e.clientX,e.clientY);
+    }else{
       const selector=componentDrag.type==='blocks'?'[data-block-index]':'[data-bullet-index]';
-      e.target.closest(selector)?.classList.add('item-drop-target');
+      const target=e.target.closest(selector);
+      if(target){
+        target.classList.add('item-drop-target');componentDrag.to=Number(target.dataset[componentDrag.type==='blocks'?'blockIndex':'bulletIndex']);
+        const moving=card.querySelector((componentDrag.type==='blocks'?'[data-block-index="':'[data-bullet-index="')+componentDrag.from+'"]');
+        if(moving&&moving!==target){
+          const box=target.getBoundingClientRect(),after=e.clientY>box.top+box.height/2;
+          target.parentNode.insertBefore(moving,after?target.nextSibling:target);
+        }
+      }
     }
     return;
   }
@@ -743,23 +880,7 @@ $('slides').ondragover=e=>{
 };
 $('slides').ondrop=e=>{
   e.preventDefault();
-  if(componentDrag){
-    const drag={...componentDrag},card=e.target.closest('.slide-card');clearComponentDrag();
-    if(!card||card.dataset.id!==drag.id)return;
-    if(drag.type==='visual'){
-      let layout=e.target.closest('[data-visual-layout]')?.dataset.visualLayout;
-      if(!layout){
-        const rect=card.querySelector('.slide-preview').getBoundingClientRect();
-        layout=e.clientY<rect.top+rect.height*.32?'visual-top':e.clientX<rect.left+rect.width/2?'visual-left':'visual-right';
-      }
-      changeLayout(drag.id,layout).catch(error=>toast(error.message));
-    }else{
-      const selector=drag.type==='blocks'?'[data-block-index]':'[data-bullet-index]';
-      const target=e.target.closest(selector),key=drag.type==='blocks'?'blockIndex':'bulletIndex';
-      if(target)reorderSlideItems(drag.id,drag.type,drag.from,Number(target.dataset[key])).catch(error=>toast(error.message));
-    }
-    return;
-  }
+  if(commitComponentDrag(e))return;
   const card=e.target.closest('.slide-card');
   if(card&&dragged)move(dragged,current.slides.findIndex(s=>s.id===card.dataset.id)).catch(error=>toast(error.message));
   dragged=null;

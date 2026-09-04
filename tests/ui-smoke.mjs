@@ -24,6 +24,15 @@ try{
   await page.locator('#toggle-sidebar').click();
   await page.locator('[data-action="arrange"]').first().click();
   assert.equal(await page.locator('.slide-card').first().evaluate(card=>card.classList.contains('layout-editing')),true);
+  assert.equal(await page.locator('.slide-card').first().locator('.heading').getAttribute('draggable'),'true');
+  const headingMoved=page.waitForResponse(r=>r.url().includes('/slides/')&&r.request().method()==='PATCH');
+  const headingBox=await page.locator('.slide-card').first().locator('.heading').boundingBox();
+  const footerBox=await page.locator('.slide-card').first().locator('.footer').boundingBox();
+  await page.mouse.move(headingBox.x+headingBox.width/2,headingBox.y+headingBox.height/2);
+  await page.mouse.down();
+  await page.mouse.move(footerBox.x+footerBox.width/2,footerBox.y+footerBox.height/2,{steps:12});
+  await page.mouse.up();
+  assert.equal((await headingMoved).status(),200);
   const boxes=page.locator('.slide-card').first().locator('.prose-box');
   if(await boxes.count()>1){
     const reordered=page.waitForResponse(r=>r.url().includes('/slides/')&&r.request().method()==='PATCH');
@@ -31,6 +40,11 @@ try{
     assert.equal((await reordered).status(),200);
   }
   await page.locator('[data-action="arrange"]').first().click();
+  const blockCount=await page.locator('.slide-card').first().locator('.prose-box').count();
+  const blockAdded=page.waitForResponse(r=>r.url().includes('/slides/')&&r.request().method()==='PATCH');
+  await page.locator('[data-action="add-text"]').first().click();
+  assert.equal((await blockAdded).status(),200);
+  assert.equal(await page.locator('.slide-card').first().locator('.prose-box').count(),blockCount+1);
   await page.getByRole('button',{name:'Modifica',exact:true}).click();
   await page.locator('#edit-title').fill('Modifica verificata nel browser');
   await page.getByRole('button',{name:'Salva modifica',exact:true}).click();
@@ -70,7 +84,7 @@ try{
   await page.reload();
   await page.locator('.slide-frame').waitFor();
   assert.equal(await page.locator('#template').inputValue(),'steps');
-  assert.equal(await page.locator('.prose-box').count(),2);
+  assert.equal(await page.locator('.prose-box').count(),blockCount+1);
   await page.locator('[data-edit-field="block-text"]').first().dblclick();
   const paragraph='Questo paragrafo modificato nel browser resta dentro il box e viene conservato anche dopo il ricaricamento della pagina.';
   await page.locator('[contenteditable]').fill(paragraph);

@@ -84,7 +84,7 @@
 </section>
 </main>
 <main id="library" hidden aria-labelledby="library-title">
-  <div class="page-head"><div><div class="eyebrow">ARCHIVIO LOCALE</div><h1 id="library-title">I tuoi progetti</h1><p class="muted">Trascina le schede per ordinarle o spostarle nelle cartelle.</p></div><div class="library-actions"><button id="library-folder-new" class="secondary compact" type="button">＋ Nuova cartella</button><button id="library-new" class="primary compact" type="button">＋ Nuovo progetto</button></div></div>
+  <div class="page-head"><div><div class="eyebrow">ARCHIVIO LOCALE</div><h1 id="library-title">I tuoi progetti</h1><p class="muted">Trascina le schede per ordinarle o spostarle nelle cartelle.</p></div><div class="library-actions"><button id="restore-delete-confirmation" class="quiet compact" type="button" hidden>Riattiva conferma eliminazione</button><button id="library-folder-new" class="secondary compact" type="button">＋ Nuova cartella</button><button id="library-new" class="primary compact" type="button">＋ Nuovo progetto</button></div></div>
   <div id="library-grid" class="library-grid"></div>
 </main>
 <dialog id="editor"><form id="edit-form"><div class="editor-head"><h2>Modifica slide</h2><button type="button" id="close-editor" class="quiet">Chiudi</button></div>
@@ -118,6 +118,13 @@
 <p id="model-setup-status" role="status"></p>
 <p class="hint">Scegli il modello principale, non mmproj. Per modelli suddivisi scegli 00001 e conserva tutte le parti nella stessa cartella. Il controllo del file non garantisce compatibilita o VRAM sufficiente.</p>
 <button id="setup-remote" type="button" class="quiet">Uso un'API remota, senza modello locale</button>
+</dialog>
+<dialog id="delete-project-dialog" aria-labelledby="delete-project-title">
+<form method="dialog"><div class="editor-head"><h2 id="delete-project-title">Elimina progetto</h2><button class="quiet" value="cancel">Annulla</button></div>
+<p>Eliminare definitivamente <strong id="delete-project-name"></strong>? Verranno rimossi progetto, allegati ed esportazioni.</p>
+<label class="check"><input id="skip-delete-confirmation" type="checkbox">Non chiedermelo più su questo browser</label>
+<p class="hint muted">La conferma può essere riattivata dalla pagina Progetti.</p>
+<button class="danger delete-confirm" value="delete">🗑 Elimina definitivamente</button></form>
 </dialog>
 <main id="admin" hidden aria-labelledby="admin-title">
 <div class="editor-head"><div><div class="eyebrow">IMPOSTAZIONI DELLO STUDIO</div><h1 id="admin-title">Admin · LLM</h1></div><button id="close-admin" class="quiet" type="button">Torna a Crea</button></div>

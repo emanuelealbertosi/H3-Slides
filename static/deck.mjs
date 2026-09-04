@@ -1,5 +1,5 @@
 import {layoutCandidates,composerCSS} from './composer.mjs';
-export {layouts,layoutCandidates,fitSlide} from './composer.mjs';
+export {layouts,layoutCandidates,fitSlide,visualAnchorAt} from './composer.mjs';
 export const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 export const themes = {
   ink: {bg:'#141b2c',fg:'#f6f7fb',muted:'#c1c9d8',accent:'#b1f1ce'},
@@ -65,6 +65,7 @@ export function slideHTML(project,slide,index,imageUrl=''){
   };
   return '<article class="slide-frame tpl-'+esc(template)+' density-'+esc(project.text_density||'detailed')+
     (visual.diagram||visual.image?' has-visual':'')+(visual.diagram?' has-diagram':'')+(blocks.reduce((n,b)=>n+b.text.length,0)>1100?' copy-dense':'')+
+    ' heading-'+esc(c.heading_position||'top')+' heading-align-'+esc(c.heading_align||'left')+
     (d.title_size?' custom-title-size':'')+(d.body_size?' custom-body-size':'')+'" data-candidates="'+esc(JSON.stringify(candidates))+'" data-layout="'+esc(template)+'" style="'+style+';--item-count:'+(blocks.length||c.bullets?.length||1)+'">'+
     '<div class="slide-accent"></div>'+
     '<div class="kicker">H3 SLIDES <span>/ '+String(index+1).padStart(2,'0')+'</span></div><div class="heading">'+

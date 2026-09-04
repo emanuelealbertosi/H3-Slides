@@ -3,7 +3,9 @@ export const layouts = {
   cover:'Copertina', editorial:'Editoriale', comparison:'Confronto', cards:'Griglia di concetti',
   steps:'Passaggi numerati', timeline:'Cronologia', focus:'Idea + approfondimento',
   quote:'Citazione in evidenza', 'visual-left':'Immagine a sinistra',
-  'visual-right':'Immagine a destra', 'visual-top':'Immagine panoramica', stack:'Paragrafi a fasce'
+  'visual-right':'Immagine a destra', 'visual-left-wide':'Immagine grande a sinistra',
+  'visual-right-wide':'Immagine grande a destra', 'visual-top':'Immagine panoramica in alto',
+  'visual-bottom':'Immagine panoramica in basso', stack:'Paragrafi a fasce'
 };
 const aliases={content:'auto',split:'visual-right',statement:'focus',minimal:'focus',prose:'editorial'};
 export function layoutCandidates(project,content,index=0,visual=false){
@@ -27,6 +29,17 @@ export function layoutCandidates(project,content,index=0,visual=false){
     Object.hasOwn(layouts,k)&&(!k.startsWith('visual-')||visual)&&
     (k!=='comparison'||items===2)&&(k!=='timeline'||items>=2)&&
     (k!=='quote'||blocks.some(b=>b.kind==='quote')));
+}
+
+export function visualAnchorAt(x,y,width,height){
+  const nx=Math.max(0,Math.min(1,x/Math.max(1,width)));
+  const ny=Math.max(0,Math.min(1,y/Math.max(1,height)));
+  if(ny<.3)return 'visual-top';
+  if(ny>.7)return 'visual-bottom';
+  if(nx<.2)return 'visual-left-wide';
+  if(nx<.5)return 'visual-left';
+  if(nx>.8)return 'visual-right-wide';
+  return 'visual-right';
 }
 
 // Self-contained: same measured-fit code in preview, PDF, PPTX and Slidev.
@@ -65,6 +78,9 @@ export const composerCSS=`
 .slide-frame{padding:36px 48px 60px;--body-size:22px;isolation:isolate}
 .slide-frame .slide-accent{position:absolute;top:0;left:0;width:100%;height:7px;background:var(--accent);z-index:-1}
 .slide-frame .kicker{font:700 12px var(--font);letter-spacing:2px;margin-bottom:14px;color:var(--muted)}
+.slide-frame .kicker{order:0}.slide-frame .heading{order:1}.slide-frame .slide-columns{order:2}
+.slide-frame.heading-bottom .heading{order:3;margin-top:16px}.slide-frame.heading-bottom .slide-columns{margin-top:8px}
+.slide-frame.heading-align-center .heading{text-align:center}.slide-frame.heading-align-right .heading{text-align:right}
 .slide-frame h1{font-size:46px;line-height:1.3;max-height:none;overflow:visible;letter-spacing:-1px;margin:0 0 12px;font-weight:800}
 .slide-frame .subtitle{font-size:21px;line-height:1.3;max-height:none;overflow:visible;margin:0}
 .slide-frame .slide-columns{margin-top:22px;gap:28px;align-items:stretch;flex:1;min-height:0}
@@ -125,13 +141,20 @@ export const composerCSS=`
 .slide-frame.tpl-quote .prose-box.kind-quote{border-left:6px solid var(--box-border);box-shadow:none}
 .slide-frame.tpl-quote .prose-box.kind-quote p{font-family:Georgia,serif;font-size:25px;line-height:1.35}
 .slide-frame.tpl-visual-left .slide-columns{flex-direction:row-reverse}
-.slide-frame.tpl-visual-left .prose-grid,.slide-frame.tpl-visual-right .prose-grid{grid-template-columns:1fr}
+.slide-frame.tpl-visual-left-wide .slide-columns{flex-direction:row-reverse}
+.slide-frame.tpl-visual-left .prose-grid,.slide-frame.tpl-visual-right .prose-grid,.slide-frame.tpl-visual-left-wide .prose-grid,.slide-frame.tpl-visual-right-wide .prose-grid{grid-template-columns:1fr}
 .slide-frame.tpl-visual-left .visual,.slide-frame.tpl-visual-right .visual{width:37%}
+.slide-frame.tpl-visual-left-wide .visual,.slide-frame.tpl-visual-right-wide .visual{width:52%}
 .slide-frame.tpl-visual-top .slide-columns{display:grid;grid-template-columns:1fr;grid-template-rows:180px minmax(0,1fr);gap:20px}
 .slide-frame.tpl-visual-top .visual{grid-row:1;width:100%;height:180px}
 .slide-frame.tpl-visual-top .copy{grid-row:2}
 .slide-frame.tpl-visual-top.has-diagram .slide-columns{grid-template-rows:280px minmax(0,1fr)}
 .slide-frame.tpl-visual-top.has-diagram .visual{height:280px}
+.slide-frame.tpl-visual-bottom .slide-columns{display:grid;grid-template-columns:1fr;grid-template-rows:minmax(0,1fr) 180px;gap:20px}
+.slide-frame.tpl-visual-bottom .copy{grid-row:1}
+.slide-frame.tpl-visual-bottom .visual{grid-row:2;width:100%;height:180px}
+.slide-frame.tpl-visual-bottom.has-diagram .slide-columns{grid-template-rows:minmax(0,1fr) 280px}
+.slide-frame.tpl-visual-bottom.has-diagram .visual{height:280px}
 .slide-frame.tpl-stack .prose-box{display:grid;grid-template-columns:minmax(130px,23%) minmax(0,1fr);gap:12px 25px;align-content:center;border-radius:var(--box-radius);padding:20px 26px;box-shadow:none}
 .slide-frame.tpl-stack .prose-source{grid-column:2}
 .slide-frame.compact-spacing{padding-top:28px}

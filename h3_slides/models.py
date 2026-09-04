@@ -43,8 +43,11 @@ class SlideContent(BaseModel):
     notes: str = Field(default="", max_length=6000)
     layout: Literal["cover", "content", "split", "statement", "editorial", "comparison",
                     "cards", "steps", "timeline", "focus", "quote", "visual-left",
-                    "visual-right", "visual-top", "stack"] = "content"
+                    "visual-right", "visual-top", "visual-bottom", "visual-left-wide",
+                    "visual-right-wide", "stack"] = "content"
     layout_variant: int = Field(default=0, ge=0, le=10000)
+    heading_position: Literal["top", "bottom"] = "top"
+    heading_align: Literal["left", "center", "right"] = "left"
     image_id: str = ""
     sources: list[str] = Field(default_factory=list, max_length=12)
     animation: Literal["none", "reveal"] = "none"
