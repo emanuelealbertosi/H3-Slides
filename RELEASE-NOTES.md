@@ -1,3 +1,17 @@
+# Modifiche successive alla 0.2.1
+
+- Scene Manim reali progettate in un passaggio LLM dedicato e compilate da
+  codice fidato: forme semantiche, griglie, barre, curve e relazioni instradate.
+- Stesso flusso per llama.cpp locale e API remota; nessun codice del modello
+  viene eseguito.
+- Render 1800 × 1200 verificato e condiviso tra anteprima, PPTX, PDF e Slidev;
+  export Manim animato per fasi.
+- Editor strutturato delle scene e aggiornamento deterministico del render.
+- Interfaccia chiara ispirata a H3-documentary, con sezioni Crea, Progetti e
+  Admin e font OFL inclusi.
+
+---
+
 # H3-Slides 0.2.1 — rimozione della dipendenza vulnerabile
 
 Estrarre **H3-Slides-windows-x64-0.2.1.zip**, inclusa la cartella vendor.

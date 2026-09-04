@@ -1,11 +1,16 @@
 """Trusted renderer. Reads JSON data, never executes LLM-generated Python."""
 import json
 import os
+import sys
 import textwrap
 import math
 from pathlib import Path
 from manim import Text, FadeIn, FadeOut, VGroup, Group, ImageMobject, ManimColor, UP, DOWN, LEFT, RIGHT, RoundedRectangle, Arrow, Create
 from manim_slides import Slide
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from h3_slides.diagram_spec import legacy_scene
+from h3_slides.manim_scene import build_scene
 
 
 def luminance(color):
@@ -73,7 +78,10 @@ class H3Deck(Slide):
             theme = (bg, design.get("text_color") or auto_text(bg), project.get("accent_color") or base[2])
             font = project.get("font", "Arial")
             diagram = content.get("diagram", {})
-            has_diagram = project.get("use_manim_diagrams") and diagram.get("kind", "none") != "none" and len(diagram.get("labels", [])) >= 2
+            has_diagram = project.get("use_manim_diagrams") and (
+                diagram.get("kind") == "manim" and bool(diagram.get("scene"))
+                or diagram.get("kind") in ("flow", "cycle", "comparison") and len(diagram.get("labels", [])) >= 2
+            )
             image_id = content["image_id"] if project.get("use_source_images", True) and not has_diagram else ""
             has_visual = bool(image_id or has_diagram)
             self.camera.background_color = ManimColor(theme[0])
@@ -145,14 +153,18 @@ class H3Deck(Slide):
                 elements.add(image)
                 self.play(FadeIn(image), run_time=.35)
             if has_diagram:
-                nodes, arrows = self.diagram(diagram, theme, font)
-                if blocks:
-                    VGroup(nodes, arrows).scale(.62).move_to([4.9, -.4, 0])
-                elements.add(nodes, arrows)
-                for node in nodes:
-                    self.play(FadeIn(node), run_time=.25)
-                for arrow in arrows:
-                    self.play(Create(arrow), run_time=.25)
+                scene = diagram.get("scene") if diagram.get("kind") == "manim" else legacy_scene(diagram).model_dump()
+                diagram_root, diagram_header, diagram_footer, stages, _ = build_scene(scene, project)
+                diagram_root.scale(.47).move_to([3.55, -.32, 0])
+                elements.add(diagram_root)
+                self.play(FadeIn(diagram_header), run_time=.3)
+                for _, nodes, links in stages:
+                    if len(nodes):
+                        self.play(*[FadeIn(node) for node in nodes], run_time=.32)
+                    if len(links):
+                        self.play(*[Create(link) for link in links], run_time=.28)
+                if len(diagram_footer):
+                    self.play(FadeIn(diagram_footer), run_time=.25)
             for text in points:
                 self.play(FadeIn(text), run_time=.35)
                 if content["animation"] == "reveal":

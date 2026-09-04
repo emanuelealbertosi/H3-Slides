@@ -12,6 +12,7 @@ def paragraph_budget(project):
 def content_contract(project, block_count=None):
     density = project.get("text_density", "detailed")
     schema = SlideContent.model_json_schema()
+    schema["$defs"]["DiagramSpec"]["properties"]["scene"] = {"type": "null"}
     schema["properties"]["layout_variant"]["const"] = 0  # Variants are a deterministic editor control.
     if density == "brief":
         schema["properties"]["bullets"].update(maxItems=3, items={"type": "string", "maxLength": 90})

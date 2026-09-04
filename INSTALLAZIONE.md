@@ -78,5 +78,7 @@ Gli strumenti di terze parti restano soggetti alle rispettive licenze:
 Python, uv, Node.js, llama.cpp, Slidev, Chromium/Playwright, Manim e Manim Slides.
 Le relative licenze sono nelle distribuzioni scaricate. Non viene concessa
 automaticamente una nuova licenza ai documenti importati o ai modelli scelti.
+I font Manrope e Cormorant Garamond inclusi nell'interfaccia sono distribuiti
+secondo SIL Open Font License 1.1; i testi completi sono in static/licenses.
 La ricerca SearXNG e opzionale e separata: richiede un motore container gia pronto;
 non e necessaria per generare presentazioni o esportarle.

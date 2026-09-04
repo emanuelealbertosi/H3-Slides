@@ -51,6 +51,8 @@ Se il catalogo locale e vuoto, l'app apre **Configura il modello locale**:
 3. Se si preferisce un provider remoto, scegliere **Uso un'API remota**.
    **Configura dopo** permette di usare l'editor senza caricare alcun modello.
 
+La barra laterale separa **Crea**, **Progetti** e **Admin**. Progetti mostra
+l'archivio locale e riapre una presentazione senza confondere il brief corrente.
 Tutta la configurazione LLM e nella pagina **Admin**, accessibile dal menu o
 dal percorso **/admin**: provider, modello, Vision, connessione e inferenza.
 Passare da Crea ad Admin non ricarica la pagina e conserva il brief non salvato
@@ -235,13 +237,27 @@ cancellare quelli già presenti. Doppio clic sui testi per modificarli nella
 scheda, oppure Modifica per note, fonti, immagini e diagrammi.
 
 Le immagini delle fonti sono facoltative anche nei progetti esistenti: disattivarle
-le nasconde dagli export, non elimina gli originali. L'opzione Manim permette
-al planner di scegliere flussi, cicli e confronti con 2–5 etichette modificabili.
-Anteprima SVG immediata, forme native nel PPTX, render Manim solo all'esportazione.
-Un diagramma attivo ha priorità sulla figura della stessa slide.
-Il renderer Manim conserva un layout animato proprio e non riproduce tutti i
-template web. Non è ancora un clone completo di Gamma né un esecutore di
-codice Python libero generato dall'LLM.
+le nasconde dagli export, non elimina gli originali. Con **Diagrammi Manim**,
+il modello scelto in Admin esegue un secondo passaggio dedicato e restituisce
+solo una scena dichiarativa validata: oggetti, coordinate, relazioni, fasi e dati.
+Il codice Python che compila e renderizza la scena e distribuito con l'app e
+non proviene mai dal modello.
+
+Sono disponibili blocchi, decisioni, documenti, database, griglie di valori,
+grafici a barre e grafici lineari. I collegamenti sono instradati
+deterministicamente attorno agli altri oggetti; testi, sovrapposizioni,
+dimensione minima e limiti del canvas vengono verificati prima del salvataggio.
+Il render 1800 × 1200 viene riusato nell'editor, nel PPTX, nel PDF e in Slidev;
+l'export Manim anima progressivamente la stessa scena. Un diagramma attivo ha
+priorità sulla figura della stessa slide.
+
+**Progetta Manim** crea o riprogetta la scena usando l'LLM locale o remoto
+selezionato. **Renderizza Manim** ricostruisce invece un progetto già valido
+senza interrogare il modello, per esempio dopo un cambio di tema. Nell'editor
+si possono modificare titolo, conclusione, oggetti, coordinate, dimensioni,
+dati e relazioni. I vecchi diagrammi flow/cycle/comparison restano leggibili
+e possono essere convertiti esplicitamente; non vengono più mostrati come
+segnaposto SVG.
 
 ## Runtime distribuiti dall'installer
 
@@ -276,20 +292,19 @@ Non cambiare il bind da localhost senza aggiungere autenticazione.
 
 | Uscita | Contenuto |
 |---|---|
-| PPTX modificabile | Testi e immagini nativi PowerPoint; note e fonti nelle note relatore |
+| PPTX modificabile | Testi e immagini nativi PowerPoint; diagrammi Manim come render ad alta risoluzione; note e fonti nelle note relatore |
 | PDF | Rendering statico delle slide dell'editor, con verifica dei principali overflow |
 | Slidev | Sorgenti Markdown e immagini nello ZIP; anteprima live sulla porta 3031 |
-| Manim | MP4 e presentazione HTML con pause; preset di apparizione progressiva |
+| Manim | MP4 e presentazione HTML con pause; oggetti e relazioni della scena appaiono per fasi |
 
 Il PPTX non è una serie di screenshot di Slidev. I motori PPTX, web e Manim
 usano lo stesso progetto strutturato, ma il loro layout non è identico al pixel.
 Le animazioni non diventano animazioni native PowerPoint e il PDF è statico.
 L'HTML Manim incorpora i video; il framework RevealJS può richiedere Internet.
 
-Il preset Manim usa testo e immagini e non richiede LaTeX. La generazione libera
-di scene Python, grafici specialistici, formule LaTeX e animazioni complesse
-non è ancora implementata: richiede renderer/sandbox dedicati. L'LLM non può
-eseguire Python/JavaScript arbitrario sul computer.
+Il renderer usa testo, immagini e scene dichiarative e non richiede LaTeX.
+Grafici specialistici, formule LaTeX e codice Manim libero restano fuori dallo
+schema. L'LLM non può eseguire Python o JavaScript arbitrario sul computer.
 
 Importazione: PDF completi fino a 1.500 pagine, 250 MB/file e 12 milioni di
 caratteri; Markdown fino a 240.000 caratteri; PNG/JPG/WEBP fino a 40 megapixel.
@@ -333,10 +348,12 @@ per la modifica diretta. Fino a 4 box manuali. PPTX conserva forme e testi
 modificabili; PDF/Slidev condividono il layout; Manim mostra i box in sequenza.
 Gli export PPTX/PDF/Slidev bloccano lo sforamento dopo il tentativo di ricomposizione.
 PDF e Slidev usano lo stesso HTML misurato; PPTX usa quelle posizioni per testi,
-riquadri, immagini e diagrammi nativi modificabili, incluse ombre e bordi.
+riquadri e immagini. I diagrammi Manim rimangono modificabili nella struttura
+dentro H3-Slides e vengono inseriti negli export statici come render PNG.
 Il formato rimane 16:9: non sono pagine PDF di altezza variabile come le schede Gamma.
 Le metriche tipografiche e le ombre di PowerPoint possono differire leggermente.
-Manim video conserva il proprio renderer animato.
+Manim video usa gli stessi oggetti della scena e li presenta secondo le fasi
+definite, invece di ricostruire un diagramma semplificato separato.
 La scaletta pianifica anche il numero di paragrafi. Il budget viene diviso per
 paragrafo e accompagnato da indicazioni in parole, adatte anche a modelli piccoli.
 La generazione controlla lunghezza e conclusione dei paragrafi e prova fino a due

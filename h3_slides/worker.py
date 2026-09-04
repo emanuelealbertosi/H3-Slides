@@ -7,6 +7,7 @@ from .content_rules import content_contract, validate_content, fit_complete_sent
 from .storage import uid, now
 from .search_settings import SearchConfig
 from .web_research import WebResearch, public_research, web_context, web_evidence, source_citations
+from .diagrams import ManimRenderer, design_diagram
 
 KNOWLEDGE_CONTEXT = (
     "MODALITÀ CONOSCENZA DEL MODELLO — nessun documento allegato. "
@@ -26,6 +27,7 @@ class Worker:
         self.clients = LLM
         self.researcher = WebResearch(store)
         self.search_config = SearchConfig(store.root)
+        self.renderer = ManimRenderer(store, getattr(manager, "guard", None))
 
     def active(self):
         return any(not task.done() for task in self.tasks.values())
@@ -36,10 +38,12 @@ class Worker:
         project = self.store.project(pid)
         if request.slide_id and not any(s["id"] == request.slide_id for s in project["slides"]):
             raise ValueError("Slide non trovata")
-        if not request.slide_id and project["slides"] and all(s["status"] == "ready" for s in project["slides"]):
+        if request.diagram_only and not project.get("use_manim_diagrams"):
+            raise ValueError("Abilita Diagrammi Manim nel progetto prima di progettarne uno")
+        if not request.diagram_only and not request.slide_id and project["slides"] and all(s["status"] == "ready" for s in project["slides"]):
             raise ValueError("Tutte le slide sono già pronte. Usa Rigenera sulla singola slide.")
         search_options = None
-        if project.get("web_enabled"):
+        if project.get("web_enabled") and not request.diagram_only:
             if not request.web_consent:
                 raise ValueError("Conferma l'invio della query al motore di ricerca e la lettura delle pagine web")
             query = project.get("web_query", "").strip()
@@ -164,6 +168,29 @@ class Worker:
             context, assets = ("", []) if research and not project["sources"] else await self.sources_context(client, project, jid)
             if research:
                 context = context[:12000] + "\n\n" + web_context(research)
+            if request.diagram_only:
+                project = self.store.project(pid)
+                slide = next(s for s in project["slides"] if s["id"] == request.slide_id)
+                expected_revision = slide["revision"]
+                content = SlideContent.model_validate(slide["content"])
+                if content.diagram.kind == "none":
+                    content.diagram.kind = "manim"
+                content.diagram.brief = request.prompt[:400]
+                diagram, rendered = await design_diagram(
+                    client, self.renderer, pid, project, content, context, request.prompt,
+                    lambda message: self.store.event(jid, message), lambda: self.checkpoint(jid))
+                project = self.store.project(pid)
+                current = next((s for s in project["slides"] if s["id"] == request.slide_id), None)
+                if not current or current["revision"] != expected_revision:
+                    raise ValueError("La slide è stata modificata durante il rendering: il diagramma non è stato applicato")
+                current["content"]["diagram"] = diagram
+                current["diagram_render"] = rendered
+                current["revision"] += 1
+                current["status"] = "ready"
+                self.store.save_project(project)
+                self.store.event(jid, "Diagramma Manim progettato, renderizzato e verificato",
+                                 status="completed", progress=1)
+                return
             self.store.event(jid, "Fonti lette; costruzione della scaletta" if project["sources"] or research else
                              "Conoscenza del modello; costruzione della scaletta", progress=0.12)
             await self.checkpoint(jid)
@@ -233,10 +260,12 @@ class Worker:
                     "\nOPZIONI VISIVE VINCOLANTI:\n" +
                     ("Puoi scegliere una figura pertinente. " if project.get("use_source_images", True) else
                      "Immagini delle fonti disattivate: image_id deve essere vuoto. ") +
-                    ("Diagrammi Manim attivi: quando utile scegli kind flow, cycle o comparison con 2–5 labels brevi. "
-                     "Un diagramma deve rappresentare relazioni reali, non duplicare l'elenco. Nessun codice Python. "
+                    ("Diagrammi Manim attivi: quando una relazione, un meccanismo, una struttura o dati trarrebbero "
+                     "beneficio da una spiegazione visiva, scegli diagram.kind=manim, labels=[], scene=null e scrivi "
+                     "in diagram.brief cosa deve dimostrare la scena. Non proporre un diagramma decorativo e non "
+                     "duplicare i box. La progettazione geometrica e il rendering avverranno in un passaggio dedicato. "
                      if project.get("use_manim_diagrams", False) else
-                     "Diagrammi disattivati: diagram.kind=none e labels=[]. "))
+                     "Diagrammi disattivati: diagram.kind=none, labels=[], brief='', scene=null. "))
                 content_schema, prose_rules = content_contract(project, slide.get("block_count"))
                 visual_rules += "\nFORMATO DEL CONTENUTO VINCOLANTE:\n" + prose_rules
                 if research:
@@ -313,8 +342,17 @@ class Worker:
                     content.image_id = ""
                 if not project.get("use_manim_diagrams", False):
                     content.diagram.kind, content.diagram.labels = "none", []
-                if content.diagram.kind != "none" and len(content.diagram.labels) < 2:
-                    raise ValueError("Un diagramma richiede almeno due elementi")
+                    content.diagram.brief, content.diagram.scene = "", None
+                if content.diagram.kind not in ("none", "manim") and len(content.diagram.labels) < 2:
+                    raise ValueError("Un diagramma precedente richiede almeno due elementi")
+                rendered = None
+                if content.diagram.kind == "manim":
+                    content.diagram.scene = None
+                    diagram, rendered = await design_diagram(
+                        client, self.renderer, pid, project, content, context,
+                        content.diagram.brief or slide.get("purpose", ""),
+                        lambda message: self.store.event(jid, message), lambda: self.checkpoint(jid))
+                    content.diagram = type(content.diagram).model_validate(diagram)
                 if content.image_id and content.image_id not in valid_images:
                     raise ValueError("Il modello ha indicato un'immagine inesistente")
                 await self.checkpoint(jid)
@@ -322,6 +360,10 @@ class Worker:
                 current = next((s for s in project["slides"] if s["id"] == sid), None)
                 if current and current["revision"] == expected_revision:
                     current.update(content=content.model_dump(), revision=expected_revision + 1, status="ready")
+                    if rendered:
+                        current["diagram_render"] = rendered
+                    else:
+                        current.pop("diagram_render", None)
                     current["web_research"] = public_research(research) if research else None
                     self.store.save_project(project)
                     message = f"Slide {index + 1} salvata · layout {content.layout} · {len(content.blocks)} paragrafi"

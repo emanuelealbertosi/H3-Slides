@@ -16,11 +16,14 @@ test('visual toggles apply to old slides without losing references',()=>{
   const content={layout:'content',title:'Title',subtitle:'',bullets:['A'],image_id:'abc.jpg',diagram:{kind:'flow',labels:['A','B']}};
   const project={title:'Project',theme:'paper',use_source_images:false};
   assert.ok(!slideHTML(project,{content},0,'private.jpg').includes('<img'));
-  const html=slideHTML({...project,use_manim_diagrams:true,background_color:'#123456',font:'Georgia'},{content},0,'private.jpg');
-  assert.ok(html.includes('<svg'));
+  const html=slideHTML({...project,use_manim_diagrams:true,background_color:'#123456',font:'Georgia'},
+    {content:{...content,diagram:{kind:'manim',labels:[],brief:'A verso B',scene:{}}},
+     diagram_render:{engine:'manim',asset:'manim-test.png'}},0,'manim-test.png');
+  assert.ok(html.includes('<img'));
+  assert.ok(html.includes('diagram-render'));
   assert.ok(html.includes('--bg:#123456'));
   assert.ok(html.includes('--font:Georgia'));
-  assert.ok(!html.includes('<img'));
+  assert.ok(!html.includes('<svg'));
 });
 test('all diagram presets stay inside the canvas and escape labels',()=>{
   for(const kind of ['flow','cycle','comparison'])for(const count of [2,3,4,5]){

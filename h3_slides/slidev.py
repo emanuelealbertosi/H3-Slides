@@ -10,9 +10,11 @@ def write_slidev(project, assets, output, strict=False):
     for n, slide in enumerate(project["slides"]):
         c = slide["content"]
         diagram = project.get("use_manim_diagrams") and c.get("diagram", {}).get("kind", "none") != "none"
-        if c["image_id"] and project.get("use_source_images", True) and not diagram:
+        image = slide.get("diagram_render", {}).get("asset") if diagram else (
+            c["image_id"] if project.get("use_source_images", True) else "")
+        if image:
             (output / "assets").mkdir(exist_ok=True)
-            src, dst = assets / c["image_id"], output / "assets" / c["image_id"]
+            src, dst = assets / image, output / "assets" / image
             if not dst.exists():
                 shutil.copy2(src, dst)
     result = subprocess.run([str(root / "runtime/node/node.exe"), str(root / "scripts/slidev_source.mjs")],

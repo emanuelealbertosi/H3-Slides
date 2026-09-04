@@ -4,7 +4,6 @@ import {fileURLToPath} from 'node:url';
 import pptxgen from 'pptxgenjs';
 import {chromium} from 'playwright-chromium';
 import {slideHTML,slideCSS,themeFor,visualFor,fitSlide} from '../static/deck.mjs';
-import {diagramGeometry} from '../static/diagram.mjs';
 
 // Measure every layout, including bullets, illustrations, borders and footers.
 export async function measureLayouts(page){
@@ -38,13 +37,14 @@ export async function buildExports(project,assetsDir,outDir,format){
   if(!['pdf','pptx'].includes(format))throw new Error('Formato non supportato');
   await fs.mkdir(outDir,{recursive:true});
   const imagePath=id=>{
-    if(!/^[a-f0-9-]+\.jpg$/.test(id))throw new Error('Riferimento immagine non valido');
+    if(!(/^[a-f0-9-]+\.jpg$/.test(id)||/^manim-[a-f0-9]{64}\.png$/.test(id)))throw new Error('Riferimento immagine non valido');
     return path.join(assetsDir,id);
   };
   const articles=[];
   for(const [index,item] of project.slides.entries()){
-    const image=visualFor(project,item.content).image;
-    const url=image?'data:image/jpeg;base64,'+(await fs.readFile(imagePath(image))).toString('base64'):'';
+    const image=visualFor(project,item.content,item).image;
+    const mime=image.endsWith('.png')?'image/png':'image/jpeg';
+    const url=image?'data:'+mime+';base64,'+(await fs.readFile(imagePath(image))).toString('base64'):'';
     articles.push(slideHTML(project,item,index,url));
   }
   const browser=await chromium.launch({headless:true});
@@ -68,7 +68,7 @@ export async function buildExports(project,assetsDir,outDir,format){
     pptx.layout='LAYOUT_WIDE';pptx.author='H3-slides';pptx.subject=project.prompt;
     pptx.title=project.title;pptx.lang='it-IT';
     for(const [index,item] of project.slides.entries()){
-      const c=item.content,t=themeFor(project),s=pptx.addSlide(),layout=measured[index],visual=visualFor(project,c);
+      const c=item.content,t=themeFor(project),s=pptx.addSlide(),layout=measured[index],visual=visualFor(project,c,item);
       s.background={color:t.bg.slice(1)};
       for(const b of layout.boxes){
         if(!transparent(b.color))s.addShape(b.radius?pptx.ShapeType.roundRect:pptx.ShapeType.rect,{
@@ -92,20 +92,6 @@ export async function buildExports(project,assetsDir,outDir,format){
         const ratio=Math.min(frame.w/dims.width,frame.h/dims.height);
         const w=dims.width*ratio,h=dims.height*ratio;
         s.addImage({path:p,x:frame.x+(frame.w-w)/2,y:frame.y+(frame.h-h)/2,w,h});
-      }
-      if(visual.diagram&&frame){
-        const g=diagramGeometry(c.diagram),scale=Math.min(frame.w/560,frame.h/400);
-        const ox=frame.x+(frame.w-560*scale)/2,oy=frame.y+(frame.h-400*scale)/2;
-        for(const e of g.edges)s.addShape(pptx.ShapeType.line,{
-          x:ox+Math.min(e.x1,e.x2)*scale,y:oy+Math.min(e.y1,e.y2)*scale,
-          w:Math.abs(e.x2-e.x1)*scale,h:Math.abs(e.y2-e.y1)*scale,flipH:e.x2<e.x1,flipV:e.y2<e.y1,
-          line:{color:t.accent.slice(1),width:2,beginArrowType:'none',endArrowType:'triangle'}});
-        for(const a of g.nodes){
-          const x=ox+(a.x-a.w/2)*scale,y=oy+(a.y-a.h/2)*scale,w=a.w*scale,h=a.h*scale;
-          s.addShape(pptx.ShapeType.roundRect,{x,y,w,h,rectRadius:.08,fill:{color:t.bg.slice(1)},line:{color:t.accent.slice(1),width:1.5}});
-          s.addText(a.label,{x:x+.04,y:y+.03,w:w-.08,h:h-.06,fontFace:project.font||'Arial',
-            fontSize:Math.min(16,23*scale*72),color:t.fg.slice(1),align:'center',valign:'mid',margin:0,fit:'shrink'});
-        }
       }
       s.addNotes((c.notes||'')+'\n\n[Sources]\n'+(c.sources||[]).join('\n')+'\n[/Sources]');
     }

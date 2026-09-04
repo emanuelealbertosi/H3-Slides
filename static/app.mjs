@@ -115,8 +115,17 @@ for(const id of Object.keys(designFields))$(id).addEventListener('input',()=>{
 });
 $('theme').addEventListener('change',()=>{const t=themes[$('theme').value];$('background-color').value=t.bg;$('accent-color').value=t.accent;render()});
 async function loadProjects(){
-  projects=await api('/api/projects');$('project-list').innerHTML='<option value="">I tuoi progetti</option>'+projects.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.title)+' · '+p.slide_count+'</option>').join('');
+  projects=await api('/api/projects');$('project-list').innerHTML='<option value="">Nuovo progetto</option>'+projects.map(p=>'<option value="'+esc(p.id)+'">'+esc(p.title)+' · '+p.slide_count+'</option>').join('');
   if(current)$('project-list').value=current.id;
+  renderLibrary();
+}
+function renderLibrary(){
+  $('library-grid').innerHTML=projects.length?projects.map(p=>{
+    const when=new Date(p.updated_at),date=Number.isNaN(when.getTime())?'':when.toLocaleString('it-IT',{dateStyle:'medium',timeStyle:'short'});
+    return '<article class="project-card" data-project="'+esc(p.id)+'"><div class="project-card-mark">H3 / '+p.slide_count+'</div>'+
+      '<h2>'+esc(p.title)+'</h2><p>'+p.slide_count+' slide</p><small>Aggiornato '+esc(date)+'</small>'+
+      '<button class="secondary" type="button">Apri progetto →</button></article>';
+  }).join(''):'<section class="library-empty"><div class="empty-mark">H3 /</div><h2>Nessun progetto salvato.</h2><p>Inizia da un argomento, un PDF o un’immagine.</p></section>';
 }
 async function selectProject(id){
   await finishInlineEdits();
@@ -138,14 +147,19 @@ async function saveProject(){
   localStorage.setItem('h3slides-project',current.id);await loadProjects();render();return current;
 }
 $('save-project').onclick=()=>saveProject().catch(e=>toast(e.message));
-$('new').onclick=async()=>{
+async function newProject(){
   try{await finishInlineEdits()}catch(error){toast(error.message);return}
   if(drafts.size&&!confirm('Lasciare le modifiche non salvate?'))return;
   current=null;drafts.clear();$('title').value='Nuova presentazione';$('prompt').value='';$('project-list').value='';
   $('web-enabled').checked=false;$('web-query').value='';$('web-consent').checked=false;$('web-refresh').checked=false;render();
-  navigatePage(false);
+  navigatePage('create');
+}
+$('new').onclick=$('library-new').onclick=newProject;
+$('project-list').onchange=e=>e.target.value&&selectProject(e.target.value).then(()=>navigatePage('create')).catch(e=>toast(e.message));
+$('library-grid').onclick=e=>{
+  const card=e.target.closest('[data-project]');if(!card)return;
+  selectProject(card.dataset.project).then(()=>navigatePage('create')).catch(error=>toast(error.message));
 };
-$('project-list').onchange=e=>e.target.value&&selectProject(e.target.value).then(()=>navigatePage(false)).catch(e=>toast(e.message));
 $('files').onchange=async e=>{
   const files=[...e.target.files];e.target.value='';if(!files.length)return;
   try{await saveProject();for(const file of files){const form=new FormData();form.append('file',file);toast('Lettura di '+file.name+'…');current=await api('/api/projects/'+current.id+'/sources','POST',form)}render();toast('Fonti aggiunte')}catch(error){toast(error.message)}
@@ -193,7 +207,7 @@ $('browse-model').onclick=()=>connectLocalModel('pick');
 $('register-model').onclick=()=>connectLocalModel('register');
 $('refresh-models').onclick=()=>models().catch(e=>toast(e.message));
 $('unload').onclick=async()=>{try{await api('/api/llm/stop','POST',{});await models();toast('Modello di H3-slides scaricato')}catch(e){toast(e.message)}};
-async function generate(slideId=null){
+async function generate(slideId=null,diagramOnly=false){
   if(busy)return;busy=true;$('generate').disabled=true;
   try{
     await finishInlineEdits();
@@ -213,12 +227,13 @@ async function generate(slideId=null){
       navigatePage(true);$('consent').focus();
       throw new Error('In Admin autorizza l’invio al server scelto, poi torna a Crea e premi Genera.');
     }
-    if(current.web_enabled&&!$('web-consent').checked)throw new Error('Conferma la query da inviare al motore di ricerca');
+    if(!diagramOnly&&current.web_enabled&&!$('web-consent').checked)throw new Error('Conferma la query da inviare al motore di ricerca');
     savePrefs();
-    const instructions=slideId?prompt('Istruzioni per rigenerare questa slide:',current.prompt):$('prompt').value;
+    const instructions=slideId?prompt(diagramOnly?'Descrivi cosa deve spiegare il diagramma Manim:':'Istruzioni per rigenerare questa slide:',
+      diagramOnly?(current.slides.find(s=>s.id===slideId)?.content.diagram?.brief||current.slides.find(s=>s.id===slideId)?.content.title||''):current.prompt):$('prompt').value;
     if(instructions===null)return;
     job=await api('/api/projects/'+current.id+'/generate','POST',{provider:selected,prompt:instructions,count:Number($('count').value),slide_id:slideId,
-      web_consent:$('web-consent').checked,web_refresh:$('web-refresh').checked});
+      diagram_only:diagramOnly,web_consent:diagramOnly?false:$('web-consent').checked,web_refresh:diagramOnly?false:$('web-refresh').checked});
     $('web-consent').checked=false;$('web-refresh').checked=false;
     toast('Generazione avviata');await poll();
   }catch(e){toast(e.message)}finally{busy=false;$('generate').disabled=false}
@@ -283,11 +298,19 @@ function render(){
       card.dataset.signature=signature;
       card.innerHTML='<div class="slide-top"><span class="slide-label">⠿ '+String(index+1).padStart(2,'0')+' / '+esc(slide.status==='ready'?'Pronta':slide.status==='generating'?'Generazione…':'In attesa')+'</span>'+
         '<button class="quiet" data-action="up" aria-label="Sposta su">↑</button><button class="quiet" data-action="down" aria-label="Sposta giù">↓</button>'+
-        '<button class="quiet" data-action="edit">Modifica</button><button class="quiet" data-action="regenerate">Rigenera</button></div>'+
+        '<button class="quiet" data-action="edit">Modifica</button><button class="quiet" data-action="regenerate">Rigenera</button>'+
+        (current.use_manim_diagrams?'<button class="quiet diagram-action" data-action="'+
+          (slide.content.diagram?.kind==='manim'&&slide.content.diagram?.scene&&!slide.diagram_render?.asset?'render':'diagram')+'">'+
+          (slide.diagram_render?.engine==='manim'?'Riproggetta Manim':slide.content.diagram?.kind==='manim'&&slide.content.diagram?.scene?'Renderizza Manim':'Progetta Manim')+'</button>':'')+'</div>'+
         '<div class="composition-tools"><label>Composizione <select data-slide-layout '+(slide.status!=='ready'?'disabled':'')+'>'+layoutOptions(slide.content.layout)+'</select></label>'+
         '<button class="quiet" data-action="recompose" '+(slide.status!=='ready'?'disabled':'')+'>↻ Ricomponi</button>'+
         '<button class="quiet" data-action="split" '+(slide.status!=='ready'?'disabled':'')+'>Dividi</button><span class="composition-status" aria-live="polite"></span></div>'+
-        '<div class="slide-preview" title="Doppio clic su un testo per modificarlo">'+slideHTML(display,slide,index,slide.content.image_id?'/api/assets/'+current.id+'/'+slide.content.image_id:'')+'</div>';
+        '<div class="slide-preview" title="Doppio clic su un testo per modificarlo">'+slideHTML(display,slide,index,
+          slide.diagram_render?.asset?'/api/assets/'+current.id+'/'+slide.diagram_render.asset:
+          slide.content.image_id?'/api/assets/'+current.id+'/'+slide.content.image_id:'')+'</div>'+
+        (slide.content.diagram?.kind!=='none'&&!slide.diagram_render?.asset?
+          '<p class="diagram-pending">'+(slide.content.diagram?.kind==='manim'&&slide.content.diagram?.scene?
+            'La scena è valida ma il render va aggiornato. Usa Renderizza Manim.':'Il vecchio diagramma va riprogettato con Manim.')+'</p>':'');
       const select=card.querySelector('[data-slide-layout]');
       select.value=({split:'visual-right',statement:'focus'})[slide.content.layout]||slide.content.layout||'content';
       resize.observe(card.querySelector('.slide-preview'));
@@ -310,6 +333,16 @@ function render(){
   for(const card of [...container.children])if(!ids.has(card.dataset.id))card.remove();
   document.querySelectorAll('[data-export]').forEach(b=>b.disabled=!current?.slides.length||exporting.has(b.dataset.export));
 }
+async function rerenderDiagram(id){
+  if(busy)throw new Error('Attendi la generazione in corso');
+  const slide=current.slides.find(item=>item.id===id);if(!slide)throw new Error('Slide non trovata');
+  busy=true;render();
+  try{
+    current=await api('/api/projects/'+current.id+'/slides/'+id,'PATCH',
+      {revision:slide.revision,content:slide.content});
+    render();toast('Render Manim aggiornato');
+  }finally{busy=false;render()}
+}
 function editSlide(id){
   const slide=current.slides.find(s=>s.id===id);editing=structuredClone(slide);
   for(const field of ['title','subtitle','layout','animation','notes'])$('edit-'+field).value=slide.content[field];
@@ -319,9 +352,65 @@ function editSlide(id){
   $('edit-image').value=slide.content.image_id;$('edit-error').textContent='';$('editor').showModal();
   $('edit-diagram-kind').value=slide.content.diagram?.kind||'none';
   $('edit-diagram-labels').value=(slide.content.diagram?.labels||[]).join('\n');
+  $('edit-diagram-brief').value=slide.content.diagram?.brief||'';
+  fillSceneEditor(slide.content.diagram?.scene);
+  showSceneEditor();
   $('edit-blocks').innerHTML='';
   for(const block of slide.content.blocks||[])addBlockEditor(block);
 }
+const elementTypes={box:'Riquadro',decision:'Decisione',circle:'Entità',database:'Archivio',document:'Documento',
+  text:'Annotazione',grid:'Griglia / pixel',bars:'Grafico a barre',plot:'Grafico lineare'};
+const tones={accent:'Accento',blue:'Blu',amber:'Ambra',red:'Rosso',violet:'Viola',neutral:'Neutro'};
+function options(values,current){return Object.entries(values).map(([value,label])=>'<option value="'+value+'" '+(value===current?'selected':'')+'>'+label+'</option>').join('')}
+function addSceneElement(value={}){
+  const n=$('scene-elements').children.length;
+  const defaults={id:'oggetto'+(n+1),type:'box',x:2+(n%3)*4,y:2.4+Math.floor(n/3)*2.6,width:3,height:1.3,text:'',caption:'',tone:'accent',stage:n+1,values:[],labels:[],columns:4};
+  value={...defaults,...value};const row=document.createElement('fieldset');row.className='scene-item';
+  row.innerHTML='<div class="row"><label>ID<input data-scene="id" maxlength="32" pattern="[A-Za-z][A-Za-z0-9_-]{0,31}" required></label>'+
+    '<label>Oggetto<select data-scene="type">'+options(elementTypes,value.type)+'</select></label>'+
+    '<label>Tono<select data-scene="tone">'+options(tones,value.tone)+'</select></label></div>'+
+    '<label>Testo<input data-scene="text" maxlength="80"></label><label>Didascalia<input data-scene="caption" maxlength="90"></label>'+
+    '<div class="scene-geometry">'+['x','y','width','height','stage','columns'].map(key=>'<label>'+key+
+      '<input data-scene="'+key+'" type="number" step="'+(key==='stage'||key==='columns'?'1':'.1')+'" required></label>').join('')+'</div>'+
+    '<div class="row"><label>Valori · separati da virgola<textarea data-scene="values" rows="2"></textarea></label>'+
+    '<label>Etichette · una per riga<textarea data-scene="labels" rows="2"></textarea></label></div>'+
+    '<button type="button" class="quiet danger" data-remove-scene>Rimuovi oggetto</button>';
+  for(const [key,item] of Object.entries(value)){const input=row.querySelector('[data-scene="'+key+'"]');if(input)input.value=Array.isArray(item)?item.join(key==='labels'?'\n':', '):item}
+  row.querySelector('[data-remove-scene]').onclick=()=>row.remove();$('scene-elements').append(row);
+}
+function addSceneConnection(value={}){
+  value={source:'',target:'',label:'',tone:'neutral',...value};const row=document.createElement('fieldset');row.className='scene-item scene-edge';
+  row.innerHTML='<div class="row"><label>Da ID<input data-edge="source" maxlength="32" required></label><label>A ID<input data-edge="target" maxlength="32" required></label>'+
+    '<label>Tono<select data-edge="tone">'+options(tones,value.tone)+'</select></label></div>'+
+    '<label>Significato della relazione<input data-edge="label" maxlength="34"></label><button type="button" class="quiet danger" data-remove-edge>Rimuovi relazione</button>';
+  for(const [key,item]of Object.entries(value)){const input=row.querySelector('[data-edge="'+key+'"]');if(input)input.value=item}
+  row.querySelector('[data-remove-edge]').onclick=()=>row.remove();$('scene-connections').append(row);
+}
+function fillSceneEditor(scene){
+  $('scene-elements').replaceChildren();$('scene-connections').replaceChildren();
+  $('scene-title').value=scene?.title||'';$('scene-takeaway').value=scene?.takeaway||'';
+  for(const element of scene?.elements||[])addSceneElement(element);
+  for(const edge of scene?.connections||[])addSceneConnection(edge);
+}
+function showSceneEditor(){
+  const manim=$('edit-diagram-kind').value==='manim';
+  $('scene-editor').hidden=!manim;$('legacy-diagram-labels').hidden=manim||$('edit-diagram-kind').value==='none';
+}
+function sceneFromEditor(){
+  const elements=[...$('scene-elements').children].map(row=>{
+    const item=Object.fromEntries([...row.querySelectorAll('[data-scene]')].map(input=>[input.dataset.scene,input.value.trim()]));
+    for(const key of ['x','y','width','height','stage','columns'])item[key]=Number(item[key]);
+    item.values=item.values.split(/[\s,;]+/).filter(Boolean).map(Number);
+    item.labels=item.labels.split('\n').map(value=>value.trim()).filter(Boolean);
+    return item;
+  });
+  const connections=[...$('scene-connections').children].map(row=>
+    Object.fromEntries([...row.querySelectorAll('[data-edge]')].map(input=>[input.dataset.edge,input.value.trim()])));
+  return {title:$('scene-title').value.trim(),takeaway:$('scene-takeaway').value.trim(),elements,connections};
+}
+$('edit-diagram-kind').onchange=showSceneEditor;
+$('add-scene-element').onclick=()=>addSceneElement();
+$('add-scene-connection').onclick=()=>addSceneConnection();
 function addBlockEditor(block={heading:'',text:'',kind:'explanation',source:''}){
   if($('edit-blocks').children.length>=4){toast('Massimo 4 box per slide');return}
   const row=document.createElement('fieldset');row.className='block-editor';
@@ -345,8 +434,10 @@ $('edit-form').onsubmit=async e=>{
   content.blocks=[...$('edit-blocks').children].map(row=>Object.fromEntries(
     [...row.querySelectorAll('[data-block]')].map(field=>[field.dataset.block,field.value.trim()])));
   content.sources=$('edit-sources').value.split('\n').map(s=>s.trim()).filter(Boolean);content.image_id=$('edit-image').value;
-  content.diagram={kind:$('edit-diagram-kind').value,labels:$('edit-diagram-labels').value.split('\n').map(s=>s.trim()).filter(Boolean)};
-  if(content.diagram.kind==='none')content.diagram.labels=[];
+  const kind=$('edit-diagram-kind').value;
+  content.diagram={kind,labels:$('edit-diagram-labels').value.split('\n').map(s=>s.trim()).filter(Boolean),
+    brief:$('edit-diagram-brief').value.trim(),scene:kind==='manim'?sceneFromEditor():null};
+  if(kind==='none'){content.diagram.labels=[];content.diagram.brief=''}
   try{
     const updated=await api('/api/projects/'+current.id+'/slides/'+editing.id,'PATCH',{revision:editing.revision,content});
     current.slides[current.slides.findIndex(s=>s.id===updated.id)]=updated;$('editor').close();render();toast('Slide salvata');
@@ -361,6 +452,8 @@ $('slides').onclick=e=>{
   const id=button.closest('.slide-card').dataset.id,index=current.slides.findIndex(s=>s.id===id);
   if(button.dataset.action==='edit')editSlide(id);
   if(button.dataset.action==='regenerate')generate(id);
+  if(button.dataset.action==='diagram')generate(id,true);
+  if(button.dataset.action==='render')rerenderDiagram(id).catch(error=>toast(error.message));
   if(button.dataset.action==='recompose')changeLayout(id,'content',true).catch(e=>toast(e.message));
   if(button.dataset.action==='split')splitSlide(id).catch(e=>toast(e.message));
   if(button.dataset.action==='up')move(id,index-1).catch(e=>toast(e.message));
@@ -486,20 +579,24 @@ async function loadAdmin(){
   })().catch(error=>{$('admin-status').textContent=error.message}).finally(()=>{adminLoading=null});
   return adminLoading;
 }
-function navigatePage(admin,push=true){
-  $('admin').hidden=!admin;$('create-page').hidden=admin;
+function navigatePage(page,push=true){
+  if(typeof page==='boolean')page=page?'admin':'create';
+  const admin=page==='admin',library=page==='library';
+  $('admin').hidden=!admin;$('library').hidden=!library;$('create-page').hidden=admin||library;
   $('open-admin').setAttribute('aria-current',admin?'page':'false');
-  $('open-create').setAttribute('aria-current',admin?'false':'page');
-  document.title=admin?'Admin · H3-slides':'H3-slides · Studio';
-  const path=admin?'/admin':'/';
+  $('open-library').setAttribute('aria-current',library?'page':'false');
+  $('open-create').setAttribute('aria-current',!admin&&!library?'page':'false');
+  document.title=admin?'Admin · H3-slides':library?'Progetti · H3-slides':'H3-slides · Studio';
+  const path=admin?'/admin':library?'/library':'/';
   if(push&&location.pathname!==path)history.pushState({},'',path+location.search);
-  if(admin)loadAdmin();else{render();requestAnimationFrame(()=>window.dispatchEvent(new Event('resize')))}
+  if(admin)loadAdmin();else if(library){loadProjects()}else{render();requestAnimationFrame(()=>window.dispatchEvent(new Event('resize')))}
 }
-$('open-admin').onclick=()=>navigatePage(true);
-$('configure-model').onclick=()=>navigatePage(true);
-$('open-create').onclick=$('close-admin').onclick=()=>navigatePage(false);
-document.querySelector('.brand').onclick=event=>{event.preventDefault();navigatePage(false)};
-window.addEventListener('popstate',()=>navigatePage(location.pathname.replace(/\/$/,'')==='/admin',false));
+$('open-admin').onclick=()=>navigatePage('admin');
+$('open-library').onclick=()=>navigatePage('library');
+$('configure-model').onclick=()=>navigatePage('admin');
+$('open-create').onclick=$('close-admin').onclick=()=>navigatePage('create');
+document.querySelector('.brand').onclick=event=>{event.preventDefault();navigatePage('create')};
+window.addEventListener('popstate',()=>navigatePage(location.pathname.replace(/\/$/,'')==='/admin'?'admin':location.pathname.replace(/\/$/,'')==='/library'?'library':'create',false));
 $('admin-form').addEventListener('input',event=>{
   if(event.target.dataset.setting){adminDirty=true;$('admin-status').textContent='Profilo modificato · premi Salva profilo prima di generare.'}
 });
@@ -508,7 +605,7 @@ $('admin-model').onchange=()=>{
   if(adminDirty&&!confirm('Scartare le modifiche non salvate a questo profilo?')){$('admin-model').value=$('admin-model').dataset.previous;return}
   fillAdmin();
 };
-navigatePage(location.pathname.replace(/\/$/,'')==='/admin',false);
+navigatePage(location.pathname.replace(/\/$/,'')==='/admin'?'admin':location.pathname.replace(/\/$/,'')==='/library'?'library':'create',false);
 async function saveAdmin(){
   const profile={model:$('admin-model').value,loading:{},inference:{}};
   for(const input of $('admin').querySelectorAll('[data-setting]')){

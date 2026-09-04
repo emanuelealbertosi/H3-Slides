@@ -1,4 +1,3 @@
-import {diagramSVG} from './diagram.mjs';
 import {layoutCandidates,composerCSS} from './composer.mjs';
 export {layouts,layoutCandidates,fitSlide} from './composer.mjs';
 export const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -23,12 +22,14 @@ export function themeFor(project){
   const accent=/^#[a-f0-9]{6}$/i.test(project.accent_color)?project.accent_color:base.accent;
   return {bg,fg,heading:validColor(d.title_color)?d.title_color:fg,accent,muted:mix(bg,fg,.7),surface:mix(bg,fg,.065),line:mix(bg,fg,.18)};
 }
-export function visualFor(project,content){
-  const diagram=Boolean(project.use_manim_diagrams&&content.diagram?.kind!=='none'&&content.diagram?.labels?.length>=2);
-  return {diagram,image:!diagram&&project.use_source_images!==false?(content.image_id||''):''};
+export function visualFor(project,content,slide=null){
+  const asset=project.use_manim_diagrams&&content.diagram?.kind!=='none'&&slide?.diagram_render?.engine==='manim'
+    ?slide.diagram_render.asset:'';
+  const diagram=Boolean(asset);
+  return {diagram,image:asset||(!diagram&&project.use_source_images!==false?(content.image_id||''):'')};
 }
-export function templateFor(project,content,index=0){
-  const visual=visualFor(project,content);
+export function templateFor(project,content,index=0,slide=null){
+  const visual=visualFor(project,content,slide);
   return layoutCandidates(project,content,index,Boolean(visual.diagram||visual.image))[0];
 }
 export function blockColors(project,block,index=0){
@@ -44,7 +45,7 @@ export function contentBlocks(content){return content.blocks||[]}
 export const slideCSS = '*{box-sizing:border-box}.slide-frame{width:1280px;height:720px;position:relative;overflow:hidden;font-family:var(--font,Arial),sans-serif;background:var(--bg);color:var(--fg);display:flex;flex-direction:column}.slide-frame .heading{flex:none}.slide-frame h1{color:var(--heading)}.slide-frame .slide-columns{display:flex}.slide-frame .footer{position:absolute;display:flex;justify-content:space-between;gap:20px;color:var(--muted);border-top:1px solid var(--line)}.slide-frame .footer span:first-child{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}' + composerCSS;
 
 export function slideHTML(project,slide,index,imageUrl=''){
-  const c=slide.content,t=themeFor(project),visual=visualFor(project,c),template=templateFor(project,c,index);
+  const c=slide.content,t=themeFor(project),visual=visualFor(project,c,slide),template=templateFor(project,c,index,slide);
   const candidates=layoutCandidates(project,c,index,Boolean(visual.diagram||visual.image));
   const font=['Arial','Calibri','Segoe UI','Georgia','Verdana','Consolas'].includes(project.font)?project.font:'Arial';
   const d=project.theme_design||{},card=blockColors(project,{kind:'explanation'});
@@ -72,7 +73,7 @@ export function slideHTML(project,slide,index,imageUrl=''){
     '<div class="slide-columns"><div class="copy">'+(blocks.length?
       '<div class="prose-grid count-'+blocks.length+'">'+blocks.map(box).join('')+'</div>':
       '<ul>'+(c.bullets||[]).map(point).join('')+'</ul>')+'</div>'+
-    (visual.diagram?'<div class="visual diagram">'+diagramSVG(c.diagram,t)+'</div>':
-      visual.image&&imageUrl?'<img class="visual" src="'+esc(imageUrl)+'" alt="">':'')+'</div>'+
+    (visual.image&&imageUrl?'<img class="visual'+(visual.diagram?' diagram-render':'')+'" src="'+esc(imageUrl)+'" alt="'+
+      (visual.diagram?'Diagramma renderizzato con Manim':'')+'">':'')+'</div>'+
     '<div class="footer"><span>'+esc(project.title)+'</span><span>'+String(index+1).padStart(2,'0')+'</span></div></article>';
 }

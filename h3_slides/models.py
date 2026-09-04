@@ -3,16 +3,19 @@ from pydantic import BaseModel, Field, ConfigDict, model_validator, field_valida
 from typing import Annotated
 from .themes import ThemeDesign
 from .runtime_settings import RemoteInferenceSettings
+from .diagram_spec import ManimSceneSpec
 
 
 class DiagramSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    kind: Literal["none", "flow", "cycle", "comparison"] = "none"
+    kind: Literal["none", "manim", "flow", "cycle", "comparison"] = "none"
     labels: list[Annotated[str, Field(min_length=1, max_length=55)]] = Field(default_factory=list, max_length=5)
+    brief: str = Field(default="", max_length=400)
+    scene: ManimSceneSpec | None = None
 
     @model_validator(mode="after")
     def valid_nodes(self):
-        if self.kind != "none" and len(self.labels) < 2:
+        if self.kind in ("flow", "cycle", "comparison") and len(self.labels) < 2:
             raise ValueError("Un diagramma richiede da 2 a 5 etichette")
         return self
 
@@ -63,8 +66,15 @@ class Generation(BaseModel):
     prompt: str = Field(min_length=1, max_length=12000)
     count: int = Field(default=6, ge=1, le=30)
     slide_id: str | None = None
+    diagram_only: bool = False
     web_consent: bool = False
     web_refresh: bool = False
+
+    @model_validator(mode="after")
+    def diagram_target(self):
+        if self.diagram_only and not self.slide_id:
+            raise ValueError("La progettazione del diagramma richiede una slide esistente")
+        return self
 
     @field_validator("prompt")
     @classmethod

@@ -10,6 +10,13 @@ try{
   await page.locator('#project-list option[value="'+pid+'"]').waitFor({state:'attached'});
   await page.locator('#project-list').selectOption(pid);
   await page.locator('.slide-card').waitFor();
+  await page.locator('#open-library').click();
+  await page.locator('#library').waitFor();
+  assert.equal(new URL(page.url()).pathname,'/library');
+  assert.equal(await page.locator('.project-card[data-project="'+pid+'"]').count(),1);
+  await page.locator('.project-card[data-project="'+pid+'"] button').click();
+  await page.locator('.slide-card').waitFor();
+  assert.equal(new URL(page.url()).pathname,'/');
   await page.getByRole('button',{name:'Modifica',exact:true}).click();
   await page.locator('#edit-title').fill('Modifica verificata nel browser');
   await page.getByRole('button',{name:'Salva modifica',exact:true}).click();

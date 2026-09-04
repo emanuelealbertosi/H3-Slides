@@ -2,12 +2,18 @@
 <html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>H3-slides · Studio</title><link rel="stylesheet" href="/static/style.css"></head>
 <body>
-<header><a class="brand" href="/">H3<span>slides</span><small>STUDIO</small></a>
-<nav><button id="open-create" class="quiet">Crea</button><button id="new" class="quiet">＋ Nuovo progetto</button><select id="project-list" aria-label="Progetti salvati"><option value="">I tuoi progetti</option></select></nav>
-<button id="open-admin" class="quiet">Admin · Modelli</button><span id="connection" class="muted">Connessione…</span></header>
+<header class="studio-sidebar"><a class="brand" href="/">H3<span>slides</span><small>STUDIO</small></a>
+<nav aria-label="Navigazione principale">
+  <button id="open-create" class="nav-item" type="button"><span>◇</span>Crea</button>
+  <button id="open-library" class="nav-item" type="button"><span>▤</span>Progetti</button>
+  <button id="open-admin" class="nav-item" type="button"><span>⚙</span>Admin · LLM</button>
+</nav>
+<div class="sidebar-status"><i></i><span id="connection">Connessione…</span><small>Dati e file restano sul tuo PC</small></div></header>
 <main id="create-page">
 <aside class="settings">
   <div class="eyebrow">01 / IL TUO BRIEF</div><h2>Da un’idea o un documento<br>alla presentazione.</h2>
+  <div class="project-switcher"><label>Progetto aperto<select id="project-list" aria-label="Progetti salvati"><option value="">Nuovo progetto</option></select></label>
+  <button id="new" class="quiet" type="button">＋ Nuovo progetto</button></div>
   <label>Titolo<input id="title" value="Nuova presentazione" maxlength="140"></label>
   <label>Argomento o istruzioni<textarea id="prompt" rows="5" placeholder="Es. La rivoluzione francese. Puoi aggiungere pubblico, obiettivo e tono, oppure istruzioni sui documenti allegati."></textarea></label>
   <p id="source-mode" class="muted hint">Nessun allegato: genera dalla conoscenza del modello. Nessuna ricerca web; verifica fatti e date importanti.</p>
@@ -50,8 +56,8 @@
   </details>
   <details class="model-panel" open><summary>Materiale visivo</summary>
   <label class="check"><input id="source-images" type="checkbox" checked>Usa immagini del libro/documento</label>
-  <label class="check"><input id="manim-diagrams" type="checkbox">Integra diagrammi animabili con Manim</label>
-  <small>Salva il brief per applicare le opzioni anche alle slide esistenti. I riferimenti restano conservati.<br>Flussi, cicli e confronti: anteprima rapida, animati nell’export Manim, statici in PPTX/PDF. Il diagramma ha priorità sulla figura quando presenti entrambi.</small>
+  <label class="check"><input id="manim-diagrams" type="checkbox">Progetta e renderizza veri diagrammi con Manim</label>
+  <small>Un passaggio LLM dedicato progetta oggetti, dati, relazioni e disposizione; Manim costruisce la scena a 1800 × 1200 e ne verifica leggibilità e ingombri. Funziona con il modello locale o API scelto in Admin. Non viene eseguito codice prodotto dal modello.</small>
   </details>
   <button id="generate" class="primary">Genera presentazione <span>→</span></button>
   <p class="muted hint">Le slide compaiono una alla volta. Puoi modificarle senza aspettare la fine.</p>
@@ -70,6 +76,10 @@
   <p class="muted hint">Ogni slide ha una composizione preferita e Ricomponi cambia il layout senza usare l’LLM. Se necessario il motore adatta la disposizione allo spazio. Formato 16:9 per proiezione e PowerPoint. PPTX: testi modificabili. PDF e Slidev: stessa impaginazione. Manim video: preset animato separato.</p>
 </section>
 </main>
+<main id="library" hidden aria-labelledby="library-title">
+  <div class="page-head"><div><div class="eyebrow">ARCHIVIO LOCALE</div><h1 id="library-title">I tuoi progetti</h1><p class="muted">Apri una presentazione per modificarla, rigenerare singole slide o esportarla.</p></div><button id="library-new" class="primary compact" type="button">＋ Nuovo progetto</button></div>
+  <div id="library-grid" class="library-grid"></div>
+</main>
 <dialog id="editor"><form id="edit-form"><div class="editor-head"><h2>Modifica slide</h2><button type="button" id="close-editor" class="quiet">Chiudi</button></div>
 <label>Titolo<input id="edit-title" maxlength="110" required></label><label>Sottotitolo<textarea id="edit-subtitle" maxlength="220" rows="2"></textarea></label>
 <label>Contenuto · un punto per riga, massimo 5<textarea id="edit-bullets" rows="6"></textarea></label>
@@ -77,8 +87,15 @@
 <div class="row"><label>Layout<select id="edit-layout"><option value="cover">Copertina</option><option value="content">Contenuto</option><option value="split">Testo + immagine</option><option value="statement">Messaggio</option></select></label>
 <label>Animazione Manim<select id="edit-animation"><option value="none">Una pausa per slide</option><option value="reveal">Una pausa per punto</option></select></label></div>
 <label>Immagine dalla fonte<select id="edit-image"></select></label>
-<label>Diagramma Manim<select id="edit-diagram-kind"><option value="none">Nessuno</option><option value="flow">Flusso / sequenza</option><option value="cycle">Ciclo</option><option value="comparison">Confronto</option></select></label>
-<label>Elementi del diagramma · uno per riga, da 2 a 5<textarea id="edit-diagram-labels" rows="4" placeholder="Sorgente .py&#10;Bytecode&#10;Macchina virtuale"></textarea></label>
+<label>Diagramma<select id="edit-diagram-kind"><option value="none">Nessuno</option><option value="manim">Scena Manim progettata</option><option value="flow">Vecchio flusso · da riprogettare</option><option value="cycle">Vecchio ciclo · da riprogettare</option><option value="comparison">Vecchio confronto · da riprogettare</option></select></label>
+<label>Cosa deve spiegare<textarea id="edit-diagram-brief" rows="3" maxlength="400"></textarea></label>
+<div id="scene-editor" hidden>
+  <div class="row"><label>Titolo interno<input id="scene-title" maxlength="75"></label><label>Conclusione<input id="scene-takeaway" maxlength="130"></label></div>
+  <h3>Oggetti Manim</h3><div id="scene-elements"></div><button id="add-scene-element" type="button" class="secondary">＋ Oggetto</button>
+  <h3>Relazioni</h3><div id="scene-connections"></div><button id="add-scene-connection" type="button" class="secondary">＋ Relazione</button>
+  <p class="hint muted">Canvas 12 × 8. x cresce verso destra, y verso il basso; width e height sono l’ingombro. Salvando, Manim renderizza di nuovo e rifiuta testi, geometrie o collegamenti non validi.</p>
+</div>
+<label id="legacy-diagram-labels">Vecchie etichette · sola compatibilità<textarea id="edit-diagram-labels" rows="4"></textarea></label>
 <label>Note del relatore<textarea id="edit-notes" rows="4"></textarea></label>
 <label>Fonti · una per riga<textarea id="edit-sources" rows="2"></textarea></label>
 <p class="muted">La tua modifica è protetta anche se l'LLM sta lavorando su questa slide.</p>

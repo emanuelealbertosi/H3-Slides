@@ -224,7 +224,11 @@ def create_app(root=None, data_root=None):
         p = store.project(request.match_info["pid"])
         if request.method == "PATCH":
             values = ProjectInput.model_validate(await request.json()).model_dump(exclude_unset=True)
+            old_style = tuple(p.get(k) for k in ("theme", "font", "background_color", "accent_color"))
             p.update(values)
+            if old_style != tuple(p.get(k) for k in ("theme", "font", "background_color", "accent_color")):
+                for slide in p["slides"]:
+                    slide.pop("diagram_render", None)
             p["revision"] += 1
             store.save_project(p)
         return web.json_response(public_project(p))
@@ -265,7 +269,20 @@ def create_app(root=None, data_root=None):
             raise ValueError("Immagine non appartenente a questo progetto")
         if any(len(point) > 160 for point in edit.content.bullets):
             raise ValueError("Massimo 160 caratteri per punto")
+        rendered = None
+        if edit.content.diagram.kind == "manim":
+            rendered = await worker.renderer.render(p["id"], edit.content.diagram.model_dump(), p)
+            # Recheck after rendering: an edit made meanwhile must win.
+            p = store.project(request.match_info["pid"])
+            item = next((s for s in p["slides"] if s["id"] == request.match_info["sid"]), None)
+            if item is None or item["revision"] != edit.revision:
+                return web.json_response({"error": "Slide aggiornata durante il rendering: ricarica prima di salvare",
+                                          "slide": item}, status=409)
         item.update(content=edit.content.model_dump(), revision=item["revision"] + 1, status="ready")
+        if rendered:
+            item["diagram_render"] = rendered
+        elif edit.content.diagram.kind != "manim":
+            item.pop("diagram_render", None)
         store.save_project(p)
         return web.json_response(item)
 
@@ -346,23 +363,34 @@ def create_app(root=None, data_root=None):
             output = root / "outputs" / p["id"] / eid
             output.mkdir(parents=True)
             snapshot = output / "project.json"
-            snapshot.write_text(json.dumps(p, ensure_ascii=False, indent=2), encoding="utf-8")
             assets = store.root / "assets" / p["id"]
             env = dict(os.environ, PLAYWRIGHT_BROWSERS_PATH=str(root / "runtime" / "browsers"),
                        H3_SLIDES_SNAPSHOT=str(snapshot), H3_SLIDES_ASSETS=str(assets))
             if fmt in ("pptx", "pdf"):
+                for slide in p["slides"]:
+                    diagram = slide["content"].get("diagram", {})
+                    if p.get("use_manim_diagrams") and diagram.get("kind") != "none":
+                        slide["diagram_render"] = await worker.renderer.render(p["id"], diagram, p)
+                snapshot.write_text(json.dumps(p, ensure_ascii=False, indent=2), encoding="utf-8")
                 await run_child(app, [root / "runtime/node/node.exe", root / "scripts/export.mjs",
                                      snapshot, assets, output, fmt], root, output / "export.log", env)
                 filename = "presentazione." + fmt
             elif fmt == "slidev":
+                for slide in p["slides"]:
+                    diagram = slide["content"].get("diagram", {})
+                    if p.get("use_manim_diagrams") and diagram.get("kind") != "none":
+                        slide["diagram_render"] = await worker.renderer.render(p["id"], diagram, p)
                 write_slidev(p, assets, output, strict=True)
                 filename = "slidev.zip"
                 with zipfile.ZipFile(output / filename, "w", zipfile.ZIP_DEFLATED) as archive:
                     archive.write(output / "slides.md", "slides.md")
                     archive.write(output / "style.css", "style.css")
-                    for image in (output / "assets").glob("*.jpg"):
+                    for image in (output / "assets").glob("*"):
+                        if image.suffix.lower() not in (".jpg", ".png"):
+                            continue
                         archive.write(image, "assets/" + image.name)
             else:
+                snapshot.write_text(json.dumps(p, ensure_ascii=False, indent=2), encoding="utf-8")
                 await run_child(app, [sys.executable, "-m", "manim", "-ql", "--disable_caching",
                                      str(root / "scripts/manim_deck.py"), "H3Deck"], output,
                                      output / "manim.log", env)
@@ -416,6 +444,8 @@ def create_app(root=None, data_root=None):
         store.db.close()
 
     app.router.add_get("/", index)
+    app.router.add_get("/library", index)
+    app.router.add_get("/library/", index)
     app.router.add_get("/admin", index)
     app.router.add_get("/admin/", index)
     app.router.add_get("/api/health", health)

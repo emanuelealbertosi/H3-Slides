@@ -26,11 +26,16 @@ test('old prose can change layout; recomposition is stable and preserves input',
 
 test('all twelve compositions fit and native exports use the same measured layouts',async()=>{
   const browser=await chromium.launch();
+  const manimAsset='manim-'+'0'.repeat(64)+'.png';
   const project={title:'Verifica composer',theme:'paper',font:'Segoe UI',template:'auto',text_density:'detailed',use_manim_diagrams:true,slides:[]};
   for(const layout of Object.keys(layouts)){
     const c=make(layout,layout==='cover'?1:layout==='cards'||layout==='timeline'?3:2);
-    if(layout.startsWith('visual-'))c.diagram={kind:'comparison',labels:['Sorgente','Risultato']};
-    project.slides.push({content:c});
+    const slide={content:c};
+    if(layout.startsWith('visual-')){
+      c.diagram={kind:'manim',labels:[],brief:'Sorgente e risultato',scene:{}};
+      slide.diagram_render={engine:'manim',asset:manimAsset};
+    }
+    project.slides.push(slide);
   }
   try{
     const page=await browser.newPage({viewport:{width:1280,height:720}});
@@ -50,6 +55,7 @@ test('all twelve compositions fit and native exports use the same measured layou
     const scaled=await measureLayouts(page);
     assert.deepEqual(scaled.map(m=>[m.layout,m.overflow]),measured.map(m=>[m.layout,m.overflow]));
     const out=await fs.mkdtemp(path.join(os.tmpdir(),'h3-adaptive-export-'));
+    await fs.writeFile(path.join(out,manimAsset),Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XMG8WQAAAABJRU5ErkJggg==','base64'));
     for(const format of ['pdf','pptx']){
       await buildExports(project,out,path.join(out,format),format);
       const report=JSON.parse(await fs.readFile(path.join(out,format,'layout-report.json'),'utf8'));
