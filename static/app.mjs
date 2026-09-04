@@ -336,7 +336,7 @@ function render(){
   for(const card of [...container.children])if(!ids.has(card.dataset.id))card.remove();
   document.querySelectorAll('[data-export]').forEach(b=>b.disabled=!current?.slides.length||exporting.has(b.dataset.export));
   $('regenerate-all').disabled=!current?.slides.length||busy;
-  const missingDiagrams=(current?.slides||[]).slice(1).filter(slide=>slide.status==='ready'&&!slide.diagram_render?.asset).length;
+  const missingDiagrams=(current?.slides||[]).filter(slide=>slide.content?.layout!=='cover'&&slide.status==='ready'&&!slide.diagram_render?.asset).length;
   $('generate-missing-diagrams').hidden=!current?.use_manim_diagrams;
   $('generate-missing-diagrams').disabled=!missingDiagrams||busy;
   $('generate-missing-diagrams').textContent='◇ Crea diagrammi mancanti'+(missingDiagrams?' · '+missingDiagrams:'');

@@ -36,17 +36,28 @@ def build_scene(value, project):
     font = project.get("font", "Arial")
     if font not in ("Arial", "Calibri", "Segoe UI", "Georgia", "Verdana", "Consolas"):
         font = "Arial"
-    texts = []
+    texts, shortened_texts = [], 0
 
     def copy(value, width, height, size=30, minimum=22, bold=False):
-        for candidate in range(size, minimum-1, -2):
-            wrap = max(4, int(width/(candidate/150)))
-            wrapped = "\n".join(textwrap.fill(line, width=wrap, break_long_words=False) for line in value.splitlines())
-            label = Text(wrapped, font=font, font_size=candidate, weight="BOLD" if bold else "NORMAL",
-                         color=colors["fg"], line_spacing=.65)
-            if label.width <= width and label.height <= height:
-                texts.append((label, candidate))
-                return label
+        nonlocal shortened_texts
+        source = " ".join(value.split())
+        limits = [len(source), 60, 48, 36, 28, 22, 16, 12, 8, 5, 2]
+        tried = set()
+        for limit in limits:
+            if limit in tried or limit > len(source):
+                continue
+            tried.add(limit)
+            candidate_text = source if limit == len(source) else _shorten_for_render(source, limit)
+            for candidate in range(size, minimum-1, -2):
+                wrap = max(4, int(width/(candidate/150)))
+                wrapped = "\n".join(textwrap.fill(line, width=wrap, break_long_words=False)
+                                    for line in candidate_text.splitlines())
+                label = Text(wrapped, font=font, font_size=candidate, weight="BOLD" if bold else "NORMAL",
+                             color=colors["fg"], line_spacing=.65)
+                if label.width <= width and label.height <= height:
+                    texts.append((label, candidate))
+                    shortened_texts += candidate_text != source
+                    return label
         raise ValueError("Testo non leggibile nello spazio assegnato: abbrevia le etichette o ingrandisci gli elementi")
 
     title = copy(spec.title, 11.1, .65, size=36, minimum=28, bold=True).move_to(point(6, .43))
@@ -194,5 +205,15 @@ def build_scene(value, project):
             raise ValueError("Testo fuori dal canvas Manim")
     report = {"engine": "manim", "elements": len(objects), "connections": len(links),
               "min_font_size": min(size for _, size in texts), "text_count": len(texts),
-              "bounds_checked": True, "types": sorted({e.type for e in spec.elements})}
+              "shortened_texts": shortened_texts, "bounds_checked": True,
+              "types": sorted({e.type for e in spec.elements})}
     return root, header, footer, stages, report
+
+
+def _shorten_for_render(value, limit):
+    if len(value) <= limit:
+        return value
+    prefix = value[:limit-1].rstrip()
+    if " " in prefix and len(prefix.rsplit(" ", 1)[0]) >= max(2, limit//2):
+        prefix = prefix.rsplit(" ", 1)[0]
+    return prefix.rstrip(" ,;:-") + "…"

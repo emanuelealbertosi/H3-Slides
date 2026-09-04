@@ -16,11 +16,80 @@ RENDER_VERSION = 1
 STYLE_KEYS = ("theme", "font", "background_color", "accent_color")
 
 
+def _shorten(value, limit):
+    if not isinstance(value, str):
+        return value
+    value = " ".join(value.split())
+    if len(value) <= limit:
+        return value
+    prefix = value[:limit-1].rstrip()
+    if " " in prefix and len(prefix.rsplit(" ", 1)[0]) >= max(4, limit//2):
+        prefix = prefix.rsplit(" ", 1)[0]
+    return prefix.rstrip(" ,;:-") + "…"
+
+
 def normalize_scene_geometry(value):
-    """Repair harmless numeric canvas drift without changing scene semantics."""
+    """Repair common bounded model mistakes before strict validation/rendering."""
     if not isinstance(value, dict) or not isinstance(value.get("elements"), list):
         return value, False
     result, changed = copy.deepcopy(value), False
+    for key, limit in (("title", 75), ("takeaway", 130)):
+        repaired = _shorten(result.get(key), limit)
+        if repaired != result.get(key):
+            result[key], changed = repaired, True
+    for element in result["elements"]:
+        if not isinstance(element, dict):
+            continue
+        for key in ("x", "y", "width", "height"):
+            raw = element.get(key)
+            if isinstance(raw, str):
+                try:
+                    element[key], changed = float(raw.replace(",", ".")), True
+                except ValueError:
+                    pass
+        for key in ("stage", "columns"):
+            raw = element.get(key)
+            if isinstance(raw, str):
+                try:
+                    number = float(raw.replace(",", "."))
+                    if number.is_integer():
+                        element[key], changed = int(number), True
+                except ValueError:
+                    pass
+        if isinstance(element.get("values"), list):
+            repaired_values = []
+            for raw in element["values"]:
+                if isinstance(raw, str):
+                    try:
+                        raw, changed = float(raw.replace(",", ".")), True
+                    except ValueError:
+                        pass
+                repaired_values.append(raw)
+            element["values"] = repaired_values
+        for key, limit in (("text", 48), ("caption", 36)):
+            repaired = _shorten(element.get(key), limit)
+            if repaired != element.get(key):
+                element[key], changed = repaired, True
+        if isinstance(element.get("labels"), list):
+            repaired = [_shorten(label, 18) for label in element["labels"]]
+            if repaired != element["labels"]:
+                element["labels"], changed = repaired, True
+        kind = element.get("type")
+        if kind not in ("grid", "bars", "plot"):
+            minimum_width = 2.0
+            minimum_height = 1.6 if kind in ("decision", "circle") and element.get("caption") else (
+                1.3 if element.get("caption") else .9)
+            if isinstance(element.get("width"), (int, float)) and element["width"] < minimum_width:
+                element["width"], changed = minimum_width, True
+            if isinstance(element.get("height"), (int, float)) and element["height"] < minimum_height:
+                element["height"], changed = minimum_height, True
+    if isinstance(result.get("connections"), list):
+        for edge in result["connections"]:
+            if not isinstance(edge, dict):
+                continue
+            repaired = _shorten(edge.get("label"), 24)
+            if repaired != edge.get("label"):
+                edge["label"], changed = repaired, True
     for element in result["elements"]:
         if not isinstance(element, dict):
             continue
@@ -75,6 +144,35 @@ def normalize_scene_geometry(value):
                 x, y, changed = found[0], found[1], True
         placed.append({"x":x, "y":y, "width":width, "height":height})
     return result, changed
+
+
+def fallback_diagram(content, previous=None):
+    """Build a conservative real Manim scene from the slide's approved text."""
+    previous = previous or {}
+    candidates = list(previous.get("labels") or [])
+    if len(candidates) < 2:
+        candidates.extend(block.heading for block in content.blocks if block.heading)
+        candidates.extend(content.bullets)
+    if len(candidates) < 2:
+        candidates.extend(block.text.split(".", 1)[0] for block in content.blocks if block.text)
+    labels = []
+    for candidate in candidates:
+        label = _shorten(candidate, 28)
+        if isinstance(label, str) and label and label not in labels:
+            labels.append(label)
+        if len(labels) == 5:
+            break
+    if len(labels) < 2:
+        labels = [_shorten(content.title, 28), _shorten(content.subtitle or content.diagram.brief or "Concetto chiave", 28)]
+    kind = previous.get("kind")
+    if kind not in ("flow", "cycle", "comparison"):
+        kind = "flow"
+    scene = legacy_scene({"kind": kind, "labels": labels})
+    scene.title = _shorten(content.title, 75)
+    takeaway = content.subtitle or (content.blocks[0].text.split(".", 1)[0] if content.blocks else "")
+    scene.takeaway = _shorten(takeaway, 110)
+    return {"kind": "manim", "labels": [], "brief": content.diagram.brief,
+            "scene": scene.model_dump()}
 
 
 def scene_for(diagram):
@@ -162,7 +260,7 @@ async def design_diagram(client, renderer, pid, project, content, context, instr
         result = await client.json(prompt + correction, schema=ManimSceneSpec.model_json_schema())
         candidate, repaired = normalize_scene_geometry(result)
         if repaired:
-            event("Manim · ingombri riportati automaticamente entro il canvas")
+            event("Manim · testo, numeri e ingombri normalizzati automaticamente")
         try:
             scene = ManimSceneSpec.model_validate(candidate)
             diagram = {"kind": "manim", "labels": [], "brief": content.diagram.brief, "scene": scene.model_dump()}

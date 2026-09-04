@@ -4,7 +4,7 @@ from PIL import Image
 import pytest
 from h3_slides.diagram_layout import route_connection
 from h3_slides.diagram_spec import Element, ManimSceneSpec
-from h3_slides.diagrams import ManimRenderer, normalize_scene_geometry
+from h3_slides.diagrams import ManimRenderer, fallback_diagram, normalize_scene_geometry
 from h3_slides.models import Generation, ProjectInput, SlideContent
 from h3_slides.storage import Store
 from h3_slides.worker import Worker, normalize_slide_candidate
@@ -70,6 +70,21 @@ def test_overlapping_model_elements_are_repositioned_deterministically():
     assert scene.elements[0].text == "Dati grezzi"
     assert scene.elements[1].text == "Elaborazione"
     assert (scene.elements[1].x, scene.elements[1].y) != (scene.elements[0].x, scene.elements[0].y)
+
+
+def test_common_remote_scene_type_and_length_errors_are_repaired():
+    value = sample_scene()
+    value["title"], value["takeaway"] = "Titolo " * 30, "Conclusione " * 30
+    value["elements"][0].update(x="1,7", y="2.3", width="2.6", height="1.3",
+                                text="Una etichetta inutilmente prolissa " * 5)
+    value["elements"][3]["values"] = [str(number) for number in value["elements"][3]["values"]]
+    repaired, changed = normalize_scene_geometry(value)
+    scene = ManimSceneSpec.model_validate(repaired)
+    assert changed is True
+    assert len(scene.title) <= 75 and len(scene.takeaway) <= 130
+    assert len(scene.elements[0].text) <= 48
+    assert isinstance(scene.elements[0].x, float)
+    assert all(isinstance(number, float) for number in scene.elements[3].values)
 
 
 def test_first_stage_cannot_inject_or_duplicate_a_manim_scene():
@@ -159,8 +174,8 @@ async def test_batch_creates_only_missing_diagrams_and_skips_cover(tmp_path):
                                         use_manim_diagrams=True).model_dump())
     project["slides"] = [
         {"id":f"slide-{index}","revision":1,"status":"ready","purpose":title,
-         "content":SlideContent(title=title, layout="cover" if index == 0 else "content").model_dump()}
-        for index, title in enumerate(("Copertina", "Ricerca lineare", "Bubble sort"))
+         "content":SlideContent(title=title, layout="cover" if index == 1 else "content").model_dump()}
+        for index, title in enumerate(("Introduzione", "Copertina", "Bubble sort"))
     ]
     store.save_project(project)
     calls = []
@@ -183,9 +198,37 @@ async def test_batch_creates_only_missing_diagrams_and_skips_cover(tmp_path):
     await worker.tasks[job["id"]]
     result = store.project(project["id"])
     assert store.job(job["id"])["status"] == "completed"
-    assert "diagram_render" not in result["slides"][0]
-    assert all(slide["diagram_render"]["engine"] == "manim" for slide in result["slides"][1:])
+    assert "diagram_render" not in result["slides"][1]
+    assert all(result["slides"][index]["diagram_render"]["engine"] == "manim" for index in (0, 2))
     assert len(calls) == 2
+    store.db.close()
+
+
+@pytest.mark.asyncio
+async def test_batch_is_failed_when_no_diagram_can_be_inserted(tmp_path):
+    store = Store(tmp_path / "batch-failed")
+    project = store.create(ProjectInput(prompt="Algoritmi", count=1,
+                                        use_manim_diagrams=True).model_dump())
+    project["slides"] = [{"id":"slide-1","revision":1,"status":"ready","purpose":"Ricerca",
+                          "content":SlideContent(title="Ricerca", layout="content").model_dump()}]
+    store.save_project(project)
+    class BrokenSceneLLM:
+        def __init__(self, *_): pass
+        async def prepare(self): pass
+        async def json(self, *_args, **_kwargs):
+            broken = sample_scene()
+            broken["elements"][1]["id"] = broken["elements"][0]["id"]
+            return broken
+    class BrokenRenderer:
+        async def render(self, *_args, **_kwargs):
+            raise ValueError("render indisponibile")
+    worker = Worker(store, SimpleNamespace())
+    worker.clients, worker.renderer = BrokenSceneLLM, BrokenRenderer()
+    job = worker.submit(project["id"], Generation(provider={"mode":"local","model":"fake"},
+                        prompt="Inserisci diagrammi", count=1, diagram_only=True))
+    await worker.tasks[job["id"]]
+    assert store.job(job["id"])["status"] == "failed"
+    assert "Nessun diagramma" in store.job(job["id"])["error"]
     store.db.close()
 
 
@@ -221,8 +264,24 @@ async def test_invalid_optional_diagram_does_not_abort_slide_generation(tmp_path
     result = store.project(project["id"])
     assert store.job(job["id"])["status"] == "completed"
     assert result["slides"][0]["content"]["title"] == "Ricerca aggiornata"
-    assert result["slides"][0]["content"]["diagram"]["kind"] == "none"
-    assert "diagram_render" not in result["slides"][0]
-    assert any("slide viene salvata senza diagramma" in event["message"]
+    assert result["slides"][0]["content"]["diagram"]["kind"] == "manim"
+    assert result["slides"][0]["diagram_render"]["engine"] == "manim"
+    assert any("uso una scena deterministica" in event["message"]
                for event in store.job(job["id"])["events"])
+    store.db.close()
+
+
+@pytest.mark.asyncio
+async def test_fallback_is_a_renderable_real_manim_scene(tmp_path):
+    store = Store(tmp_path / "fallback-render")
+    project = store.create(ProjectInput(prompt="Algoritmi", use_manim_diagrams=True).model_dump())
+    content = SlideContent(title="Ricerca binaria", blocks=[
+        {"heading":"Intervallo","text":"Si considera l'intervallo ancora possibile."},
+        {"heading":"Confronto","text":"Si confronta il valore con l'elemento centrale."},
+        {"heading":"Dimezzamento","text":"Si elimina metà dello spazio di ricerca."},
+    ], diagram={"kind":"flow","labels":["Intervallo iniziale","Elemento centrale","Metà rimanente"]})
+    diagram = fallback_diagram(content, content.diagram.model_dump())
+    rendered = await ManimRenderer(store).render(project["id"], diagram, project)
+    assert rendered["report"]["ok"] is True
+    assert rendered["report"]["elements"] == 3
     store.db.close()

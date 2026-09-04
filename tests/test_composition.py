@@ -41,6 +41,14 @@ async def test_worker_repairs_overlong_small_model_draft(tmp_path):
         async def json(self, prompt, schema=None, **_):
             if "Proponi esattamente" in prompt:
                 return {"slides":[{"title":"Processo","purpose":"Quattro passaggi","layout":"steps","block_count":4}]}
+            if "PROGETTA UNA SCENA MANIM" in prompt:
+                return {"title":"Processo","takeaway":"Dal primo passo al risultato",
+                        "elements":[
+                            {"id":"inizio","type":"box","x":3,"y":4,"width":3,"height":1.2,
+                             "text":"Inizio","stage":1},
+                            {"id":"risultato","type":"box","x":9,"y":4,"width":3,"height":1.2,
+                             "text":"Risultato","stage":2}],
+                        "connections":[{"source":"inizio","target":"risultato","label":"produce"}]}
             schemas.append(schema["$defs"]["TextBlock"]["properties"]["text"]["maxLength"])
             words = ("Una spiegazione chiara collega il passaggio precedente al successivo e ne illustra le conseguenze. "*3
                      if len(schemas)==1 else

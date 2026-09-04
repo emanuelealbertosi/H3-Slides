@@ -262,6 +262,11 @@ automatico resta non valido dopo le correzioni, la slide viene salvata senza
 diagramma e il resto della presentazione prosegue; il log mantiene il motivo.
 **Crea diagrammi mancanti** riprova in blocco senza toccare i testi e continua
 anche se una singola scena non riesce; **Progetta Manim** riprova la sola slide.
+Gli errori comuni dei modelli remoti (numeri serializzati come testo, etichette
+troppo lunghe e piccoli difetti geometrici) vengono corretti prima del render.
+Se i tre tentativi LLM restano inutilizzabili, l'app costruisce e verifica una
+scena Manim conservativa usando titolo, box ed eventuali etichette già approvate,
+invece di lasciare silenziosamente la slide senza diagramma.
 Il render 1800 × 1200 viene riusato nell'editor, nel PPTX, nel PDF e in Slidev;
 l'export Manim anima progressivamente la stessa scena. Un diagramma attivo ha
 priorità sulla figura della stessa slide.

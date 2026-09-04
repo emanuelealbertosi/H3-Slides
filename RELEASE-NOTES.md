@@ -14,6 +14,9 @@
 - Con Diagrammi Manim attivo ogni slide di contenuto richiede una scena; il nuovo
   comando Crea diagrammi mancanti completa i progetti esistenti senza riscrivere
   i testi e il correttore risolve anche le sovrapposizioni quando possibile.
+- Correzione automatica di etichette e numeri fuori schema e fallback Manim
+  deterministico dai contenuti approvati; un batch senza alcun inserimento ora
+  risulta fallito anziché mostrare un completamento fuorviante.
 - Errori dello schema remoto ora indicano campo e causa; durante la rigenerazione
   completa una slide non conforme conserva la versione precedente senza
   interrompere quelle successive.

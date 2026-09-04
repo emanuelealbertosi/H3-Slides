@@ -7,7 +7,7 @@ from .content_rules import content_contract, validate_content, fit_complete_sent
 from .storage import uid, now
 from .search_settings import SearchConfig
 from .web_research import WebResearch, public_research, web_context, web_evidence, source_citations
-from .diagrams import ManimRenderer, design_diagram
+from .diagrams import ManimRenderer, design_diagram, fallback_diagram
 
 KNOWLEDGE_CONTEXT = (
     "MODALITÀ CONOSCENZA DEL MODELLO — nessun documento allegato. "
@@ -200,16 +200,19 @@ class Worker:
                 project = self.store.project(pid)
                 targets = [s["id"] for i, s in enumerate(project["slides"])
                            if (s["id"] == request.slide_id if request.slide_id else
-                               i > 0 and s["status"] == "ready" and not s.get("diagram_render", {}).get("asset"))]
+                               s["content"].get("layout") != "cover" and s["status"] == "ready" and
+                               not s.get("diagram_render", {}).get("asset"))]
                 if not targets:
                     self.store.event(jid, "Nessun diagramma Manim mancante", status="completed", progress=1)
                     return
+                successful = 0
                 for index, sid in enumerate(targets):
                     await self.checkpoint(jid)
                     project = self.store.project(pid)
                     slide = next(s for s in project["slides"] if s["id"] == sid)
                     expected_revision = slide["revision"]
                     content = SlideContent.model_validate(slide["content"])
+                    previous_diagram = content.diagram.model_dump()
                     brief = content.diagram.brief or slide.get("purpose", "") or content.title
                     try:
                         if content.diagram.kind == "manim" and content.diagram.scene:
@@ -222,11 +225,17 @@ class Worker:
                                 client, self.renderer, pid, project, content, context, instructions,
                                 lambda message: self.store.event(jid, message), lambda: self.checkpoint(jid))
                     except ValueError as exc:
-                        if request.slide_id:
-                            raise
-                        self.store.event(jid, f"Diagramma {index + 1}/{len(targets)} non creato · " + str(exc)[:300],
-                                         progress=(index + 1) / len(targets))
-                        continue
+                        self.store.event(jid, f"Diagramma {index + 1}/{len(targets)} · uso il fallback Manim dopo: " +
+                                         str(exc)[:220])
+                        try:
+                            diagram = fallback_diagram(content, previous_diagram)
+                            rendered = await self.renderer.render(pid, diagram, project)
+                        except ValueError as fallback_exc:
+                            if request.slide_id:
+                                raise ValueError(str(exc) + "; fallback: " + str(fallback_exc)) from None
+                            self.store.event(jid, f"Diagramma {index + 1}/{len(targets)} non creato · " +
+                                             str(fallback_exc)[:300], progress=(index + 1) / len(targets))
+                            continue
                     project = self.store.project(pid)
                     current = next((s for s in project["slides"] if s["id"] == sid), None)
                     if not current or current["revision"] != expected_revision:
@@ -238,9 +247,12 @@ class Worker:
                     current["revision"] += 1
                     current["status"] = "ready"
                     self.store.save_project(project)
+                    successful += 1
                     self.store.event(jid, f"Diagramma Manim {index + 1}/{len(targets)} progettato e verificato",
                                      progress=(index + 1) / len(targets))
-                self.store.event(jid, "Generazione dei diagrammi mancanti completata",
+                if not successful:
+                    raise ValueError("Nessun diagramma è stato inserito: controlla i motivi nel log")
+                self.store.event(jid, f"Diagrammi inseriti: {successful}/{len(targets)}",
                                  status="completed", progress=1)
                 return
             self.store.event(jid, "Fonti lette; costruzione della scaletta" if project["sources"] or research else
@@ -408,10 +420,11 @@ class Worker:
                     content.notes = prefix + content.notes[:6000-len(prefix)]
                 if not project["sources"] or not project.get("use_source_images", True):
                     content.image_id = ""
+                previous_diagram = content.diagram.model_dump()
                 if not project.get("use_manim_diagrams", False):
                     content.diagram.kind, content.diagram.labels = "none", []
                     content.diagram.brief, content.diagram.scene = "", None
-                elif position > 0 and content.diagram.kind == "none":
+                elif content.layout != "cover" and content.diagram.kind == "none":
                     content.diagram.kind = "manim"
                     content.diagram.brief = (slide.get("purpose", "") or content.title)[:400]
                     self.store.event(jid, "Diagramma Manim richiesto dalle opzioni del progetto")
@@ -427,9 +440,16 @@ class Worker:
                             lambda message: self.store.event(jid, message), lambda: self.checkpoint(jid))
                         content.diagram = type(content.diagram).model_validate(diagram)
                     except ValueError as exc:
-                        self.store.event(jid, "Diagramma Manim saltato; la slide viene salvata senza diagramma · " +
+                        self.store.event(jid, "Progetto Manim non valido; uso una scena deterministica · " +
                                          str(exc)[:220])
-                        content.diagram = type(content.diagram)()
+                        try:
+                            diagram = fallback_diagram(content, previous_diagram)
+                            rendered = await self.renderer.render(pid, diagram, project)
+                            content.diagram = type(content.diagram).model_validate(diagram)
+                        except ValueError as fallback_exc:
+                            self.store.event(jid, "Diagramma Manim saltato; la slide viene salvata senza diagramma · " +
+                                             str(fallback_exc)[:220])
+                            content.diagram = type(content.diagram)()
                 if content.image_id and content.image_id not in valid_images:
                     raise ValueError("Il modello ha indicato un'immagine inesistente")
                 await self.checkpoint(jid)
