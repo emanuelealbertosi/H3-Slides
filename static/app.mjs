@@ -6,7 +6,7 @@ const layoutOptions=value=>'<option value="content">Automatico adattivo</option>
 $('edit-layout').innerHTML=layoutOptions('content');
 const style=document.createElement('style');style.textContent=slideCSS;document.head.append(style);
 let current=null,projects=[],documents=[],jobs=[],editing=null,job=null,busy=false,dragged=null;
-let componentDrag=null;
+let componentDrag=null,itemPointer=null;
 const layoutEditors=new Set();
 let libraryState={folders:[],order:[],assignments:{}},libraryDragged=null;
 function setSidebarCollapsed(collapsed){
@@ -519,7 +519,7 @@ function render(){
             'La scena è valida ma il render va aggiornato. Usa Renderizza Manim.':'Il vecchio diagramma va riprogettato con Manim.')+'</p>':'');
       const select=card.querySelector('[data-slide-layout]');
       select.value=({split:'visual-right',statement:'focus'})[slide.content.layout]||slide.content.layout||'content';
-      for(const item of card.querySelectorAll('.prose-box,li'))item.draggable=slide.status==='ready';
+      for(const item of card.querySelectorAll('.prose-box,li'))item.draggable=false;
       const headingElement=card.querySelector('.heading');if(headingElement)headingElement.draggable=slide.status==='ready';
       const visualElement=card.querySelector('.visual');if(visualElement)visualElement.draggable=slide.status==='ready';
       if(slide.status==='ready')installElementControls(card,slide);
@@ -853,6 +853,62 @@ function finishItemDragPreview(drag,restore){
   if(frame)fitSlide(frame);
   positionVisualActions(card);
 }
+function beginItemPointerDrag(pointer){
+  const {card,item,block}=pointer;
+  const placeholder=item.cloneNode(true);
+  placeholder.classList.remove('deletable-element','dragging');
+  placeholder.classList.add('item-drag-placeholder');
+  placeholder.removeAttribute('draggable');placeholder.removeAttribute('data-block-index');
+  placeholder.removeAttribute('data-bullet-index');placeholder.setAttribute('aria-hidden','true');
+  placeholder.querySelectorAll('button,[draggable]').forEach(element=>element.remove());
+  const box=item.getBoundingClientRect(),frame=card.querySelector('.slide-frame');
+  const scale=frame?.getBoundingClientRect().width/1280||1;
+  placeholder.style.minHeight=Math.max(44,Math.round(box.height/scale))+'px';
+  item.parentNode.insertBefore(placeholder,item);
+  componentDrag={type:block?'blocks':'bullets',id:card.dataset.id,
+    from:Number(block?item.dataset.blockIndex:item.dataset.bulletIndex),
+    to:Number(block?item.dataset.blockIndex:item.dataset.bulletIndex),
+    source:item,placeholder,originalParent:item.parentNode,originalNext:item.nextSibling,
+    originalAriaHidden:item.getAttribute('aria-hidden')};
+  card.classList.add('component-dragging');item.classList.add('dragging','drag-preview-source');
+  item.setAttribute('aria-hidden','true');
+  const indicator=card.querySelector('.anchor-indicator');
+  if(indicator)indicator.textContent='Posizione '+(componentDrag.to+1)+' · sposta per vedere la nuova composizione';
+}
+function previewItemOrder(card,x,y){
+  if(!componentDrag?.placeholder)return;
+  const selector=componentDrag.type==='blocks'?'[data-block-index]':'[data-bullet-index]';
+  const parent=componentDrag.placeholder.parentNode;
+  const items=[...parent.querySelectorAll(selector)].filter(item=>item!==componentDrag.source);
+  if(!items.length)return;
+  let target=null,distance=Infinity;
+  for(const item of items){
+    const box=item.getBoundingClientRect();
+    const dx=x-Math.max(box.left,Math.min(x,box.right));
+    const dy=y-Math.max(box.top,Math.min(y,box.bottom));
+    const next=dx*dx+dy*dy;
+    if(next<distance){distance=next;target=item}
+  }
+  if(!target)return;
+  document.querySelectorAll('.item-drop-target').forEach(element=>element.classList.remove('item-drop-target'));
+  target.classList.add('item-drop-target');
+  const box=target.getBoundingClientRect();
+  const sameRow=Math.abs(y-(box.top+box.height/2))<box.height*.48;
+  const after=sameRow?x>box.left+box.width/2:y>box.top+box.height/2;
+  const targetIndex=items.indexOf(target),to=targetIndex+(after?1:0);
+  parent.insertBefore(componentDrag.placeholder,items[to]||null);
+  componentDrag.to=to;
+  const frame=card.querySelector('.slide-frame');if(frame)fitSlide(frame);
+  positionVisualActions(card);
+  const indicator=card.querySelector('.anchor-indicator');
+  if(indicator)indicator.textContent='Posizione '+(to+1)+' · anteprima live, rilascia per salvare';
+}
+function endItemPointer(){
+  if(!itemPointer)return;
+  const {item,pointerId,card,originalCardDraggable}=itemPointer;
+  try{if(item.hasPointerCapture(pointerId))item.releasePointerCapture(pointerId)}catch{}
+  card.draggable=originalCardDraggable;itemPointer=null;
+}
 function clearComponentDrag(restore=true){
   const drag=componentDrag;componentDrag=null;
   finishItemDragPreview(drag,restore);
@@ -909,38 +965,16 @@ $('slides').ondragstart=e=>{
     }
     const item=block||bullet;
     if(item){
-      const placeholder=item.cloneNode(true);
-      placeholder.classList.remove('deletable-element','dragging');
-      placeholder.classList.add('item-drag-placeholder');
-      placeholder.removeAttribute('draggable');placeholder.removeAttribute('data-block-index');
-      placeholder.removeAttribute('data-bullet-index');placeholder.setAttribute('aria-hidden','true');
-      placeholder.querySelectorAll('button,[draggable]').forEach(element=>element.remove());
-      const box=item.getBoundingClientRect(),frame=card.querySelector('.slide-frame');
-      const scale=frame?.getBoundingClientRect().width/1280||1;
-      placeholder.style.minHeight=Math.max(44,Math.round(box.height/scale))+'px';
-      item.parentNode.insertBefore(placeholder,item);
-      componentDrag={type:block?'blocks':'bullets',id:card.dataset.id,
-        from:Number(block?item.dataset.blockIndex:item.dataset.bulletIndex),
-        to:Number(block?item.dataset.blockIndex:item.dataset.bulletIndex),
-        source:item,placeholder,originalParent:item.parentNode,originalNext:item.nextSibling,
-        originalAriaHidden:item.getAttribute('aria-hidden')};
-      card.classList.add('component-dragging');item.classList.add('dragging');
-      e.dataTransfer.effectAllowed='move';e.dataTransfer.setData('text/plain',componentDrag.type);
-      requestAnimationFrame(()=>{if(componentDrag?.source===item){
-        item.classList.add('drag-preview-source');item.setAttribute('aria-hidden','true');
-      }});
-      const indicator=card.querySelector('.anchor-indicator');
-      if(indicator)indicator.textContent='Posizione '+(componentDrag.to+1)+' · sposta per vedere la nuova composizione';
-      return;
+      e.preventDefault();return;
     }
   }
   if(card){dragged=card.dataset.id;card.classList.add('dragging')}
 };
-function commitComponentDrag(event){
+function commitComponentDrag(event,pointedOnly=false){
   if(!componentDrag)return false;
   const drag={...componentDrag};
   const pointed=document.elementFromPoint(event.clientX||0,event.clientY||0);
-  const card=pointed?.closest('.slide-card')||event.target?.closest?.('.slide-card');
+  const card=pointed?.closest('.slide-card')||(pointedOnly?null:event.target?.closest?.('.slide-card'));
   const validCard=card?.dataset.id===drag.id;
   clearComponentDrag(!validCard);
   if(!validCard)return true;
@@ -978,25 +1012,41 @@ $('slides').ondragover=e=>{
     }else if(componentDrag.type==='heading'){
       previewHeadingLayout(card,e.clientX,e.clientY);
     }else{
-      const selector=componentDrag.type==='blocks'?'[data-block-index]':'[data-bullet-index]';
-      const target=e.target.closest(selector);
-      if(target&&target!==componentDrag.source){
-        target.classList.add('item-drop-target');
-        const box=target.getBoundingClientRect(),after=e.clientY>box.top+box.height/2;
-        const parent=target.parentNode;
-        const items=[...parent.querySelectorAll(selector)].filter(item=>item!==componentDrag.source);
-        const targetIndex=items.indexOf(target),to=targetIndex+(after?1:0);
-        parent.insertBefore(componentDrag.placeholder,items[to]||null);
-        componentDrag.to=to;
-        const frame=card.querySelector('.slide-frame');if(frame)fitSlide(frame);
-        positionVisualActions(card);
-        const indicator=card.querySelector('.anchor-indicator');
-        if(indicator)indicator.textContent='Posizione '+(to+1)+' · anteprima live, rilascia per salvare';
-      }
+      previewItemOrder(card,e.clientX,e.clientY);
     }
     return;
   }
   e.preventDefault();
+};
+$('slides').onpointerdown=e=>{
+  if(e.button!==0||e.target.closest('button,input,select,textarea,[contenteditable]'))return;
+  const item=e.target.closest('[data-block-index],[data-bullet-index]');
+  const card=item?.closest('.slide-card');
+  if(!item||!card||!card.classList.contains('ready'))return;
+  const originalCardDraggable=card.draggable;card.draggable=false;
+  itemPointer={item,card,block:item.hasAttribute('data-block-index'),pointerId:e.pointerId,
+    startX:e.clientX,startY:e.clientY,active:false,originalCardDraggable};
+};
+$('slides').onpointermove=e=>{
+  if(!itemPointer||e.pointerId!==itemPointer.pointerId)return;
+  if(!itemPointer.active){
+    if(Math.hypot(e.clientX-itemPointer.startX,e.clientY-itemPointer.startY)<7)return;
+    itemPointer.active=true;
+    try{itemPointer.item.setPointerCapture(e.pointerId)}catch{}
+    beginItemPointerDrag(itemPointer);
+  }
+  e.preventDefault();previewItemOrder(itemPointer.card,e.clientX,e.clientY);
+};
+$('slides').onpointerup=e=>{
+  if(!itemPointer||e.pointerId!==itemPointer.pointerId)return;
+  const active=itemPointer.active;
+  if(active){e.preventDefault();commitComponentDrag(e,true)}
+  endItemPointer();
+};
+$('slides').onpointercancel=e=>{
+  if(!itemPointer||e.pointerId!==itemPointer.pointerId)return;
+  if(itemPointer.active)clearComponentDrag();
+  endItemPointer();
 };
 $('slides').ondrop=e=>{
   e.preventDefault();
