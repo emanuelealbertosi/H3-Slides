@@ -109,6 +109,16 @@ class FakeLLM:
         ]).model_dump()
 
 
+class InvalidJSONOnceLLM(FakeLLM):
+    slide_attempts = 0
+    async def json(self, prompt, schema=None, images=None):
+        if "Crea UNA slide" in prompt:
+            type(self).slide_attempts += 1
+            if type(self).slide_attempts == 1:
+                raise ValueError("Il modello non ha restituito JSON valido; cambia modello o riduci il prompt")
+        return await super().json(prompt, schema=schema, images=images)
+
+
 def request():
     return Generation(provider={"mode":"local", "model":"fake", "api_key":"DO-NOT-SAVE"},
                       prompt="Spiega energia", count=2)
@@ -123,6 +133,20 @@ async def test_incremental_generation_and_no_secrets(store):
     await worker.tasks[job["id"]]
     assert store.job(job["id"])["status"] == "completed"
     assert len(store.project(p["id"])["slides"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_invalid_slide_json_is_retried_without_losing_the_job(store):
+    InvalidJSONOnceLLM.slide_attempts = 0
+    p = project(store)
+    worker = Worker(store, SimpleNamespace())
+    worker.clients = InvalidJSONOnceLLM
+    job = worker.submit(p["id"], request())
+    await worker.tasks[job["id"]]
+    saved = store.job(job["id"])
+    assert saved["status"] == "completed"
+    assert InvalidJSONOnceLLM.slide_attempts == 3
+    assert any("nuovo tentativo automatico" in event["message"] for event in saved["events"])
     assert "DO-NOT-SAVE" not in json.dumps(store.jobs())
 
 

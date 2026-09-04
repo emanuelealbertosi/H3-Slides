@@ -3,9 +3,18 @@ from types import SimpleNamespace
 from aiohttp import web
 from aiohttp.test_utils import TestServer
 import pytest
-from h3_slides.llm import LLM
+from h3_slides.llm import LLM, parse_json
 from h3_slides.models import Provider
 from h3_slides.runtime_settings import RemoteInferenceSettings
+
+
+@pytest.mark.parametrize("raw", [
+    'Risposta richiesta:\n{"ok":true}\nFine.',
+    '~~~json\n{"ok":true}\n~~~',
+    'Testo introduttivo\n[{"ok":true}]\nNota finale',
+])
+def test_json_parser_accepts_valid_wrapped_payload(raw):
+    assert parse_json(raw) in ({"ok":True}, [{"ok":True}])
 
 
 @pytest.mark.asyncio

@@ -5,6 +5,7 @@ import json
 import logging
 import os
 from pathlib import Path
+import re
 import socket
 import subprocess
 import time
@@ -21,7 +22,22 @@ def parse_json(text):
         text = text[3:].removeprefix("json").strip().removesuffix("~~~").strip()
     if text.startswith(chr(96) * 3):
         text = text[3:].removeprefix("json").strip().removesuffix(chr(96) * 3).strip()
-    return json.loads(text)
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as original:
+        # Some OpenAI-compatible remote models ignore the JSON-only request and
+        # wrap an otherwise valid object in a preface or trailing explanation.
+        # Decode a real JSON fragment without evaluating or repairing arbitrary
+        # model text.
+        decoder = json.JSONDecoder()
+        for match in re.finditer(r"[\{\[]", text):
+            try:
+                value, _ = decoder.raw_decode(text[match.start():])
+            except json.JSONDecodeError:
+                continue
+            if isinstance(value, (dict, list)):
+                return value
+        raise original
 
 
 class ChildGuard:

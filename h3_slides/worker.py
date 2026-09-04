@@ -366,7 +366,22 @@ class Worker:
                 correction, content, failure_reason = "", None, ""
                 for attempt in range(3):
                     await self.checkpoint(jid)
-                    result = await client.json(slide_prompt + correction, schema=content_schema)
+                    try:
+                        result = await client.json(slide_prompt + correction, schema=content_schema)
+                    except ValueError as exc:
+                        if "JSON valido" not in str(exc):
+                            raise
+                        if attempt == 2:
+                            if request.regenerate_all and expected_revision > 0:
+                                failure_reason = str(exc)
+                                break
+                            raise
+                        self.store.event(jid, "Risposta JSON non valida; nuovo tentativo automatico")
+                        correction = (
+                            "\nIL TENTATIVO PRECEDENTE NON ERA JSON VALIDO. Ricrea la stessa slide e rispondi "
+                            "soltanto con un singolo oggetto JSON completo conforme allo schema, senza Markdown, "
+                            "commenti o testo prima e dopo l'oggetto.")
+                        continue
                     result = normalize_slide_candidate(result)
                     try:
                         content = SlideContent.model_validate(result)
