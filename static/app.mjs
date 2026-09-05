@@ -387,14 +387,44 @@ $('browse-model').onclick=()=>connectLocalModel('pick');
 $('register-model').onclick=()=>connectLocalModel('register');
 $('refresh-models').onclick=()=>models().catch(e=>toast(e.message));
 $('unload').onclick=async()=>{try{await api('/api/llm/stop','POST',{});await models();toast('Modello di H3-slides scaricato')}catch(e){toast(e.message)}};
+let floatingGenerationFrame=0;
+function updateFloatingGeneration(){
+  floatingGenerationFrame=0;
+  const header=document.querySelector('.studio-sidebar');
+  // On narrow screens the sticky navigation can cover an otherwise visible button.
+  const visibleTop=getComputedStyle(header).position==='sticky'?Math.max(0,header.getBoundingClientRect().bottom):0;
+  const inlineVisible=['generate-top','generate'].some(id=>{
+    const rect=$(id).getBoundingClientRect();
+    return rect.width>0&&rect.height>0&&rect.top>=visibleTop&&rect.bottom<=innerHeight&&
+      rect.left>=0&&rect.right<=innerWidth;
+  });
+  const show=!$('create-page').hidden&&!inlineVisible;
+  $('floating-generation').hidden=!show;
+  document.body.classList.toggle('generation-floating-visible',show);
+}
+function scheduleFloatingGeneration(){
+  if(!floatingGenerationFrame)floatingGenerationFrame=requestAnimationFrame(updateFloatingGeneration);
+}
+window.addEventListener('scroll',scheduleFloatingGeneration,{passive:true});
+window.addEventListener('resize',scheduleFloatingGeneration);
+const generationResizeObserver=new ResizeObserver(scheduleFloatingGeneration);
+for(const element of [$('create-page'),$('generate-top'),$('generate'),document.querySelector('.studio-sidebar')]){
+  generationResizeObserver.observe(element);
+}
 function updateGenerationButtons(){
   const active=jobs.some(item=>['queued','running','paused'].includes(item.status));
   const regenerate=Boolean(current?.slides.length);
   for(const button of document.querySelectorAll('[data-generate-presentation]')){
     button.disabled=busy||active;
-    button.textContent=active?'Generazione in corso…':busy?'Preparazione…':
+    const label=active?'Generazione in corso…':busy?'Preparazione…':
       regenerate?'Rigenera presentazione ↻':'Genera presentazione →';
+    button.textContent=button.id==='generate-floating'?
+      (active?'In corso…':busy?'Preparazione…':regenerate?'Rigenera ↻':'Genera →'):label;
+    button.setAttribute('aria-label',label);
+    button.setAttribute('aria-busy',String(busy||active));
+    button.title=label;
   }
+  scheduleFloatingGeneration();
 }
 async function generate(slideId=null,diagramOnly=false,regenerateAll=false,replaceDiagrams=false,providedInstructions=null,rebuildOutline=false){
   if(busy)return;busy=true;updateGenerationButtons();
@@ -1335,6 +1365,7 @@ async function poll(){
   if(polling)return;polling=true;
   try{
     jobs=await api('/api/jobs');$('connection').textContent='● Locale · salvato sul PC';
+    updateGenerationButtons();
     if(current){
       const requested=current.id;
       const fresh=await api('/api/projects/'+requested);
@@ -1395,6 +1426,7 @@ function navigatePage(page,push=true){
   if(typeof page==='boolean')page=page?'admin':'create';
   const admin=page==='admin',library=page==='library';
   $('admin').hidden=!admin;$('library').hidden=!library;$('create-page').hidden=admin||library;
+  updateFloatingGeneration();
   $('open-admin').setAttribute('aria-current',admin?'page':'false');
   $('open-library').setAttribute('aria-current',library?'page':'false');
   $('open-create').setAttribute('aria-current',!admin&&!library?'page':'false');

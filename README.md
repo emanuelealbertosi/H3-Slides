@@ -130,6 +130,10 @@ usare un'API remota. Nessun download di modelli automatico.
 6. Esporta il risultato o apri Slidev live. Gli export sono snapshot: le modifiche
    successive richiedono una nuova esportazione.
 
+In **Crea**, quando scorri lontano dai pulsanti in cima e in fondo, compare
+**Genera/Rigenera** compatto in basso a destra. Usa gli stessi parametri e
+conferme dei pulsanti principali; durante un job resta visibile ma disabilitato.
+
 Il prompt modificato e salvato durante il lavoro viene letto dalle slide successive.
 Un nuovo clic su Genera completa le slide ancora mancanti. **Rigenera** rifà una
 singola slide; **Rigenera tutte le slide** riscrive in sequenza tutti i contenuti
