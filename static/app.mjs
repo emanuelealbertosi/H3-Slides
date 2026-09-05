@@ -349,11 +349,22 @@ $('browse-model').onclick=()=>connectLocalModel('pick');
 $('register-model').onclick=()=>connectLocalModel('register');
 $('refresh-models').onclick=()=>models().catch(e=>toast(e.message));
 $('unload').onclick=async()=>{try{await api('/api/llm/stop','POST',{});await models();toast('Modello di H3-slides scaricato')}catch(e){toast(e.message)}};
-async function generate(slideId=null,diagramOnly=false,regenerateAll=false,replaceDiagrams=false,providedInstructions=null){
-  if(busy)return;busy=true;$('generate').disabled=true;
+function updateGenerationButtons(){
+  const active=jobs.some(item=>['queued','running','paused'].includes(item.status));
+  const regenerate=Boolean(current?.slides.length);
+  for(const button of document.querySelectorAll('[data-generate-presentation]')){
+    button.disabled=busy||active;
+    button.textContent=active?'Generazione in corso…':busy?'Preparazione…':
+      regenerate?'Rigenera presentazione ↻':'Genera presentazione →';
+  }
+}
+async function generate(slideId=null,diagramOnly=false,regenerateAll=false,replaceDiagrams=false,providedInstructions=null,rebuildOutline=false){
+  if(busy)return;busy=true;updateGenerationButtons();
   try{
     await finishInlineEdits();
-    if(regenerateAll&&current?.slides.length&&!confirm('Rigenerare tutte le slide? I contenuti attuali saranno sostituiti; brief, fonti, tema, ordine e scaletta restano invariati.'))return;
+    if(regenerateAll&&current?.slides.length&&!confirm(rebuildOutline?
+      'Rigenerare la presentazione con prompt e parametri attuali? La scaletta e le slide saranno ricreate; gli allegati resteranno nel progetto.':
+      'Rigenerare tutte le slide? I contenuti attuali saranno sostituiti; scaletta e ordine restano invariati.'))return;
     if(replaceDiagrams&&!slideId&&!confirm('Riprogettare tutti i diagrammi con il modello? I testi delle slide restano invariati.'))return;
     if($('provider').value==='local'&&adminDirty){
       navigatePage(true);throw new Error('Salva il profilo llama.cpp modificato in Admin prima di generare.');
@@ -377,14 +388,16 @@ async function generate(slideId=null,diagramOnly=false,regenerateAll=false,repla
       diagramOnly?(current.slides.find(s=>s.id===slideId)?.content.diagram?.brief||current.slides.find(s=>s.id===slideId)?.content.title||''):current.prompt):$('prompt').value);
     if(instructions===null)return;
     job=await api('/api/projects/'+current.id+'/generate','POST',{provider:selected,prompt:instructions,count:Number($('count').value),slide_id:slideId,
-      diagram_only:diagramOnly,replace_diagrams:replaceDiagrams,regenerate_all:regenerateAll,
+      diagram_only:diagramOnly,replace_diagrams:replaceDiagrams,regenerate_all:regenerateAll,rebuild_outline:rebuildOutline,
       web_consent:diagramOnly?false:$('web-consent').checked,web_refresh:diagramOnly?false:$('web-refresh').checked});
     $('web-consent').checked=false;$('web-refresh').checked=false;
     toast('Generazione avviata');await poll();
-  }catch(e){toast(e.message)}finally{busy=false;$('generate').disabled=false}
+  }catch(e){toast(e.message)}finally{busy=false;updateGenerationButtons()}
 }
-$('generate').onclick=()=>generate();
-$('regenerate-all').onclick=()=>generate(null,false,true);
+for(const button of document.querySelectorAll('[data-generate-presentation]'))button.onclick=()=>{
+  const regenerate=Boolean(current?.slides.length);
+  return generate(null,false,regenerate,false,null,regenerate);
+};
 $('generate-missing-diagrams').onclick=()=>generate(null,true);
 $('redesign-diagrams').onclick=()=>generate(null,true,false,true);
 api('/api/admin/search').then(settings=>{$('searxng-url').value=settings.searxng_url}).catch(e=>{$('search-settings-status').textContent=e.message});
@@ -581,9 +594,7 @@ function render(){
   }
   for(const card of [...container.children])if(!ids.has(card.dataset.id))card.remove();
   document.querySelectorAll('[data-export]').forEach(b=>b.disabled=!current?.slides.length||exporting.has(b.dataset.export));
-  const hasSlides=Boolean(current?.slides.length);
-  $('regenerate-all').disabled=!current||busy;
-  $('regenerate-all').textContent=hasSlides?'↻ Rigenera tutte le slide':'↻ Riprova generazione';
+  updateGenerationButtons();
   const missingDiagrams=(current?.slides||[]).filter(slide=>slide.content?.layout!=='cover'&&slide.status==='ready'&&!slide.diagram_render?.asset).length;
   $('generate-missing-diagrams').hidden=!current?.use_manim_diagrams;
   $('generate-missing-diagrams').disabled=!missingDiagrams||busy;

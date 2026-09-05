@@ -93,11 +93,14 @@ class Generation(BaseModel):
     diagram_only: bool = False
     replace_diagrams: bool = False
     regenerate_all: bool = False
+    rebuild_outline: bool = False
     web_consent: bool = False
     web_refresh: bool = False
 
     @model_validator(mode="after")
     def diagram_target(self):
+        if self.rebuild_outline and not self.regenerate_all:
+            raise ValueError("Ricreare la scaletta richiede la rigenerazione completa")
         if self.regenerate_all and self.slide_id:
             raise ValueError("La rigenerazione completa non accetta una singola slide")
         if self.regenerate_all and self.diagram_only:

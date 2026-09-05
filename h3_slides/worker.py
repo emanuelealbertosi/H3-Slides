@@ -293,8 +293,10 @@ class Worker:
             await self.checkpoint(jid)
             project = self.store.project(pid)
             if request.regenerate_all:
-                self.store.event(jid, "Rigenerazione completa · conservo scaletta, ordine e impostazioni del progetto")
-            if not project["slides"]:
+                self.store.event(jid, "Rigenerazione completa · ricreo la scaletta dal brief e dai parametri attuali"
+                                 if request.rebuild_outline else
+                                 "Rigenerazione completa · conservo scaletta, ordine e impostazioni del progetto")
+            if not project["slides"] or request.rebuild_outline:
                 outline_schema = {
                     "type": "object", "additionalProperties": False,
                     "properties": {"slides": {"type": "array", "minItems": request.count,

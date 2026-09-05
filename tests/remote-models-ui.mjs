@@ -67,20 +67,26 @@ try{
   assert.equal(await page.locator('#api-model').inputValue(),'demo/chat-vision');
 
   // Capture the actual submitted selection without contacting an LLM.
-  let resolveGeneration;
+  let resolveGeneration, generatedProjectId;
   const generation=new Promise(resolve=>resolveGeneration=resolve);
   await page.route('**/api/projects/*/generate',async route=>{
+    generatedProjectId=new URL(route.request().url()).pathname.split('/')[3];
+    assert.equal(await page.locator('#generate-top').isDisabled(),true);
+    assert.equal(await page.locator('#generate').isDisabled(),true);
     resolveGeneration(route.request().postDataJSON());
     await route.fulfill({json:{id:'test-only-job',status:'queued',progress:0,events:[]}});
   });
   await page.locator('#consent').check();
   await page.locator('#close-admin').click();
   await page.locator('#prompt').fill('Presentazione di prova per verificare il selettore');
-  await page.locator('#generate').click();
+  assert.match(await page.locator('#generate-top').textContent(),/Genera presentazione/);
+  assert.equal(await page.locator('#regenerate-all').count(),0);
+  await page.locator('#generate-top').click();
   const payload=await generation;
   assert.equal(payload.provider.model,'demo/chat-vision');
   assert.equal(payload.provider.base_url,'https://provider.example/v1');
   assert.equal(payload.provider.api_key,'test-only');
+  assert.equal(payload.regenerate_all,false);
   assert.deepEqual(payload.provider.inference,{max_tokens:12000,temperature:.6,top_p:.95,timeout_seconds:900});
 
   await page.locator('#open-admin').click();
@@ -98,6 +104,36 @@ try{
   await page.locator('#admin').waitFor({state:'visible'});
   assert.match(await page.locator('#toast').textContent(),/parametri.*Admin/);
   await page.locator('#api-max-tokens').fill('12000');
+  // An existing deck must offer the same action at both ends of Crea.
+  await page.route('**/api/projects/'+generatedProjectId,async route=>{
+    if(route.request().method()!=='GET')return route.continue();
+    const response=await route.fetch(),project=await response.json();
+    project.slides=[{id:'existing-slide',revision:1,status:'ready',purpose:'Tema precedente',
+      content:{title:'Slide precedente',layout:'content',blocks:[],bullets:[],sources:[],diagram:{kind:'none'}}}];
+    await route.fulfill({json:project});
+  });
+  await page.locator('#close-admin').click();
+  await page.waitForFunction(()=>document.querySelector('#generate-top').textContent.includes('Rigenera'));
+  assert.match(await page.locator('#generate').textContent(),/Rigenera presentazione/);
+  await page.locator('#prompt').fill('Nuovo argomento e nuovi parametri');
+  await page.locator('#count').fill('3');
+  await page.locator('#text-density').selectOption('brief');
+  const regenerated=new Promise(resolve=>resolveGeneration=resolve);
+  page.once('dialog',dialog=>dialog.accept());
+  await page.locator('#generate-top').click();
+  const regeneratedPayload=await regenerated;
+  assert.equal(regeneratedPayload.regenerate_all,true);
+  assert.equal(regeneratedPayload.rebuild_outline,true);
+  assert.equal(regeneratedPayload.prompt,'Nuovo argomento e nuovi parametri');
+  assert.equal(regeneratedPayload.count,3);
+  const savedBrief=await (await page.request.get(url+'api/projects/'+generatedProjectId)).json();
+  assert.equal(savedBrief.text_density,'brief');
+  assert.equal(savedBrief.count,3);
+  const again=new Promise(resolve=>resolveGeneration=resolve);
+  page.once('dialog',dialog=>dialog.accept());
+  await page.locator('#generate').click();
+  assert.equal((await again).rebuild_outline,true);
+  await page.locator('#open-admin').click();
   await page.locator('#api-key').fill('wrong-test-key');await page.locator('#api-key').press('Tab');
   await page.waitForFunction(()=>document.querySelector('#remote-model-status').textContent.includes('negato'));
   assert.equal(await page.locator('#api-model').isDisabled(),true);
@@ -131,6 +167,20 @@ try{
     offenders:[...document.querySelectorAll('body *')].filter(element=>element.getBoundingClientRect().right>window.innerWidth+1)
       .slice(0,8).map(element=>({tag:element.tagName,id:element.id,class:element.className,right:Math.round(element.getBoundingClientRect().right)}))}));
   assert.equal(mobileLayout.fits,true,JSON.stringify(mobileLayout));
+  await page.locator('#close-admin').click();
+  await page.waitForFunction(()=>document.querySelector('#generate-top').textContent.includes('Rigenera'));
+  const positions=await page.evaluate(()=>{
+    const top=document.querySelector('#generate-top').getBoundingClientRect();
+    const bottom=document.querySelector('#generate').getBoundingClientRect();
+    const settings=document.querySelector('.settings').getBoundingClientRect();
+    const workspace=document.querySelector('.workspace').getBoundingClientRect();
+    return {top:top.bottom<=settings.top,bottom:bottom.top>=workspace.bottom,
+      fits:document.documentElement.scrollWidth<=innerWidth};
+  });
+  assert.deepEqual(positions,{top:true,bottom:true,fits:true});
+  await page.locator('#new').click();
+  assert.match(await page.locator('#generate-top').textContent(),/Genera presentazione/);
+  assert.match(await page.locator('#generate').textContent(),/Genera presentazione/);
   assert.deepEqual(errors,[]);
   console.log('Model selector UI passed: discovery, refresh, per-server memory, reload, submitted model, credentials, manual fallback and local mode.');
-}finally{await browser.close()}
+}finally{await page.unrouteAll({behavior:'wait'});await browser.close()}

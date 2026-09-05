@@ -284,6 +284,58 @@ async def test_regenerate_all_rewrites_every_slide_but_keeps_outline(store):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["local", "remote"])
+async def test_rebuild_outline_uses_new_prompt_count_and_settings(store, mode):
+    p = store.create(ProjectInput(title="Nuovo titolo", prompt="Nuovo argomento", count=3,
+                                  text_density="brief", template="cards").model_dump())
+    p["slides"] = [{"id":"old", "revision":2, "status":"ready", "purpose":"Vecchio argomento",
+                    "content":SlideContent(title="Vecchia slide").model_dump()}]
+    store.save_project(p)
+    outlines = []
+
+    class NewBriefLLM(FakeLLM):
+        async def json(self, prompt, schema=None, **kwargs):
+            if "Proponi esattamente" in prompt:
+                assert "Nuovo argomento" in prompt
+                assert schema["properties"]["slides"]["minItems"] == 3
+                outlines.append(prompt)
+                return {"slides": [{"title":f"Nuovo {i}", "purpose":"Nuovo argomento",
+                                    "layout":"cards", "block_count":1} for i in range(3)]}
+            return SlideContent(title="Nuovo contenuto", bullets=["Un punto essenziale"]).model_dump()
+
+    worker = Worker(store, SimpleNamespace())
+    worker.clients = NewBriefLLM
+    job = worker.submit(p["id"], Generation(provider={"mode":mode, "model":"fake", "remote_consent":True},
+                       prompt=p["prompt"], count=3, regenerate_all=True, rebuild_outline=True))
+    await worker.tasks[job["id"]]
+    result = store.project(p["id"])
+    assert store.job(job["id"])["status"] == "completed"
+    assert len(outlines) == 1 and len(result["slides"]) == 3
+    assert all(s["id"] != "old" and s["status"] == "ready" for s in result["slides"])
+    assert result["template"] == "cards" and result["text_density"] == "brief"
+
+
+@pytest.mark.asyncio
+async def test_invalid_rebuilt_outline_preserves_existing_slides(store):
+    p = store.create(ProjectInput(prompt="Nuovo argomento", count=3).model_dump())
+    p["slides"] = [{"id":"old", "revision":2, "status":"ready", "purpose":"Originale",
+                    "content":SlideContent(title="Slide salvata").model_dump()}]
+    store.save_project(p)
+
+    class BadOutlineLLM(FakeLLM):
+        async def json(self, *args, **kwargs):
+            return {"slides":[]}
+
+    worker = Worker(store, SimpleNamespace())
+    worker.clients = BadOutlineLLM
+    job = worker.submit(p["id"], Generation(provider={"model":"fake"}, prompt=p["prompt"],
+                       count=3, regenerate_all=True, rebuild_outline=True))
+    await worker.tasks[job["id"]]
+    assert store.job(job["id"])["status"] == "failed"
+    assert store.project(p["id"])["slides"] == p["slides"]
+
+
+@pytest.mark.asyncio
 async def test_regenerate_all_keeps_invalid_slide_and_continues(store):
     p = store.create(ProjectInput(title="Corso", prompt="Spiega", count=2).model_dump())
     p["slides"] = [
