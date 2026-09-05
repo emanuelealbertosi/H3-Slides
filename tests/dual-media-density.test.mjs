@@ -41,7 +41,7 @@ let browser;
 before(async () => { browser = await chromium.launch({headless: true}); });
 after(async () => { await browser?.close(); });
 
-async function render(slide, scale) {
+async function render(slide, scale, settings = project) {
   const page = await browser.newPage({viewport: {width: 1400, height: 900}});
   // Every resource is inline; an unexpected external request is a test failure.
   const requests = [], errors = [];
@@ -52,7 +52,7 @@ async function render(slide, scale) {
   });
   await page.setContent('<!doctype html><meta charset="utf-8"><style>' + slideCSS +
     'body{margin:0}.slide-frame{transform:scale(' + scale + ');transform-origin:top left}</style>' +
-    slideHTML(project, slide, 0, urls));
+    slideHTML(settings, slide, 0, urls));
   await page.evaluate(async () => {
     await document.fonts.ready;
     await Promise.all([...document.images].map(image => image.decode()));
@@ -179,6 +179,50 @@ for (const scale of [1, .43]) {
       assert.deepEqual(requests, []);
       assert.deepEqual(errors, []);
       assert.deepEqual({overflow: fitted.overflow, issues: measured.issues}, {overflow: false, issues: []});
+    } finally { await page.close(); }
+  });
+}
+
+// A single photo or an empty photo slot must not require a diagram to get
+// the dense-layout recovery. Include two-line slide titles and long words.
+for (const media of ['photo', 'placeholder', 'none']) for (const count of [3, 4]) for (const scale of [1, .43]) {
+  test(media + ': ' + count + ' dense boxes and a long title fit at scale ' + scale, async () => {
+    const settings = {...project, use_manim_diagrams: false};
+    const slide = makeSlide(count);
+    delete slide.diagram_render;
+    Object.assign(slide.content, {
+      title: 'Rappresentazione dei processi e delle trasformazioni del sistema',
+      subtitle: 'Analisi delle relazioni, delle condizioni iniziali e dei risultati osservati.',
+      layout: count === 3 ? 'cards' : 'timeline',
+      diagram: {kind: 'none'},
+      image_id: media === 'photo' ? 'synthetic-photo.png' : '',
+      image_placeholder: media === 'placeholder',
+      image_query: media === 'placeholder' ? 'Rappresentazione dei processi del sistema' : '',
+    });
+    const headings = ['Condizioni iniziali e trasformazioni', 'Rappresentazione multidimensionale',
+      'Interpretazione delle conseguenze', 'Valutazione dei risultati osservati'];
+    const length = count === 3 ? 300 : 190;
+    slide.content.blocks = headings.slice(0, count).map((heading, index) => ({
+      kind: index % 2 ? 'example' : 'explanation', heading,
+      text: ('Il sistema evolve secondo condizioni osservabili e relazioni misurabili. ').repeat(6)
+        .slice(0, length - 1).replace(/\s+\S*$/, '') + '.',
+      source: 'W1 · Documento del sistema',
+    }));
+    const original = JSON.stringify(slide);
+    const {page, frame, requests, errors} = await render(slide, scale, settings);
+    try {
+      const beforeText = await frame.textContent();
+      const fitted = await frame.evaluate(fitSlide), measured = await frame.evaluate(inspect);
+      assert.equal(JSON.stringify(slide), original);
+      assert.equal(await frame.textContent(), beforeText);
+      assert.deepEqual(measured.text, slide.content.blocks.map(({heading, text, source}) => ({heading, text, source})));
+      assert.equal(measured.media.length, media === 'none' ? 0 : 1);
+      if (media === 'photo') assert.equal(measured.media[0].src, urls.image);
+      if (media === 'placeholder') assert.equal(await frame.locator('.image-placeholder').count(), 1);
+      assert.deepEqual({overflow: fitted.overflow, issues: measured.issues}, {overflow: false, issues: []},
+        'Readable text, sources and visual must fit without overlap: ' + fitted.layout);
+      assert.deepEqual(requests, []);
+      assert.deepEqual(errors, []);
     } finally { await page.close(); }
   });
 }
