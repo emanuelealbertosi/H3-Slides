@@ -119,12 +119,12 @@ async def test_cache_refresh_and_no_readable_results(store, monkeypatch):
     async def checkpoint(): pass
     monkeypatch.setattr(r, "search", search)
     monkeypatch.setattr(wr, "read_page", read)
-    args = (p["id"], "Python", 3, False, lambda _:None, checkpoint)
+    args = (p["id"], "Python", 3, False, lambda _:None, checkpoint, "searxng")
     first = await r.collect(*args)
     second = await r.collect(*args)
     assert len(calls) == 1 and second["cache_used"]
     assert len(first["sources"]) == 3 and "text" not in wr.public_research(first)["sources"][0]
-    await r.collect(p["id"], "Python", 3, True, lambda _:None, checkpoint)
+    await r.collect(p["id"], "Python", 3, True, lambda _:None, checkpoint, provider="searxng")
     assert len(calls) == 2
     for cache in store.root.rglob("web-*.json"):
         data = json.loads(cache.read_text())
@@ -135,7 +135,58 @@ async def test_cache_refresh_and_no_readable_results(store, monkeypatch):
     async def denied(*_): raise ValueError("blocked")
     monkeypatch.setattr(wr, "read_page", denied)
     with pytest.raises(ValueError, match="Nessuna pagina"):
-        await r.collect(p["id"], "Python", 3, True, lambda _:None, checkpoint)
+        await r.collect(p["id"], "Python", 3, True, lambda _:None, checkpoint, provider="searxng")
+
+
+@pytest.mark.asyncio
+async def test_direct_wikipedia_reads_pages_without_search_server(store, monkeypatch):
+    calls = []
+    async def reply(_session, url, **kwargs):
+        from urllib.parse import urlsplit, parse_qs
+        calls.append(url)
+        assert urlsplit(url).hostname == "it.wikipedia.org"
+        assert await kwargs["before_request"](None, url)
+        assert not await kwargs["before_request"](None, "https://external.example/")
+        params = parse_qs(urlsplit(url).query)
+        if params.get("list") == ["search"]:
+            assert params["srsearch"] == ["Rivoluzione francese"]
+            data = {"query": {"search": [{"pageid": i, "title": f"Voce {i}"} for i in range(1, 7)]}}
+        else:
+            page_id = params["pageids"][0]
+            assert "exintro" not in params  # Read more than the introductory snippet.
+            data = {"query": {"pages": {page_id: {"title": f"Voce {page_id}",
+                "extract": "La Rivoluzione francese e le sue cause. "*150,
+                "fullurl": f"https://it.wikipedia.org/wiki/Voce_{page_id}"}}}}
+        return 200, "application/json", json.dumps(data), url
+    monkeypatch.setattr(wr, "bounded_get", reply)
+    async def checkpoint(): pass
+    p = store.create(ProjectInput().model_dump())
+    researcher = wr.WebResearch(store)
+    result = await researcher.collect(p["id"], "Rivoluzione francese", 3, False, lambda _: None,
+                                     checkpoint, endpoint="not even a valid search server")
+    assert len(calls) == 4 and len(result["sources"]) == 3
+    assert result["provider"] == "Wikipedia diretta"
+    assert "non fonti indipendenti" in result["warnings"][0]
+    assert len(result["sources"][0]["text"]) > 1200
+    assert "text" not in wr.public_research(result)["sources"][0]
+    cached = await researcher.collect(p["id"], "Rivoluzione francese", 3, False, lambda _: None, checkpoint)
+    assert cached["cache_used"] and len(calls) == 4
+
+
+@pytest.mark.asyncio
+async def test_wikipedia_english_extension_and_disambiguation(store, monkeypatch):
+    languages = []
+    async def reply(_session, language, **params):
+        languages.append(language)
+        if params.get("list"):
+            return {"query": {"search": [] if language == "it" else [{"pageid": 12, "title": "Python"}]}}
+        return {"query": {"pages": {"12": {"extract": "Ambiguous title. "*50,
+                                          "pageprops": {"disambiguation": ""}}}}}
+    monkeypatch.setattr(wr, "wikipedia_api", reply)
+    results = await wr.WebResearch(store).search(None, "Python", "wikipedia", "")
+    assert languages == ["it", "en"] and results[0]["wiki_page_id"] == 12
+    with pytest.raises(ValueError, match="disambiguazione"):
+        await wr.read_wikipedia(None, results[0])
 
 
 def test_source_citations_never_accept_invented_links():

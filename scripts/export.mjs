@@ -12,13 +12,13 @@ export async function measureLayouts(page){
     const origin=node.getBoundingClientRect();
     const rect=e=>{const r=e.getBoundingClientRect();return {x:(r.x-origin.x)/96,y:(r.y-origin.y)/96,w:r.width/96,h:r.height/96}};
     const visible=e=>e.textContent.trim()&&e.getClientRects().length&&getComputedStyle(e).display!=='none';
-    const texts=[...node.querySelectorAll('.kicker,h1,.subtitle,.prose-box h2,.prose-box p,.prose-source,.block-number,.bullet-mark,.bullet-text,.footer span')].map((e,domIndex)=>({e,domIndex})).filter(({e})=>visible(e)).map(({e,domIndex})=>{
+    const texts=[...node.querySelectorAll('.kicker,h1,.subtitle,.prose-box h2,.prose-box p,.prose-source,.block-number,.bullet-mark,.bullet-text,.footer span,.image-credit,.placeholder-title,.placeholder-query')].map((e,domIndex)=>({e,domIndex})).filter(({e})=>visible(e)).map(({e,domIndex})=>{
       const c=getComputedStyle(e);return {...rect(e),domIndex,formula:Boolean(e.querySelector('.katex')),
         value:e.dataset.editRaw??e.textContent,size:parseFloat(c.fontSize)*.75,
         font:c.fontFamily.split(',')[0].replaceAll('"',''),bold:Number(c.fontWeight)>=600,
         italic:c.fontStyle==='italic',color:c.color,lineHeight:parseFloat(c.lineHeight)*.75};
     });
-    const boxes=[...node.querySelectorAll('.prose-box,.prose-box h2,li,.slide-accent')].map(e=>{
+    const boxes=[...node.querySelectorAll('.prose-box,.prose-box h2,li,.slide-accent,.image-placeholder')].map(e=>{
       const c=getComputedStyle(e);return {...rect(e),color:c.backgroundColor,radius:parseFloat(c.borderTopLeftRadius)/96,
         shadow:c.boxShadow!=='none',borders:['Top','Right','Bottom','Left'].map(side=>({
           color:c['border'+side+'Color'],width:parseFloat(c['border'+side+'Width'])*.75}))};
@@ -26,7 +26,7 @@ export async function measureLayouts(page){
     const visual=node.querySelector('.visual');
     const img=visual?.matches('img')?visual:visual?.querySelector('img');
     return {layout:node.dataset.layout,overflow:node.dataset.overflow==='true',texts,boxes,
-      visual:visual?rect(visual):null,
+      visual:img?rect(img):visual?rect(visual):null,
       image:img?{width:img.naturalWidth,height:img.naturalHeight}:null,
       footer:rect(node.querySelector('.footer'))};
   }));
@@ -60,7 +60,7 @@ export async function buildExports(project,assetsDir,outDir,format){
     await page.evaluate(()=>document.fonts.ready);
     await page.evaluate(()=>Promise.all([...document.images].map(i=>i.decode())));
     const measured=await measureLayouts(page);
-    const textSelector='.kicker,h1,.subtitle,.prose-box h2,.prose-box p,.prose-source,.block-number,.bullet-mark,.bullet-text,.footer span';
+    const textSelector='.kicker,h1,.subtitle,.prose-box h2,.prose-box p,.prose-source,.block-number,.bullet-mark,.bullet-text,.footer span,.image-credit,.placeholder-title,.placeholder-query';
     const formulaImages=[];
     for(const [slideIndex,layout] of measured.entries()){
       const items=[];
@@ -110,7 +110,9 @@ export async function buildExports(project,assetsDir,outDir,format){
         const w=dims.width*ratio,h=dims.height*ratio;
         s.addImage({path:p,x:frame.x+(frame.w-w)/2,y:frame.y+(frame.h-h)/2,w,h});
       }
-      s.addNotes((c.notes||'')+'\n\n[Sources]\n'+(c.sources||[]).join('\n')+'\n[/Sources]');
+      const credit=(project.visual_assets||[]).find(asset=>asset.id===visual.image&&asset.origin==='web');
+      s.addNotes((c.notes||'')+'\n\n[Sources]\n'+(c.sources||[]).join('\n')+'\n[/Sources]'+
+        (credit?'\n\n[Image attribution]\n'+[credit.label,credit.author,credit.license,credit.source,credit.license_url].join('\n'):''));
     }
     const output=path.join(outDir,'presentazione.pptx');
     await pptx.writeFile({fileName:output});return output;

@@ -4,7 +4,7 @@ from .models import SlideContent
 
 
 def paragraph_budget(project):
-    visual = project.get("use_manim_diagrams", False) or (
+    visual = project.get("use_manim_diagrams", False) or project.get("use_web_images", False) or (
         project.get("use_source_images", True) and any(s.get("images") for s in project.get("sources", [])))
     return (480 if visual else 800) if project.get("text_density") == "complete" else (370 if visual else 650)
 
@@ -17,6 +17,8 @@ def mathematical_block(text):
 def content_contract(project, block_count=None):
     density = project.get("text_density", "detailed")
     schema = SlideContent.model_json_schema()
+    for key in ("image_origin", "image_placeholder"):
+        schema["properties"].pop(key, None)  # Resolved by the app after acquisition.
     schema["properties"].pop("freeform", None)  # Geometry belongs to the deterministic editor, never to the LLM.
     schema["properties"].pop("freeform_base", None)
     schema["properties"].pop("freeform_compact", None)

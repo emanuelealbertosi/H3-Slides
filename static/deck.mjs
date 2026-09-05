@@ -46,11 +46,14 @@ export function visualFor(project,content,slide=null){
   const asset=project.use_manim_diagrams&&content.diagram?.kind!=='none'&&slide?.diagram_render?.engine==='manim'
     ?slide.diagram_render.asset:'';
   const diagram=Boolean(asset);
-  return {diagram,image:asset||(!diagram&&project.use_source_images!==false?(content.image_id||''):'')};
+  const record=(project.visual_assets||[]).find(item=>item.id===content.image_id);
+  const origin=record?.origin||content.image_origin||'source';
+  const image=asset||(!diagram&&(origin!=='source'||project.use_source_images!==false)?(content.image_id||''):'');
+  return {diagram,image,placeholder:!image&&!diagram&&Boolean(content.image_placeholder)};
 }
 export function templateFor(project,content,index=0,slide=null){
   const visual=visualFor(project,content,slide);
-  return layoutCandidates(project,content,index,Boolean(visual.diagram||visual.image))[0];
+  return layoutCandidates(project,content,index,Boolean(visual.diagram||visual.image||visual.placeholder))[0];
 }
 export function blockColors(project,block,index=0){
   const t=themeFor(project),d=project.theme_design||{};
@@ -95,17 +98,18 @@ const freeData=(placements,key)=>{
     '" data-free-w="'+p.w+'" data-free-h="'+p.h+'"':'';
 };
 
-export const slideCSS = '*{box-sizing:border-box}.slide-frame{width:1280px;height:720px;position:relative;overflow:hidden;font-family:var(--font,Arial),sans-serif;background:var(--bg);color:var(--fg);display:flex;flex-direction:column}.slide-frame .heading{flex:none}.slide-frame h1{color:var(--heading)}.slide-frame .slide-columns{display:flex}.slide-frame .footer{position:absolute;display:flex;justify-content:space-between;gap:20px;color:var(--muted);border-top:1px solid var(--line)}.slide-frame .footer span:first-child{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.slide-frame .katex-display{margin:.25em 0}.slide-frame .katex{font-size:1.04em}.slide-frame [data-edit-field] .katex{pointer-events:none}' + composerCSS;
+const imageCSS='.slide-frame .photo-visual{margin:0;display:flex;flex-direction:column;gap:6px;overflow:hidden}.photo-visual>img{width:100%;height:100%;flex:1;min-height:0;object-fit:contain}.photo-visual>.image-credit{flex:none;font:11px/1.3 Arial,sans-serif;color:var(--muted);max-height:30px;overflow:hidden}.image-credit a{color:inherit;text-decoration:none}.slide-frame .image-placeholder{display:flex;align-items:center;justify-content:center;border:2px dashed var(--line);border-radius:var(--box-radius,18px);background:var(--surface);color:var(--fg);padding:24px}.placeholder-copy{text-align:center;overflow:hidden;max-height:100%}.placeholder-title{display:block;font-size:23px;line-height:1.25}.placeholder-query{font-size:16px;line-height:1.4;color:var(--muted);overflow-wrap:anywhere}';
+export const slideCSS = '*{box-sizing:border-box}.slide-frame{width:1280px;height:720px;position:relative;overflow:hidden;font-family:var(--font,Arial),sans-serif;background:var(--bg);color:var(--fg);display:flex;flex-direction:column}.slide-frame .heading{flex:none}.slide-frame h1{color:var(--heading)}.slide-frame .slide-columns{display:flex}.slide-frame .footer{position:absolute;display:flex;justify-content:space-between;gap:20px;color:var(--muted);border-top:1px solid var(--line)}.slide-frame .footer span:first-child{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.slide-frame .katex-display{margin:.25em 0}.slide-frame .katex{font-size:1.04em}.slide-frame [data-edit-field] .katex{pointer-events:none}' + composerCSS + imageCSS;
 
 export function slideHTML(project,slide,index,imageUrl=''){
   const c=slide.content,t=themeFor(project),visual=visualFor(project,c,slide),template=templateFor(project,c,index,slide);
   const freeBases=['cover','editorial','comparison','cards','steps','timeline','focus','quote','visual-left',
     'visual-right','visual-top','visual-bottom','visual-left-wide','visual-right-wide','stack'];
   const freeBase=freeBases.includes(c.freeform_base)?c.freeform_base:'editorial';
-  const candidates=layoutCandidates(project,c,index,Boolean(visual.diagram||visual.image));
+  const candidates=layoutCandidates(project,c,index,Boolean(visual.diagram||visual.image||visual.placeholder));
   const font=['Arial','Calibri','Segoe UI','Georgia','Verdana','Consolas'].includes(project.font)?project.font:'Arial';
   const d=project.theme_design||{},card=blockColors(project,{kind:'explanation'});
-  const placements=freePlacementData(c,Boolean(visual.diagram||visual.image));
+  const placements=freePlacementData(c,Boolean(visual.diagram||visual.image||visual.placeholder));
   const style=Object.entries(t).map(([k,v])=>'--'+k+':'+v).join(';')+';--font:'+font+
     ';--card-bg:'+card.bg+';--card-fg:'+card.fg+';--card-border:'+card.border+';--card-border-width:'+(d.border_width??1)+'px'+
     ';--box-border-width:'+(d.border_width||0)+'px;--box-radius:'+(d.box_radius??18)+'px'+
@@ -120,9 +124,22 @@ export function slideHTML(project,slide,index,imageUrl=''){
       '<p data-edit-field="block-text" data-index="'+i+'"'+rawAttr(b.text)+'>'+mathHTML(b.text)+'</p>'+
       '<div class="prose-source" data-edit-field="block-source" data-index="'+i+'"'+rawAttr(b.source)+'>'+mathHTML(b.source)+'</div></section>';
   };
+  const record=(project.visual_assets||[]).find(item=>item.id===visual.image);
+  const credit=record?.origin==='web'?[record.author,record.license,'Wikimedia Commons'].filter(Boolean).join(' · '):'';
+  const attribution=credit?'<figcaption class="image-credit" title="'+esc(credit)+'">'+
+    (/^https:\/\/commons\.wikimedia\.org\//.test(record.source)?'<a href="'+esc(record.source)+
+      '" target="_blank" rel="noopener noreferrer">'+esc(credit)+'</a>':esc(credit))+'</figcaption>':'';
+  const visualMarkup=visual.image&&imageUrl?(visual.diagram?
+    '<img class="visual diagram-render"'+freeData(placements,'visual')+' style="'+freeStyle(placements,'visual')+
+      '" src="'+esc(imageUrl)+'" alt="Diagramma renderizzato con Manim">':
+    '<figure class="visual photo-visual"'+freeData(placements,'visual')+' style="'+freeStyle(placements,'visual')+'">'+
+      '<img src="'+esc(imageUrl)+'" alt="'+esc(record?.label||c.image_query||'Immagine del documento')+'">'+attribution+'</figure>'):
+    visual.placeholder?'<div class="visual image-placeholder"'+freeData(placements,'visual')+' style="'+freeStyle(placements,'visual')+'">'+
+      '<div class="placeholder-copy"><strong class="placeholder-title">Immagine da inserire</strong>'+
+      '<p class="placeholder-query">'+esc(c.image_query||c.title)+'</p></div></div>':'';
   return '<article class="slide-frame tpl-'+esc(template)+(template==='freeform'?' tpl-'+esc(freeBase):'')+
     ' density-'+esc(project.text_density||'detailed')+
-    (visual.diagram||visual.image?' has-visual':'')+(visual.diagram?' has-diagram':'')+(blocks.reduce((n,b)=>n+b.text.length,0)>1100?' copy-dense':'')+
+    (visual.diagram||visual.image||visual.placeholder?' has-visual':'')+(visual.diagram?' has-diagram':'')+(blocks.reduce((n,b)=>n+b.text.length,0)>1100?' copy-dense':'')+
     ' heading-'+esc(c.heading_position||'top')+' heading-align-'+esc(c.heading_align||'left')+
     (d.title_size?' custom-title-size':'')+(d.body_size?' custom-body-size':'')+
     (template==='freeform'&&c.freeform_compact?' compact-spacing':'')+'" data-candidates="'+esc(JSON.stringify(candidates))+
@@ -135,7 +152,6 @@ export function slideHTML(project,slide,index,imageUrl=''){
     '<div class="slide-columns"><div class="copy">'+(blocks.length?
       '<div class="prose-grid count-'+blocks.length+'">'+blocks.map(box).join('')+'</div>':
       '<ul>'+(c.bullets||[]).map((item,i)=>point(item,i).replace('<li','<li data-bullet-index="'+i+'"')).join('')+'</ul>')+'</div>'+
-    (visual.image&&imageUrl?'<img class="visual'+(visual.diagram?' diagram-render':'')+'"'+freeData(placements,'visual')+' style="'+freeStyle(placements,'visual')+'" src="'+esc(imageUrl)+'" alt="'+
-      (visual.diagram?'Diagramma renderizzato con Manim':'')+'">':'')+'</div>'+
+    visualMarkup+'</div>'+
     '<div class="footer"><span>'+esc(project.title)+'</span><span>'+String(index+1).padStart(2,'0')+'</span></div></article>';
 }

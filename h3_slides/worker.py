@@ -2,6 +2,7 @@ import asyncio
 import json
 import hashlib
 from .llm import LLM, parse_json
+from .web_images import WebImages
 from .models import SlideContent
 from .content_rules import content_contract, validate_content, fit_complete_sentences
 from .storage import uid, now
@@ -68,6 +69,8 @@ def normalize_slide_candidate(value, scaffold=None):
     if not isinstance(value, dict):
         return value
     result = {**value, "layout_variant": 0}
+    for key in ("image_origin", "image_placeholder"):
+        result.pop(key, None)  # Asset provenance is assigned by the app, never by the LLM.
     diagram = result.get("diagram")
     if isinstance(diagram, dict) and diagram.get("kind") in ("manim", "none"):
         diagram = {**diagram, "scene": None}
@@ -87,6 +90,7 @@ class Worker:
         self.researcher = WebResearch(store)
         self.search_config = SearchConfig(store.root)
         self.renderer = ManimRenderer(store, getattr(manager, "guard", None))
+        self.web_images = WebImages()
 
     def active(self):
         return any(not task.done() for task in self.tasks.values())
@@ -108,9 +112,11 @@ class Worker:
             query = project.get("web_query", "").strip()
             if not query:
                 raise ValueError("Inserisci la query da cercare sul web; gli allegati non vengono inviati al motore")
-            search_options = {"query": query, "provider": project.get("web_provider", "searxng"),
+            search_options = {"query": query, "provider": project.get("web_provider", "wikipedia"),
                               "limit": project.get("web_max_sources", 3),
-                              "endpoint": self.search_config.read()["searxng_url"], "refresh": request.web_refresh}
+                              "endpoint": (self.search_config.read()["searxng_url"]
+                                           if project.get("web_provider") == "searxng" else ""),
+                              "refresh": request.web_refresh}
         if not request.slide_id:
             project.update(prompt=request.prompt, count=request.count)
         self.store.save_project(project)
@@ -336,10 +342,12 @@ class Worker:
                        (request.slide_id is None and s["status"] != "ready")]
             if not targets:
                 raise ValueError("Tutte le slide sono già pronte. Usa Rigenera sulla singola slide.")
-            valid_images = {a["image_id"] for a in assets}
+            source_image_ids = {a["image_id"] for a in assets}
             for index, sid in enumerate(targets):
                 await self.checkpoint(jid)
                 project = self.store.project(pid)
+                visual_assets = {a["id"]: a for a in project.get("visual_assets", [])}
+                valid_images = source_image_ids | visual_assets.keys()
                 slide = next((s for s in project["slides"] if s["id"] == sid), None)
                 if not slide:
                     continue
@@ -377,6 +385,12 @@ class Worker:
                      if project.get("use_manim_diagrams", False) else
                      "Diagrammi disattivati: diagram.kind=none, labels=[], brief='', scene=null. "))
                 content_schema, prose_rules = content_contract(project, slide.get("block_count"))
+                if project.get("use_web_images"):
+                    visual_rules += (
+                        "\nImmagini internet attive: image_query deve indicare un soggetto visivo preciso in 2–6 parole, "
+                        "come un luogo, una persona, un oggetto o un fenomeno pertinente alla slide. "
+                        "Usa italiano o inglese, senza URL. Preferisci una figura pertinente già fornita in image_id. "
+                        "L'app cerca su Wikimedia Commons se nessuna figura fornita o diagramma Manim occupa la slide.")
                 visual_rules += "\nFORMATO DEL CONTENUTO VINCOLANTE:\n" + prose_rules
                 if research:
                     ids = [s["id"] for s in research["sources"]]
@@ -477,7 +491,9 @@ class Worker:
                 if research:
                     prefix = "Origine: fonti web lette dall'app; ricerca «" + research["query"] + "». Verificare le affermazioni prima dell'uso.\n\n"
                     content.notes = prefix + content.notes[:6000-len(prefix)]
-                if not project["sources"] or not project.get("use_source_images", True):
+                if content.image_id in visual_assets:
+                    content.image_origin = visual_assets[content.image_id]["origin"]
+                elif not project["sources"] or not project.get("use_source_images", True):
                     content.image_id = ""
                 previous_diagram = content.diagram.model_dump()
                 if not project.get("use_manim_diagrams", False):
@@ -512,6 +528,34 @@ class Worker:
                             content.diagram = type(content.diagram)()
                 if content.image_id and content.image_id not in valid_images:
                     raise ValueError("Il modello ha indicato un'immagine inesistente")
+                acquired = None
+                if project.get("use_web_images") and not content.image_id and not rendered:
+                    query = content.image_query.strip() or content.title
+                    self.store.event(jid, "Ricerca immagine internet · " + query)
+                    try:
+                        acquired = await self.web_images.acquire(self.store, pid, query)
+                    except (ValueError, OSError, TimeoutError) as exc:
+                        self.store.event(jid, "Ricerca immagini non disponibile; preparo il segnaposto")
+                    except Exception as exc:
+                        # Optional media must not discard an otherwise valid slide.
+                        self.store.event(jid, "Immagine non scaricata; preparo il segnaposto")
+                    content.image_query = query[:180]
+                    content.image_origin = "web"
+                    content.image_placeholder = acquired is None
+                    if acquired:
+                        content.image_id = acquired["id"]
+                        credit = "Immagine: " + acquired["label"] + " · " + acquired["author"] + " · " + acquired["license"]
+                        attribution = credit + "\n" + acquired["source"] + "\n" + acquired["license_url"]
+                        content.notes = content.notes[:max(0, 5998-len(attribution))] + "\n\n" + attribution
+                        self.store.event(jid, "Immagine scaricata · Wikimedia Commons · " + acquired["license"])
+                    else:
+                        self.store.event(jid, "Nessuna immagine trovata: caricala dal segnaposto nell'anteprima")
+                    if acquired:
+                        # Register immediately: even a concurrent edit or cancellation must not
+                        # leave an untracked file. It remains reusable in the project's image menu.
+                        latest_project = self.store.project(pid)
+                        latest_project.setdefault("visual_assets", []).append(acquired)
+                        self.store.save_project(latest_project)
                 await self.checkpoint(jid)
                 project = self.store.project(pid)
                 current = next((s for s in project["slides"] if s["id"] == sid), None)

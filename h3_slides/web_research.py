@@ -13,7 +13,7 @@ import aiohttp
 from aiohttp.abc import AbstractResolver
 from .retrieval import rank_evidence
 
-AGENT = "H3-slides/0.1 (local presentation research)"
+AGENT = "H3-Slides/0.2 (https://github.com/emanuelealbertosi/H3-Slides)"
 CACHE_SECONDS = 3600
 SEARCH_URL = "https://html.duckduckgo.com/html/"
 MAX_PAGE_BYTES = 2_000_000
@@ -205,6 +205,20 @@ class WebResearch:
         self.store = store
 
     async def search(self, session, query, provider, endpoint):
+        if provider == "wikipedia":
+            results = []
+            for language in ("it", "en"):
+                data = await wikipedia_api(session, language, list="search", srsearch=query,
+                                           srnamespace=0, srlimit=6, srprop="")
+                for item in data.get("query", {}).get("search", []):
+                    page_id = item.get("pageid")
+                    if isinstance(page_id, int) and page_id > 0:
+                        results.append({"title": str(item.get("title", ""))[:200],
+                            "url": f"https://{language}.wikipedia.org/?curid={page_id}",
+                            "wiki_language": language, "wiki_page_id": page_id})
+                if len(results) >= 5:
+                    break
+            return results
         if provider == "searxng":
             from .search_settings import SearchSettings
             endpoint = SearchSettings(searxng_url=endpoint).searxng_url
@@ -255,7 +269,7 @@ class WebResearch:
         parser.feed(raw)
         return parser.results
 
-    async def collect(self, pid, query, limit, refresh, event, checkpoint, provider="searxng",
+    async def collect(self, pid, query, limit, refresh, event, checkpoint, provider="wikipedia",
                       endpoint="http://127.0.0.1:8080"):
         query = query.strip()
         if not query or len(query) > 200 or not 3 <= limit <= 5:
@@ -269,7 +283,8 @@ class WebResearch:
                 event("Web: riuso delle fonti in cache (massimo un'ora)")
                 return {**data, "cache_used": True}
         await checkpoint()
-        name = "SearXNG locale" if provider == "searxng" else "DuckDuckGo gratuito"
+        name = {"wikipedia": "Wikipedia diretta", "searxng": "SearXNG locale",
+                "duckduckgo": "DuckDuckGo gratuito"}.get(provider, provider)
         event("Ricerca " + name + ": " + query)
         connector = aiohttp.TCPConnector(resolver=PublicResolver(), use_dns_cache=False)
         async with aiohttp.ClientSession(connector=connector, trust_env=False,
@@ -278,12 +293,15 @@ class WebResearch:
             candidates = (await self.search(session, query, provider, endpoint))[:min(8, limit+3)]
             if not candidates:
                 raise ValueError("Nessun risultato web leggibile: modifica la query o disattiva la ricerca")
-            sources, warnings = [], []
+            sources, warnings = [], (["Ricerca limitata a Wikipedia (italiano/inglese): più voci della stessa "
+                "enciclopedia, non fonti indipendenti. Gli estratti possono omettere figure e formule."]
+                if provider == "wikipedia" else [])
             for start in range(0, len(candidates), 3):
                 await checkpoint()
                 event(f"Web: lettura fonti {start+1}–{min(start+3,len(candidates))}")
                 batch = candidates[start:start+3]
-                results = await asyncio.gather(*(read_page(session, c) for c in batch), return_exceptions=True)
+                reader = read_wikipedia if provider == "wikipedia" else read_page
+                results = await asyncio.gather(*(reader(session, c) for c in batch), return_exceptions=True)
                 for candidate, result in zip(batch, results):
                     if isinstance(result, Exception):
                         warnings.append(urlsplit(candidate["url"]).hostname + ": fonte non acquisita")
@@ -303,6 +321,45 @@ class WebResearch:
         cache.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
         event(f"Web: {len(sources)} fonti lette; riuso per tutte le slide")
         return data
+
+
+async def wikipedia_api(session, language, **params):
+    if language not in ("it", "en"):
+        raise ValueError("Lingua Wikipedia non supportata")
+    host = language + ".wikipedia.org"
+    async def wikipedia_only(_session, url):
+        return urlsplit(url).scheme == "https" and urlsplit(url).hostname == host
+    url = "https://" + host + "/w/api.php?" + urlencode(
+        {"action": "query", "format": "json", **params})
+    try:
+        status, _, raw, _ = await bounded_get(session, url, before_request=wikipedia_only)
+        if status != 200:
+            raise ValueError(f"Wikipedia HTTP {status}: riprova più tardi o cambia motore")
+        data = json.loads(raw)
+        if not isinstance(data, dict) or "error" in data:
+            raise ValueError("Wikipedia non ha completato la ricerca")
+        return data
+    except (aiohttp.ClientError, OSError, TimeoutError, json.JSONDecodeError) as exc:
+        raise ValueError("Wikipedia non raggiungibile o risposta non valida: controlla Internet o riprova") from exc
+
+
+async def read_wikipedia(session, candidate):
+    language, page_id = candidate["wiki_language"], candidate["wiki_page_id"]
+    if not isinstance(page_id, int) or page_id <= 0:
+        raise ValueError("Pagina Wikipedia non valida")
+    # One page per request: full textual extract (not only the search snippet).
+    data = await wikipedia_api(session, language, pageids=page_id,
+        prop="extracts|info|pageprops", explaintext=1, exlimit=1, inprop="url")
+    page = data.get("query", {}).get("pages", {}).get(str(page_id), {})
+    text = page.get("extract", "")
+    if "disambiguation" in page.get("pageprops", {}) or not isinstance(text, str) or len(text.strip()) < 200:
+        raise ValueError("Voce Wikipedia senza testo sufficiente o di disambiguazione")
+    url = public_url(page.get("fullurl") or candidate["url"])
+    if urlsplit(url).hostname != language + ".wikipedia.org":
+        raise ValueError("Fonte fuori da Wikipedia")
+    return {"title": str(page.get("title") or candidate["title"])[:200], "url": url, "text": text[:24000],
+        "retrieved_at": time.time(), "reading": "estratto testuale Wikipedia", "language": language,
+        "license": "CC BY-SA", "license_url": "https://creativecommons.org/licenses/by-sa/4.0/"}
 
 
 def public_research(data):

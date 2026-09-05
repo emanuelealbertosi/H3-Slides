@@ -22,6 +22,7 @@ from .slidev import write_slidev
 from .local_models import choose_model_file
 from .composition import split_content
 from .remote_models import RemoteModelRequest, list_remote_models
+from .web_images import store_image, MAX_IMAGE_BYTES
 
 
 def public_project(project):
@@ -451,9 +452,13 @@ def create_app(root=None, data_root=None):
         edit = SlideEdit.model_validate(await request.json())
         if item["revision"] != edit.revision:
             return web.json_response({"error": "Slide aggiornata altrove: ricarica prima di salvare", "slide": item}, status=409)
-        assets = {i["id"] for source in p["sources"] for i in source["images"]}
+        visuals = {i["id"]: i for i in p.get("visual_assets", [])}
+        assets = {i["id"] for source in p["sources"] for i in source["images"]} | visuals.keys()
         if edit.content.image_id and edit.content.image_id not in assets:
             raise ValueError("Immagine non appartenente a questo progetto")
+        if edit.content.image_id:
+            edit.content.image_origin = visuals.get(edit.content.image_id, {}).get("origin", "source")
+            edit.content.image_placeholder = False
         if any(len(point) > 160 for point in edit.content.bullets):
             raise ValueError("Massimo 160 caratteri per punto")
         rendered = None
@@ -472,6 +477,47 @@ def create_app(root=None, data_root=None):
             item.pop("diagram_render", None)
         store.save_project(p)
         return web.json_response(item)
+
+    async def upload_slide_image(request):
+        pid, sid = request.match_info["pid"], request.match_info["sid"]
+        store.project(pid)
+        reader = await request.multipart()
+        revision, raw, filename = None, None, ""
+        while part := await reader.next():
+            if part.name == "revision":
+                value = await part.read_chunk()
+                if len(value) > 20 or not value.strip().isdigit():
+                    raise ValueError("Revisione slide non valida")
+                revision = int(value)
+            elif part.name == "file" and part.filename:
+                if raw is not None:
+                    raise ValueError("Carica una sola immagine")
+                raw, filename = bytearray(), part.filename
+                while chunk := await part.read_chunk():
+                    raw.extend(chunk)
+                    if len(raw) > MAX_IMAGE_BYTES:
+                        raise ValueError("Usa un'immagine fino a 20 MB")
+        if raw is None or revision is None:
+            raise ValueError("Immagine e revisione della slide richieste")
+        # Other slides may still be generating: only this revision is protected.
+        p = store.project(pid)
+        item = next((s for s in p["slides"] if s["id"] == sid), None)
+        if item is None:
+            raise KeyError()
+        if item["revision"] != revision:
+            return web.json_response({"error": "Slide aggiornata: ricarica prima di inserire l'immagine",
+                                      "slide": item}, status=409)
+        if not revision:
+            raise ValueError("Attendi che la prima versione della slide sia pronta")
+        asset = store_image(store, pid, bytes(raw), Path(filename).name)
+        content = SlideContent.model_validate(item["content"])
+        content.image_id, content.image_origin, content.image_placeholder = asset["id"], "upload", False
+        content.diagram = type(content.diagram)()
+        item.update(content=content.model_dump(), revision=revision+1, status="ready")
+        item.pop("diagram_render", None)
+        p.setdefault("visual_assets", []).append(asset)
+        store.save_project(p)
+        return web.json_response({"slide": item, "visual_asset": asset})
 
     async def split_slide(request):
         p = store.project(request.match_info["pid"])
@@ -659,6 +705,7 @@ def create_app(root=None, data_root=None):
     app.router.add_post("/api/projects/{pid}/sources/reuse", reuse_source)
     app.router.add_delete("/api/projects/{pid}/sources/{source_id}", remove_source)
     app.router.add_patch("/api/projects/{pid}/slides/{sid}", slide)
+    app.router.add_post("/api/projects/{pid}/slides/{sid}/image", upload_slide_image)
     app.router.add_post("/api/projects/{pid}/reorder", reorder)
     app.router.add_post("/api/projects/{pid}/slides/{sid}/split", split_slide)
     app.router.add_post("/api/projects/{pid}/generate", generate)

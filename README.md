@@ -161,7 +161,13 @@ non il documento, il prompt completo o le credenziali del modello.
 Questa conferma è distinta da quella per inviare fonti a un LLM remoto.
 La ricerca funziona anche con il modello locale, senza API di ricerca a pagamento.
 
-- **SearXNG locale** (predefinito): indicare l'indirizzo del proprio servizio.
+- **Wikipedia diretta** (predefinita per i nuovi progetti): cerca voci e legge
+  estratti testuali tramite le API pubbliche, senza server di ricerca,
+  installazioni aggiuntive o chiavi API. Prima italiano, poi inglese se i
+  risultati non bastano. Serve Internet. Le voci appartengono alla stessa
+  enciclopedia: non sono fonti indipendenti e non coprono tutto il web;
+  gli estratti possono omettere immagini e formule.
+- **SearXNG locale**: indicare l'indirizzo del proprio servizio.
   Il JSON deve essere abilitato. Configurazione e launcher opzionali indipendenti
   dal PC sono in [deploy/searxng](deploy/searxng/README.md).
 - **DuckDuckGo HTML**: non richiede un'app aggiuntiva, ma può bloccare richieste
@@ -180,8 +186,40 @@ non presenta conoscenza interna del modello come ricerca effettuata.
 La ricerca precede il caricamento del LLM e appare nei log del job. Non aggiorna
 da sola slide già pronte: usare Rigenera per una slide oppure Rigenera tutte.
 I risultati vanno verificati dall'utente; il recupero di fonti non elimina
-allucinazioni, errori o incompletezza. Le immagini del web non sono importate
-automaticamente: questa funzione riguarda solo fonti testuali.
+allucinazioni, errori o incompletezza. Questa ricerca riguarda le fonti testuali;
+la ricerca di immagini ha una spunta indipendente, descritta sotto.
+
+### Immagini dal documento, da internet o dal computer
+
+In **Materiale visivo**:
+
+- **Usa immagini del libro/documento** mantiene il comportamento esistente.
+- **Cerca immagini in internet** è indipendente: può essere attivata insieme
+  alla precedente, anche senza la ricerca di fonti testuali.
+
+L'app invia a Wikimedia Commons un soggetto visivo breve proposto dal modello,
+non il documento completo. Cerca immagini e usa anche la figura principale di
+Wikipedia come alternativa, seguendo l'approccio di H3-Documentary. Scarica
+soltanto immagini compatibili con licenze Public domain, CC0, CC BY o CC BY-SA.
+Autore, licenza e pagina della fonte restano nel progetto; attribuzione visibile
+sull'immagine e completa nelle note PPTX. Verificare sempre pertinenza e licenza.
+Non servono API key, servizi a pagamento o un server di ricerca.
+
+La slide ha uno spazio visivo principale: Manim, poi la figura selezionata dal
+documento, poi la ricerca internet. La ricerca non sostituisce una figura scelta
+o un diagramma già renderizzato. Se fallisce, la generazione continua e salva un
+**segnaposto**. Passandoci sopra compare **↑ Carica immagine**: scegli JPG, PNG
+o WebP (massimo 20 MB e 32 MP). Puoi anche sostituire una foto o usare il pulsante
+di caricamento nella barra della slide. Non serve chiamare il modello.
+
+Il caricamento conserva testo e disposizione, si aggiorna live e resta dopo
+il ricaricamento. Funziona mentre vengono generate le altre slide; una revisione
+conflittuale viene rifiutata per non sovrascrivere modifiche più recenti.
+Foto scaricate e caricate a mano sono riusabili nel menu immagini del progetto,
+incluse nelle esportazioni, e **non diventano documenti/fonti per l'LLM**.
+Disattivare la ricerca internet evita nuove ricerche, non cancella foto o
+segnaposti già salvati. Le immagini dei documenti rimangono gestite dalla loro
+spunta separata.
 
 SearXNG non viene avviato con H3-slides. Il servizio container opzionale richiede
 un motore compatibile (per esempio Podman con Compose) e, su Windows, virtualizzazione

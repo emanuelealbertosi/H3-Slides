@@ -70,6 +70,9 @@ class SlideContent(BaseModel):
                            "visual-left-wide", "visual-right-wide", "stack"] = "editorial"
     freeform_compact: bool = False
     image_id: str = ""
+    image_query: str = Field(default="", max_length=180)
+    image_origin: Literal["source", "web", "upload"] = "source"
+    image_placeholder: bool = False
     sources: list[str] = Field(default_factory=list, max_length=12)
     animation: Literal["none", "reveal"] = "none"
     diagram: DiagramSpec = Field(default_factory=DiagramSpec)
@@ -123,10 +126,11 @@ class ProjectInput(BaseModel):
     count: int = Field(default=6, ge=1, le=30)
     theme: Literal["ink", "paper", "forest"] = "ink"
     use_source_images: bool = True
+    use_web_images: bool = False
     pdf_scope: Literal["auto", "whole"] = "auto"
     use_manim_diagrams: bool = False
     web_enabled: bool = False
-    web_provider: Literal["searxng", "duckduckgo"] = "searxng"
+    web_provider: Literal["wikipedia", "searxng", "duckduckgo"] = "wikipedia"
     web_query: str = Field(default="", max_length=200)
     web_max_sources: int = Field(default=3, ge=3, le=5)
     template: Literal["auto", "editorial", "cards", "steps", "split", "minimal"] = "auto"

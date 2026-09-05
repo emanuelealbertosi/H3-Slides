@@ -12,9 +12,13 @@ def write_slidev(project, assets, output, strict=False):
         shutil.copytree(katex_fonts, output / "fonts", dirs_exist_ok=True)
     for n, slide in enumerate(project["slides"]):
         c = slide["content"]
-        diagram = project.get("use_manim_diagrams") and c.get("diagram", {}).get("kind", "none") != "none"
-        image = slide.get("diagram_render", {}).get("asset") if diagram else (
-            c["image_id"] if project.get("use_source_images", True) else "")
+        rendered = slide.get("diagram_render", {})
+        diagram = (project.get("use_manim_diagrams") and c.get("diagram", {}).get("kind", "none") != "none"
+                   and rendered.get("engine") == "manim" and rendered.get("asset"))
+        record = next((a for a in project.get("visual_assets", []) if a["id"] == c.get("image_id")), {})
+        origin = record.get("origin", c.get("image_origin", "source"))
+        image = rendered.get("asset") if diagram else (
+            c.get("image_id", "") if origin != "source" or project.get("use_source_images", True) else "")
         if image:
             (output / "assets").mkdir(exist_ok=True)
             src, dst = assets / image, output / "assets" / image

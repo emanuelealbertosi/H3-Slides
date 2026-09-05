@@ -44,6 +44,8 @@ try{
     assert.ok((await page.locator('.item-drag-placeholder').textContent()).includes(sourceText));
     assert.equal(await source.evaluate(item=>item.classList.contains('drag-preview-source')),true);
     assert.match(await page.locator('.anchor-indicator').first().textContent(),/anteprima live/);
+    assert.equal(await page.locator('#toast').evaluate(e=>getComputedStyle(e).pointerEvents),'none',
+      'Le notifiche non devono intercettare il rilascio del trascinamento');
     const reordered=page.waitForResponse(r=>r.url().includes('/slides/')&&r.request().method()==='PATCH');
     await page.mouse.up();
     assert.equal((await reordered).status(),200);

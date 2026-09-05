@@ -49,9 +49,10 @@
   <details class="model-panel" open><summary>Ricerca web · gratuita e facoltativa</summary>
   <label class="check"><input id="web-enabled" type="checkbox">Integra fonti dal web</label>
   <div id="web-options" hidden>
-  <label>Motore<select id="web-provider"><option value="searxng">SearXNG locale</option><option value="duckduckgo">DuckDuckGo · sperimentale, senza installazioni</option></select></label>
+  <label>Motore<select id="web-provider"><option value="wikipedia">Wikipedia diretta · nessun server o API key</option><option value="searxng">SearXNG locale</option><option value="duckduckgo">DuckDuckGo · sperimentale, senza installazioni</option></select></label>
   <label>Query da inviare al motore<input id="web-query" maxlength="200" placeholder="Es. rivoluzione francese cause 1789"></label>
   <label>Numero massimo di fonti<select id="web-max-sources"><option value="3">3 · più rapido</option><option value="4">4</option><option value="5">5 · più fonti</option></select></label>
+  <small id="wikipedia-hint">Wikipedia diretta cerca e legge voci in italiano, con estensione all’inglese se necessario. Non cerca tutto il web: le voci appartengono alla stessa enciclopedia. Non richiede installazioni; serve Internet.</small>
   <small>Al motore inviamo solo questa query, non il documento allegato. L'app legge pagine pubbliche, conserva gli estratti sul PC e li passa al modello scelto. SearXNG è locale ma consulta motori online. Nessuna API a pagamento; CAPTCHA e limiti vengono rispettati.</small>
   <label class="check"><input id="web-consent" type="checkbox">Autorizzo questa query e la lettura delle pagine trovate.</label>
   <label class="check"><input id="web-refresh" type="checkbox">Aggiorna le fonti, senza riusare la cache di un’ora</label>
@@ -64,6 +65,9 @@
   </details>
   <details class="model-panel" open><summary>Materiale visivo</summary>
   <label class="check"><input id="source-images" type="checkbox" checked>Usa immagini del libro/documento</label>
+  <label class="check"><input id="web-images" type="checkbox">Cerca immagini in internet</label>
+  <small>Opzioni indipendenti: puoi usarle entrambe. La ricerca invia a Wikimedia Commons solo il soggetto visivo della slide; scarica immagini con licenza libera quando non è già presente una figura del documento o un diagramma. Se non ne trova, lascia un segnaposto: passa sopra con il mouse per caricare la tua immagine. Nessun servizio a pagamento.</small>
+  <input id="slide-image-file" type="file" accept=".jpg,.jpeg,.png,.webp" hidden>
   <label class="check"><input id="manim-diagrams" type="checkbox">Crea un vero diagramma Manim in ogni slide di contenuto</label>
   <small>L’opzione è vincolante, non un suggerimento: la copertina resta libera e ogni altra slide riceve una scena pertinente. Il modello può progettare flowchart, Venn, Gantt, timeline, alberi, reti e grafici; Manim costruisce la scena a 1800 × 1200 e ne verifica leggibilità e ingombri. Per i progetti esistenti usa “Crea diagrammi mancanti” o “Riprogetta tutti”. Non viene eseguito codice prodotto dal modello.</small>
   </details>

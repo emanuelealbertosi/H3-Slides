@@ -1,4 +1,4 @@
-import {esc,slideHTML,slideCSS,themes,themeFor,blockColors,contrast,layouts,fitSlide,visualAnchorAt} from './deck.mjs';
+import {esc,slideHTML,slideCSS,themes,themeFor,blockColors,contrast,layouts,fitSlide,visualAnchorAt,visualFor} from './deck.mjs';
 import {createRemoteModelSelector} from './remote-models.mjs';
 import {createApiSettings} from './api-settings.mjs';
 const $=id=>document.getElementById(id);
@@ -7,6 +7,8 @@ $('edit-layout').innerHTML=layoutOptions('content');
 const style=document.createElement('style');style.textContent=slideCSS;document.head.append(style);
 let current=null,projects=[],documents=[],jobs=[],editing=null,job=null,busy=false,dragged=null;
 let componentDrag=null,itemPointer=null;
+let imageUploadTarget=null;
+const projectImages=()=>[...(current?.sources||[]).flatMap(source=>source.images),...(current?.visual_assets||[])];
 const layoutEditors=new Set();
 let libraryState={folders:[],order:[],assignments:{}},libraryDragged=null;
 function setSidebarCollapsed(collapsed){
@@ -57,7 +59,7 @@ async function finishInlineEdits(){
   await Promise.all([...inlineSaves]);
   if($('slides').querySelector('[contenteditable]'))throw new Error('Salva o annulla il testo ancora in modifica.');
 }
-const designFields={'template':'template','font':'font','text-density':'text_density','background-color':'background_color','accent-color':'accent_color','source-images':'use_source_images','manim-diagrams':'use_manim_diagrams','pdf-scope':'pdf_scope',
+const designFields={'template':'template','font':'font','text-density':'text_density','background-color':'background_color','accent-color':'accent_color','source-images':'use_source_images','web-images':'use_web_images','manim-diagrams':'use_manim_diagrams','pdf-scope':'pdf_scope',
   'web-enabled':'web_enabled','web-provider':'web_provider','web-query':'web_query','web-max-sources':'web_max_sources'};
 const preferenceIds=['provider','model','api-url','api-model','vision',...Object.keys(designFields).filter(id=>!['web-query','web-enabled'].includes(id))];
 const pref=JSON.parse(localStorage.getItem('h3slides-settings')||'{}');
@@ -139,7 +141,7 @@ $('consent').addEventListener('change',()=>{
 restoreRemoteConsent();
 for(const id of ['title','prompt','count','theme'])$(id).addEventListener('input',()=>{drafts.add('brief');$('save-status').textContent='Brief non salvato'});
 for(const id of Object.keys(designFields))$(id).addEventListener('input',()=>{
-  if(id.startsWith('web-'))$('web-consent').checked=false;
+  if(['web-enabled','web-provider','web-query','web-max-sources'].includes(id))$('web-consent').checked=false;
   drafts.add('brief');$('save-status').textContent='Stile in anteprima · salva per conservarlo';savePrefs();render();
 });
 $('theme').addEventListener('change',()=>{const t=themes[$('theme').value];$('background-color').value=t.bg;$('accent-color').value=t.accent;render()});
@@ -217,8 +219,8 @@ async function selectProject(id){
   current=await api('/api/projects/'+id);drafts.clear();
   $('project-list').value=id;
   for(const key of ['title','prompt','count','theme'])$(key).value=current[key];
-  const defaults={template:'auto',font:'Arial',text_density:'detailed',background_color:themes[current.theme].bg,accent_color:themes[current.theme].accent,use_source_images:true,use_manim_diagrams:false,pdf_scope:'auto',
-    web_enabled:false,web_provider:'searxng',web_query:'',web_max_sources:3};
+  const defaults={template:'auto',font:'Arial',text_density:'detailed',background_color:themes[current.theme].bg,accent_color:themes[current.theme].accent,use_source_images:true,use_web_images:false,use_manim_diagrams:false,pdf_scope:'auto',
+    web_enabled:false,web_provider:'wikipedia',web_query:'',web_max_sources:3};
   for(const [id,key] of Object.entries(designFields)){const value=current[key]??defaults[key];if($(id).type==='checkbox')$(id).checked=value;else $(id).value=value||defaults[key]}
   $('web-consent').checked=false;$('web-refresh').checked=false;
   fillThemeDesign(current.theme_design);$('theme-presets').value='';
@@ -502,9 +504,14 @@ function installElementControls(card,slide){
   const frame=card.querySelector('.slide-frame'),visual=frame?.querySelector('.visual');
   if(!visual)return;
   const actions=document.createElement('div');actions.className='visual-actions';
-  if(slide.diagram_render?.engine==='manim'){
+  if(visual.classList.contains('diagram-render')){
     const redesign=document.createElement('button');redesign.type='button';redesign.className='diagram-live-action';
     redesign.dataset.action='diagram-live';redesign.textContent='↻ Riprogetta Manim';actions.append(redesign);
+  }else{
+    const upload=document.createElement('button');upload.type='button';upload.className='diagram-live-action image-upload-action';
+    upload.dataset.action='upload-image';upload.textContent='↑ '+(visual.classList.contains('image-placeholder')?'Carica immagine':'Sostituisci immagine');
+    upload.title='Carica dal computer · JPG, PNG o WebP · massimo 20 MB';
+    actions.append(upload);
   }
   actions.append(elementDeleteButton('visual',undefined,slide.diagram_render?.engine==='manim'?'diagramma':'immagine'));
   frame.append(actions);requestAnimationFrame(()=>positionVisualActions(card));
@@ -523,6 +530,7 @@ function render(){
   $('sources').innerHTML=current?current.sources.map(sourceHTML).join(''):'';
   renderDocumentLibrary();
   $('web-options').hidden=!$('web-enabled').checked;
+  $('wikipedia-hint').hidden=$('web-provider').value!=='wikipedia';
   $('source-mode').textContent=$('web-enabled').checked?'Ricerca web attiva: estratti delle pagine lette ed eventuali allegati. Verifica le fonti prima dell’uso.':
     current?.sources.length?'Con documenti allegati: il modello usa le fonti fornite. Le immagini richiedono vision.':'Nessun allegato: genera dalla conoscenza del modello. Nessuna ricerca web; verifica fatti e date importanti.';
   const research=current?.web_research;
@@ -552,8 +560,9 @@ function render(){
         '<div class="composition-tools"><label>Composizione <select data-slide-layout '+(slide.status!=='ready'?'disabled':'')+'>'+layoutOptions(slide.content.layout)+'</select></label>'+
         '<button class="'+(arranging?'secondary':'quiet')+'" data-action="arrange" '+(slide.status!=='ready'?'disabled':'')+'>'+(arranging?'✓ Fine disposizione':'⠿ Disponi nella slide')+'</button>'+
         '<button class="quiet" data-action="add-text" '+(slide.status!=='ready'||(slide.content.blocks||[]).length>=4?'disabled':'')+'>＋ Testo</button>'+
-        '<select data-live-image '+(slide.status!=='ready'||!current.sources.some(source=>source.images.length)?'disabled':'')+' aria-label="Aggiungi o cambia immagine"><option value="">＋ Immagine…</option>'+
-          current.sources.flatMap(source=>source.images).map(image=>'<option value="'+esc(image.id)+'">'+esc(image.label)+'</option>').join('')+'</select>'+
+        '<select data-live-image '+(slide.status!=='ready'||!projectImages().length?'disabled':'')+' aria-label="Aggiungi o cambia immagine"><option value="">＋ Immagine…</option>'+
+          projectImages().map(image=>'<option value="'+esc(image.id)+'">'+esc(image.label)+'</option>').join('')+'</select>'+
+        '<button class="quiet" data-action="upload-image" '+(slide.status!=='ready'?'disabled':'')+'>↑ Carica immagine</button>'+
         '<button class="quiet" data-action="add-diagram" '+(slide.status!=='ready'?'disabled':'')+'>＋ Diagramma</button>'+
         '<button class="quiet" data-action="recompose" '+(slide.status!=='ready'?'disabled':'')+'>↻ Ricomponi</button>'+
         '<button class="quiet" data-action="split" '+(slide.status!=='ready'?'disabled':'')+'>Dividi</button><span class="composition-status" aria-live="polite"></span>'+
@@ -561,8 +570,7 @@ function render(){
           (slide.content.layout==='freeform'?'Modalità libera: trascina titolo, box e diagramma in qualsiasi punto. La griglia resta invisibile.':
           'Trascina titolo e contenuti; immagini e diagrammi sono sempre spostabili.')+'</span>':'')+'</div>'+
         '<div class="slide-preview" title="'+(arranging?'Trascina gli elementi nelle zone evidenziate':'Doppio clic su un testo per modificarlo')+'">'+slideHTML(display,slide,index,
-          slide.diagram_render?.asset?'/api/assets/'+current.id+'/'+slide.diagram_render.asset:
-          slide.content.image_id?'/api/assets/'+current.id+'/'+slide.content.image_id:'')+
+          visualFor(display,slide.content,slide).image?'/api/assets/'+current.id+'/'+visualFor(display,slide.content,slide).image:'')+
           '<div class="anchor-indicator" aria-live="polite"></div></div>'+
         (slide.content.diagram?.kind!=='none'&&!slide.diagram_render?.asset?
           '<p class="diagram-pending">'+(slide.content.diagram?.kind==='manim'&&slide.content.diagram?.scene?
@@ -619,7 +627,7 @@ function editSlide(id){
   for(const field of ['title','subtitle','layout','animation','notes'])$('edit-'+field).value=slide.content[field];
   $('edit-layout').value=({split:'visual-right',statement:'focus'})[slide.content.layout]||slide.content.layout||'content';
   $('edit-bullets').value=slide.content.bullets.join('\n');$('edit-sources').value=slide.content.sources.join('\n');
-  $('edit-image').innerHTML='<option value="">Nessuna immagine</option>'+current.sources.flatMap(s=>s.images).map(i=>'<option value="'+i.id+'">'+esc(i.label)+'</option>').join('');
+  $('edit-image').innerHTML='<option value="">Nessuna immagine</option>'+projectImages().map(i=>'<option value="'+esc(i.id)+'">'+esc(i.label)+'</option>').join('');
   $('edit-image').value=slide.content.image_id;$('edit-error').textContent='';$('editor').showModal();
   $('edit-diagram-kind').value=slide.content.diagram?.kind||'none';
   $('edit-diagram-labels').value=(slide.content.diagram?.labels||[]).join('\n');
@@ -768,7 +776,7 @@ function deleteSlideElement(id,kind,index){
     else if(kind==='visual'){
       if(content.diagram?.kind&&content.diagram.kind!=='none')
         content.diagram={kind:'none',labels:[],brief:'',scene:null};
-      else content.image_id='';
+      content.image_id='';content.image_placeholder=false;content.image_query='';
       if(content.freeform)delete content.freeform.visual;
     }
     content.layout='content';content.layout_locked=false;content.layout_variant=0;
@@ -787,12 +795,39 @@ function shiftFreeformSlots(content,prefix,removed){
 }
 async function addImageBlock(id,imageId){
   if(!imageId)return;
-  if(!$('source-images').checked){$('source-images').checked=true;drafts.add('brief');await saveProject()}
+  const origin=projectImages().find(image=>image.id===imageId)?.origin||'source';
+  if(origin==='source'&&!$('source-images').checked){$('source-images').checked=true;drafts.add('brief');await saveProject()}
   return saveContentChange(id,content=>{
-    content.image_id=imageId;
-    if(!String(content.layout||'').startsWith('visual-'))content.layout='visual-right';
+    const hadVisual=content.image_id||content.image_placeholder;
+    content.image_id=imageId;content.image_origin=origin;content.image_placeholder=false;
+    content.diagram={kind:'none',labels:[],brief:'',scene:null};
+    if(!hadVisual&&content.layout!=='freeform'&&!String(content.layout||'').startsWith('visual-'))content.layout='visual-right';
   },'Immagine aggiunta e impaginazione ricalcolata.');
 }
+async function chooseSlideImage(id){
+  await finishInlineEdits();
+  const slide=current?.slides.find(item=>item.id===id);
+  if(!slide?.revision)throw new Error('Attendi che la slide sia pronta');
+  imageUploadTarget={pid:current.id,sid:id,revision:slide.revision};
+  $('slide-image-file').value='';$('slide-image-file').click();
+}
+$('slide-image-file').onchange=async()=>{
+  const file=$('slide-image-file').files[0],target=imageUploadTarget;
+  imageUploadTarget=null;if(!file||!target)return;
+  const card=document.getElementById('slide-'+target.sid);
+  try{
+    if(file.size>20*1024*1024)throw new Error('Usa un’immagine fino a 20 MB');
+    if(card)card.dataset.saving='1';
+    const form=new FormData();form.append('revision',String(target.revision));form.append('file',file);
+    const result=await api('/api/projects/'+target.pid+'/slides/'+target.sid+'/image','POST',form);
+    if(current?.id===target.pid){
+      current.slides[current.slides.findIndex(item=>item.id===target.sid)]=result.slide;
+      current.visual_assets=[...(current.visual_assets||[]).filter(item=>item.id!==result.visual_asset.id),result.visual_asset];
+    }
+    toast('Immagine salvata nella slide, disponibile anche nelle esportazioni.');
+  }catch(error){toast(error.message)}
+  finally{if(card){delete card.dataset.saving;delete card.dataset.signature}render()}
+};
 async function addDiagramBlock(id){
   if(!$('manim-diagrams').checked){$('manim-diagrams').checked=true;drafts.add('brief');await saveProject()}
   return generate(id,true,false,true);
@@ -827,6 +862,7 @@ $('slides').onclick=e=>{
   }
   if(button.dataset.action==='regenerate')generate(id);
   if(button.dataset.action==='add-text')addTextBlock(id).catch(error=>toast(error.message));
+  if(button.dataset.action==='upload-image')chooseSlideImage(id).catch(error=>toast(error.message));
   if(button.dataset.action==='add-diagram')addDiagramBlock(id).catch(error=>toast(error.message));
   if(button.dataset.action==='diagram')generate(id,true);
   if(button.dataset.action==='diagram-live')redesignLiveDiagram(id);

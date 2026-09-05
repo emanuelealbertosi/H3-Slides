@@ -82,8 +82,13 @@ class H3Deck(Slide):
                 diagram.get("kind") == "manim" and bool(diagram.get("scene"))
                 or diagram.get("kind") in ("flow", "cycle", "comparison") and len(diagram.get("labels", [])) >= 2
             )
-            image_id = content["image_id"] if project.get("use_source_images", True) and not has_diagram else ""
-            has_visual = bool(image_id or has_diagram)
+            image_record = next((a for a in project.get("visual_assets", [])
+                                 if a["id"] == content.get("image_id")), {})
+            image_origin = image_record.get("origin", content.get("image_origin", "source"))
+            image_id = content.get("image_id", "") if (
+                image_origin != "source" or project.get("use_source_images", True)) and not has_diagram else ""
+            placeholder = bool(content.get("image_placeholder") and not image_id and not has_diagram)
+            has_visual = bool(image_id or has_diagram or placeholder)
             self.camera.background_color = ManimColor(theme[0])
             blocks = content.get("blocks", [])
             title = Text(content["title"], font=font, font_size=(design.get("title_size") or 46)*38/46,
@@ -152,6 +157,30 @@ class H3Deck(Slide):
                 image.to_edge(RIGHT, buff=.55).shift(DOWN * .35)
                 elements.add(image)
                 self.play(FadeIn(image), run_time=.35)
+                if image_record.get("origin") == "web":
+                    attribution = " · ".join(filter(None, [image_record.get("author", ""),
+                        image_record.get("license", ""), "Wikimedia Commons"]))
+                    credit = Text(textwrap.fill(attribution, width=64), font=font, font_size=11, color=theme[1])
+                    if credit.width > 5:
+                        credit.scale_to_fit_width(5)
+                    credit.next_to(image, DOWN, buff=.10)
+                    if credit.get_bottom()[1] < -3.6:
+                        credit.shift(UP * (-3.6-credit.get_bottom()[1]))
+                    elements.add(credit)
+                    self.add(credit)
+            if placeholder:
+                box = RoundedRectangle(width=3.2 if blocks else 5, height=3.4, corner_radius=.15,
+                    color=theme[2], fill_color=theme[0], fill_opacity=1).to_edge(RIGHT, buff=.55).shift(DOWN*.35)
+                label = Text(textwrap.fill("Immagine da inserire\n"+content.get("image_query", ""), width=25),
+                             font=font, font_size=20, color=theme[1])
+                if label.width > box.width-.4:
+                    label.scale_to_fit_width(box.width-.4)
+                if label.height > box.height-.4:
+                    label.scale_to_fit_height(box.height-.4)
+                label.move_to(box)
+                visual = VGroup(box, label)
+                elements.add(visual)
+                self.play(FadeIn(visual), run_time=.35)
             if has_diagram:
                 scene = diagram.get("scene") if diagram.get("kind") == "manim" else legacy_scene(diagram).model_dump()
                 diagram_root, diagram_header, diagram_footer, stages, _ = build_scene(scene, project)
