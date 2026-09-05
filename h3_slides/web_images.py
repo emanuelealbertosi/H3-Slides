@@ -19,6 +19,10 @@ from .web_research import PublicResolver, public_url
 
 MAX_IMAGE_BYTES = 20 * 1024 * 1024
 AGENT = "H3-Slides/0.2 (https://github.com/emanuelealbertosi/H3-Slides)"
+# Wikimedia now advertises thumbnails on a separate official host.
+# Keep exact hosts (not a wildcard) and validate every redirect as before.
+WIKIMEDIA_IMAGE_HOSTS = frozenset({"commons.wikimedia.org", "upload.wikimedia.org",
+    "thumb.wikimedia.org", "it.wikipedia.org", "en.wikipedia.org"})
 
 
 class PlainText(HTMLParser):
@@ -72,8 +76,7 @@ class WebImages:
     async def fetch(self, session, url, limit):
         for _ in range(4):
             url = public_url(url)
-            if urlsplit(url).scheme != "https" or urlsplit(url).hostname not in ("commons.wikimedia.org", "upload.wikimedia.org",
-                                              "it.wikipedia.org", "en.wikipedia.org"):
+            if urlsplit(url).scheme != "https" or urlsplit(url).hostname not in WIKIMEDIA_IMAGE_HOSTS:
                 raise ValueError("Destinazione immagine non Wikimedia")
             async with session.get(url, allow_redirects=False) as response:
                 if response.status in (301, 302, 303, 307, 308):
@@ -120,7 +123,7 @@ class WebImages:
     async def acquire(self, store, pid, query, use_openverse=False, event=None):
         """Openverse is contacted only after Wikimedia and only by explicit opt-in."""
         try:
-            asset = await self.acquire_commons(store, pid, query)
+            asset = await self.acquire_commons(store, pid, query, event)
             if asset:
                 return asset
         except (ValueError, aiohttp.ClientError, OSError, TimeoutError):
@@ -132,7 +135,8 @@ class WebImages:
             return await self.openverse.acquire(store, pid, query, event)
         return None
 
-    async def acquire_commons(self, store, pid, query):
+    async def acquire_commons(self, store, pid, query, event=None):
+        event = event or (lambda _: None)
         query = " ".join(query.split())[:180]
         if not query:
             return None
@@ -142,27 +146,42 @@ class WebImages:
                     cookie_jar=aiohttp.DummyCookieJar(),
                     headers={"User-Agent":AGENT}, timeout=aiohttp.ClientTimeout(total=12)) as session:
                 candidates = await self.candidates(session, query)
+                event(f"Wikimedia Commons: {len(candidates)} candidati per la query")
+                rejected, downloads_failed = 0, 0
                 for batch in (candidates, None):
                     if batch is None:
                         batch = await self.lead_image(session, query)
+                        event(f"Wikipedia: {len(batch)} immagini dalla voce cercata")
                     for title, info in batch:
                         meta = info.get("extmetadata", {})
                         licence = plain(meta.get("LicenseShortName", {}).get("value"))
                         if not open_license(licence) or info.get("mime") not in ("image/jpeg", "image/png", "image/webp"):
+                            rejected += 1
                             continue
                         if min(info.get("width", 0), info.get("height", 0)) < 300:
+                            rejected += 1
                             continue
                         source = info.get("descriptionurl", "")
                         image_url = info.get("thumburl") or info.get("url", "")
                         try:
                             source = public_url(source)
                             if urlsplit(source).scheme != "https" or urlsplit(source).hostname != "commons.wikimedia.org":
+                                rejected += 1
                                 continue
                             raw = await self.fetch(session, image_url, MAX_IMAGE_BYTES)
                             return store_image(store, pid, raw, title.removeprefix("File:"), origin="web",
                                 query=query, source=source, download_url=image_url, license=licence,
                                 license_url=plain(meta.get("LicenseUrl", {}).get("value"), 500),
                                 author=plain(meta.get("Artist", {}).get("value")), image_provider="Wikimedia Commons")
-                        except (ValueError, aiohttp.ClientError, TimeoutError):
+                        except (ValueError, aiohttp.ClientError, TimeoutError) as exc:
+                            downloads_failed += 1
+                            reason = (f"HTTP {exc.status}" if isinstance(exc, aiohttp.ClientResponseError) else
+                                      "tempo esaurito" if isinstance(exc, TimeoutError) else
+                                      "destinazione o immagine non valida" if isinstance(exc, ValueError) else
+                                      "errore di connessione")
+                            event("Wikimedia: candidato trovato ma download fallito · " + reason)
                             continue
+                if rejected or downloads_failed:
+                    event(f"Wikimedia: {rejected} candidati esclusi per licenza/formato/dimensioni; "
+                          f"{downloads_failed} download falliti")
         return None

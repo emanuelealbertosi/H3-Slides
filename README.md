@@ -264,12 +264,18 @@ In **Materiale visivo**:
   la scelta si salva nel progetto e nelle preferenze del browser.
 
 L'app invia a Wikimedia Commons un soggetto visivo breve proposto dal modello,
-non il documento completo. Cerca immagini e usa anche la figura principale di
+non il documento completo. Il modello deve proporre nomi riconoscibili e
+disambiguati, preferibilmente in inglese, non descrizioni da generatore di immagini.
+Cerca immagini e usa anche la figura principale di
 Wikipedia come alternativa, seguendo l'approccio di H3-Documentary. Scarica
 soltanto immagini compatibili con licenze Public domain, CC0, CC BY o CC BY-SA.
 Autore, licenza e pagina della fonte restano nel progetto; attribuzione visibile
 sull'immagine e completa nelle note PPTX. Verificare sempre pertinenza e licenza.
 Non servono API key, servizi a pagamento o un server di ricerca.
+Le miniature possono provenire da thumb.wikimedia.org oltre che da
+upload.wikimedia.org; i controlli su HTTPS, domini esatti e redirect restano attivi.
+I log distinguono candidati trovati, scarti per licenza/formato/dimensioni e
+download falliti. Openverse resta un'estensione facoltativa, mai il provider esclusivo.
 
 Con l'estensione abilitata, Openverse riceve solo il soggetto visivo breve,
 mai i documenti allegati. L'accesso è gratuito e anonimo, senza installazioni

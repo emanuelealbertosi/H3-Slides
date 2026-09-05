@@ -675,9 +675,13 @@ class Worker:
                 content_schema, prose_rules = content_contract(project, slide.get("block_count"))
                 if project.get("use_web_images"):
                     visual_rules += (
-                        "\nImmagini internet attive: image_query deve indicare un soggetto visivo preciso in 2–6 parole, "
-                        "come un luogo, una persona, un oggetto o un fenomeno pertinente alla slide. "
-                        "Usa italiano o inglese, senza URL. Preferisci una figura pertinente già fornita in image_id. "
+                        "\nImmagini internet attive: image_query è una ricerca in un archivio fotografico, NON "
+                        "un prompt per generare immagini. Scegli un soggetto concreto pertinente alla slide, "
+                        "preferibilmente il suo nome riconoscibile in inglese in 2–4 parole, senza URL. "
+                        "Conserva i qualificatori necessari a distinguere omonimi, epoche e versioni. "
+                        "Non accumulare aggettivi, atmosfere, azioni o alternative con 'o/or'. "
+                        "Esempio: 'Troy archaeological site', non 'ancient city of Troy ruins landscape'. "
+                        "Preferisci una figura pertinente già fornita in image_id. "
                         "L'app cerca su Wikimedia Commons se manca una figura fornita. Un diagramma Manim "
                         "può coesistere con l'immagine e non impedisce la ricerca." +
                         (" Openverse è abilitato come ulteriore ricerca facoltativa se Wikimedia non trova nulla."
