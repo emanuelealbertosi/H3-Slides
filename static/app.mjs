@@ -751,6 +751,7 @@ function editSlide(id){
 }
 const elementTypes={box:'Riquadro',decision:'Decisione',circle:'Entità',database:'Archivio',document:'Documento',
   text:'Annotazione',grid:'Griglia / pixel',bars:'Grafico a barre',plot:'Grafico lineare',
+  histogram:'Istogramma numerico',scatter:'Dispersione · punti x,y',
   function_plot:'Grafico di funzione',
   venn:'Diagramma di Venn',gantt:'Diagramma di Gantt',timeline:'Timeline',
   tree:'Albero / gerarchia',network:'Rete / grafo'};
@@ -758,7 +759,7 @@ const tones={accent:'Accento',blue:'Blu',amber:'Ambra',red:'Rosso',violet:'Viola
 function options(values,current){return Object.entries(values).map(([value,label])=>'<option value="'+value+'" '+(value===current?'selected':'')+'>'+label+'</option>').join('')}
 function addSceneElement(value={}){
   const n=$('scene-elements').children.length;
-  const defaults={id:'oggetto'+(n+1),type:'box',x:2+(n%3)*4,y:2.4+Math.floor(n/3)*2.6,width:3,height:1.3,text:'',caption:'',tone:'accent',stage:n+1,values:[],labels:[],columns:4,expression:'',x_min:-5,x_max:5,y_min:-5,y_max:5,asymptotes:[]};
+  const defaults={id:'oggetto'+(n+1),type:'box',x:2+(n%3)*4,y:2.4+Math.floor(n/3)*2.6,width:3,height:1.3,text:'',caption:'',tone:'accent',stage:n+1,values:[],labels:[],columns:4,expression:'',x_min:-5,x_max:5,y_min:-5,y_max:5,asymptotes:[],samples:[],bin_edges:[],x_values:[],x_label:'',y_label:'',directed:false};
   value={...defaults,...value};const row=document.createElement('fieldset');row.className='scene-item';
   row.innerHTML='<div class="row"><label>ID<input data-scene="id" maxlength="32" pattern="[A-Za-z][A-Za-z0-9_-]{0,31}" required></label>'+
     '<label>Oggetto<select data-scene="type">'+options(elementTypes,value.type)+'</select></label>'+
@@ -766,8 +767,16 @@ function addSceneElement(value={}){
     '<label>Testo<input data-scene="text" maxlength="80"></label><label>Didascalia<input data-scene="caption" maxlength="90"></label>'+
     '<div class="scene-geometry">'+['x','y','width','height','stage','columns'].map(key=>'<label>'+key+
       '<input data-scene="'+key+'" type="number" step="'+(key==='stage'||key==='columns'?'1':'.1')+'" required></label>').join('')+'</div>'+
-    '<div class="row"><label>Valori · separati da virgola<textarea data-scene="values" rows="2"></textarea></label>'+
+    '<div class="row sample-fields"><label>Valori · ordinate y per dispersione · separati da virgola<textarea data-scene="values" rows="2"></textarea></label>'+
     '<label>Etichette · una per riga<textarea data-scene="labels" rows="2"></textarea></label></div>'+
+    '<div class="histogram-fields"><label>Campioni numerici originali · separati da virgola<textarea data-scene="samples" rows="3"></textarea></label>'+
+    '<label>Estremi delle classi · crescenti, includono tutti i campioni<input data-scene="bin_edges"></label>'+
+    '<p class="hint">Le frequenze vengono calcolate dai campioni. Con classi di ampiezza diversa, l’altezza mostra conteggio / ampiezza.</p></div>'+
+    '<div class="scatter-fields"><label>Ascisse x · una per ogni ordinata · facoltative e crescenti per grafico lineare<textarea data-scene="x_values" rows="2"></textarea></label></div>'+
+    '<div class="numeric-axis-fields row"><label>Nome asse x<input data-scene="x_label" maxlength="32"></label>'+
+    '<label>Nome asse y · facoltativo<input data-scene="y_label" maxlength="32"></label></div>'+
+    '<div class="network-fields"><label>Archi<select data-scene="directed"><option value="false">Non orientati</option><option value="true">Orientati · da a verso b</option></select></label>'+
+    '<p class="hint">Values contiene coppie di indici a base zero. Lascia vuoto per nodi isolati.</p></div>'+
     '<div class="math-fields"><label>Funzione di x (es. 1/x, sin(x), x^2)<input data-scene="expression" maxlength="120"></label>'+
     '<div class="scene-geometry">'+['x_min','x_max','y_min','y_max'].map(key=>'<label>'+key+
       '<input data-scene="'+key+'" type="number" step=".1" required></label>').join('')+'</div>'+
@@ -775,8 +784,17 @@ function addSceneElement(value={}){
     '<button type="button" class="quiet danger" data-remove-scene>Rimuovi oggetto</button>';
   for(const [key,item] of Object.entries(value)){const input=row.querySelector('[data-scene="'+key+'"]');if(input)input.value=Array.isArray(item)?item.join(key==='labels'?'\n':', '):item}
   const syncMathFields=()=>{
-    const enabled=row.querySelector('[data-scene="type"]').value==='function_plot';
+    const kind=row.querySelector('[data-scene="type"]').value,enabled=kind==='function_plot',chart=['histogram','scatter'].includes(kind);
     row.querySelector('.math-fields').hidden=!enabled;
+    row.querySelector('.histogram-fields').hidden=kind!=='histogram';
+    row.querySelector('.scatter-fields').hidden=!['scatter','plot'].includes(kind);
+    row.querySelector('.numeric-axis-fields').hidden=!chart&&kind!=='plot';
+    row.querySelector('.network-fields').hidden=kind!=='network';
+    row.querySelector('.sample-fields').hidden=kind==='histogram';
+    if(chart){
+      row.querySelector('[data-scene="width"]').value=Math.max(5,Number(row.querySelector('[data-scene="width"]').value));
+      row.querySelector('[data-scene="height"]').value=Math.max(3.5,Number(row.querySelector('[data-scene="height"]').value));
+    }
     if(!enabled)return;
     row.querySelector('[data-scene="width"]').value=Math.max(5,Number(row.querySelector('[data-scene="width"]').value));
     row.querySelector('[data-scene="height"]').value=Math.max(3.5,Number(row.querySelector('[data-scene="height"]').value));
@@ -807,8 +825,11 @@ function sceneFromEditor(){
   const elements=[...$('scene-elements').children].map(row=>{
     const item=Object.fromEntries([...row.querySelectorAll('[data-scene]')].map(input=>[input.dataset.scene,input.value.trim()]));
     for(const key of ['x','y','width','height','stage','columns','x_min','x_max','y_min','y_max'])item[key]=Number(item[key]);
-    item.values=item.values.split(/[\s,;]+/).filter(Boolean).map(Number);
+    for(const key of ['values','samples','bin_edges','x_values'])item[key]=item[key].split(/[\s,;]+/).filter(Boolean).map(Number);
     item.labels=item.labels.split('\n').map(value=>value.trim()).filter(Boolean);
+    if(item.type==='histogram'){item.values=[];item.labels=[]}else{item.samples=[];item.bin_edges=[]}
+    if(!['scatter','plot'].includes(item.type))item.x_values=[];
+    item.directed=item.type==='network'&&item.directed==='true';
     item.asymptotes=item.asymptotes.split(/[\s,;]+/).filter(Boolean).map(Number);
     return item;
   });

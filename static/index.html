@@ -76,7 +76,7 @@
   <small>Foto e diagramma possono convivere nella stessa slide, con comandi e posizioni indipendenti. Le figure del documento vengono proposte secondo il contesto della pagina. La ricerca internet invia a Wikimedia Commons solo il soggetto visivo della slide e cerca una foto con licenza libera quando manca una figura selezionata, anche in presenza di Manim. Se non ne trova, lascia un segnaposto: passa sopra con il mouse per caricare la tua immagine. Nessun servizio a pagamento.</small>
   <input id="slide-image-file" type="file" accept=".jpg,.jpeg,.png,.webp" hidden>
   <label class="check"><input id="manim-diagrams" type="checkbox">Crea un vero diagramma Manim in ogni slide di contenuto</label>
-  <small>L’opzione è vincolante, non un suggerimento: la copertina resta libera e ogni altra slide riceve una scena pertinente. Il modello può progettare flowchart, Venn, Gantt, timeline, alberi, reti e grafici; Manim costruisce la scena a 1800 × 1200 e ne verifica leggibilità e ingombri. Per i progetti esistenti usa “Crea diagrammi mancanti” o “Riprogetta tutti”. Non viene eseguito codice prodotto dal modello.</small>
+  <small>L’opzione richiede una scena per ogni slide di contenuto, lasciando libera la copertina. Sono disponibili flowchart, Venn, Gantt, timeline, alberi, grafi anche orientati, barre, istogrammi, dispersione e funzioni. Manim costruisce la scena a 1800 × 1200 e verifica dati, leggibilità e ingombri; eventuali errori restano nel log, senza sostituire un grafico specifico con semplici riquadri. Per i progetti esistenti usa “Crea diagrammi mancanti” o “Riprogetta tutti”. Non viene eseguito codice prodotto dal modello.</small>
   </details>
 </aside>
 <section class="workspace">
@@ -119,7 +119,7 @@
   <div class="row"><label>Titolo interno<input id="scene-title" maxlength="75"></label><label>Conclusione<input id="scene-takeaway" maxlength="130"></label></div>
   <h3>Oggetti Manim</h3><div id="scene-elements"></div><button id="add-scene-element" type="button" class="secondary">＋ Oggetto</button>
   <h3>Relazioni</h3><div id="scene-connections"></div><button id="add-scene-connection" type="button" class="secondary">＋ Relazione</button>
-  <p class="hint muted">Canvas 12 × 8. x cresce verso destra, y verso il basso; width e height sono l’ingombro. Venn, Gantt, timeline, albero e rete sono oggetti Manim composti: usa Etichette per insiemi/attività/eventi/nodi e Valori per tempi, posizioni, genitori o coppie di nodi. Salvando, Manim renderizza e verifica la scena.</p>
+  <p class="hint muted">Canvas 12 × 8. x cresce verso destra, y verso il basso; width e height sono l’ingombro. Venn, Gantt, timeline, albero e rete usano Etichette per insiemi/attività/eventi/nodi e Valori per tempi, posizioni, genitori o coppie di nodi. Istogrammi: Campioni e Limiti intervalli; dispersione e linee: Ascisse X e Valori Y. Salvando, Manim renderizza e verifica la scena senza inventare dati mancanti.</p>
 </div>
 <label id="legacy-diagram-labels">Vecchie etichette · sola compatibilità<textarea id="edit-diagram-labels" rows="4"></textarea></label>
 <label>Note del relatore<textarea id="edit-notes" rows="4"></textarea></label>

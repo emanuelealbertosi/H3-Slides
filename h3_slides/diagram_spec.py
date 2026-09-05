@@ -4,6 +4,7 @@ import json
 from typing import Annotated, Literal
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 from .math_expression import validate_expression, function_line
+from .chart_data import histogram_data
 
 def _reject_boolean_number(value):
     if isinstance(value, bool):
@@ -32,7 +33,7 @@ class Element(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(pattern=r"^[a-zA-Z][a-zA-Z0-9_-]{0,31}$")
     type: Literal["box", "decision", "circle", "database", "document", "text",
-                  "grid", "bars", "plot", "function_plot", "venn", "gantt", "timeline", "tree", "network"]
+                  "grid", "bars", "histogram", "scatter", "plot", "function_plot", "venn", "gantt", "timeline", "tree", "network"]
     x: float = Field(ge=.2, le=11.8, allow_inf_nan=False)
     y: float = Field(ge=1.1, le=7.2, allow_inf_nan=False)
     width: float = Field(default=2.8, ge=.6, le=11, allow_inf_nan=False)
@@ -42,6 +43,12 @@ class Element(BaseModel):
     tone: Tone = "accent"
     stage: int = Field(default=1, ge=1, le=12)
     values: list[Number] = Field(default_factory=list, max_length=64)
+    samples: list[Number] = Field(default_factory=list, max_length=512)
+    bin_edges: list[Number] = Field(default_factory=list, max_length=13)
+    x_values: list[Number] = Field(default_factory=list, max_length=64)
+    x_label: str = Field(default="", max_length=32)
+    y_label: str = Field(default="", max_length=32)
+    directed: bool = False
     labels: list[Annotated[str, Field(max_length=18)]] = Field(default_factory=list, max_length=16)
     columns: int = Field(default=4, ge=1, le=8)
     expression: str = Field(default="", max_length=120)
@@ -62,8 +69,28 @@ class Element(BaseModel):
             raise ValueError(f"Elemento {self.id}: servono dati numerici reali o un esempio esplicitamente illustrativo")
         if self.type == "grid" and (len(self.values) % self.columns or any(not 0 <= v <= 1 for v in self.values)):
             raise ValueError(f"Griglia {self.id}: values tra 0 e 1, numero multiplo di columns")
-        if self.type == "bars" and (len(self.values) > 8 or any(v < 0 for v in self.values) or max(self.values) == 0):
-            raise ValueError(f"Barre {self.id}: da 1 a 8 valori non negativi, almeno uno positivo")
+        if self.type == "bars" and len(self.values) > 8:
+            raise ValueError(f"Barre {self.id}: servono da 1 a 8 valori numerici con le rispettive categorie")
+        if self.type == "histogram":
+            histogram_data(self.samples, self.bin_edges)
+            if self.values or self.labels:
+                raise ValueError(f"Istogramma {self.id}: usa samples e bin_edges; conteggi e intervalli sono calcolati, non values o labels")
+        elif self.samples or self.bin_edges:
+            raise ValueError("samples e bin_edges appartengono a histogram")
+        if self.type == "scatter":
+            if not 2 <= len(self.values) <= 64 or len(self.x_values) != len(self.values):
+                raise ValueError(f"Dispersione {self.id}: x_values e values richiedono da 2 a 64 coppie x,y")
+            if self.labels and len(self.labels) != len(self.values):
+                raise ValueError(f"Dispersione {self.id}: labels deve contenere un'etichetta per ogni punto oppure essere vuoto")
+        elif self.type == "plot" and self.x_values:
+            if len(self.x_values) != len(self.values) or any(a >= b for a, b in zip(self.x_values, self.x_values[1:])):
+                raise ValueError(f"Grafico {self.id}: x_values deve avere una ascissa strettamente crescente per ogni values")
+            if self.labels and len(self.labels) != len(self.values):
+                raise ValueError(f"Grafico {self.id}: labels deve contenere un'etichetta per ogni punto oppure essere vuoto")
+            if self.width < 5 or self.height < 3.5:
+                raise ValueError(f"Grafico {self.id}: con ascisse esplicite usa width>=5 e height>=3.5")
+        elif self.x_values:
+            raise ValueError("x_values appartiene a scatter o plot")
         if self.type == "plot" and len(self.values) < 2:
             raise ValueError(f"Grafico {self.id}: servono almeno due campioni")
         if self.type == "function_plot":
@@ -113,18 +140,22 @@ class Element(BaseModel):
             if max(depths) > 3:
                 raise ValueError(f"Albero {self.id}: massimo quattro livelli per mantenere il testo leggibile")
         if self.type == "network":
-            if not 3 <= len(self.labels) <= 8 or len(self.values) < 2 or len(self.values) % 2:
-                raise ValueError(f"Rete {self.id}: labels contiene i nodi e values le coppie di indici collegate")
+            if not 1 <= len(self.labels) <= 8 or len(self.values) % 2:
+                raise ValueError(f"Rete {self.id}: da 1 a 8 nodi in labels e values con coppie di indici, anche vuoto per nodi isolati")
             pairs = zip(self.values[::2], self.values[1::2])
             if any(not a.is_integer() or not b.is_integer() or a == b or
                    a < 0 or b < 0 or a >= len(self.labels) or b >= len(self.labels) for a, b in pairs):
                 raise ValueError(f"Rete {self.id}: gli archi devono usare indici di nodi validi e distinti")
-        if self.type in ("function_plot", "venn", "gantt", "timeline", "tree", "network") and (
+        elif self.directed:
+            raise ValueError("directed appartiene a network")
+        if self.type in ("histogram", "scatter", "function_plot", "venn", "gantt", "timeline", "tree", "network") and (
                 self.width < 5 or self.height < 3):
             raise ValueError(f"Diagramma {self.id}: usa width>=5 e height>=3")
         if self.type in ("gantt", "tree") and self.height < 4:
             raise ValueError(f"{self.type} {self.id}: usa height>=4")
-        if self.type not in ("grid", "bars", "plot", "function_plot", "venn", "gantt", "timeline", "tree", "network") and not self.text.strip():
+        if self.type in ("histogram", "scatter") and self.height < 3.5:
+            raise ValueError(f"Grafico {self.id}: usa height>=3.5 per assi e tacche leggibili")
+        if self.type not in ("grid", "bars", "histogram", "scatter", "plot", "function_plot", "venn", "gantt", "timeline", "tree", "network") and not self.text.strip():
             raise ValueError(f"Elemento {self.id}: testo mancante")
         return self
 
@@ -194,13 +225,14 @@ def _compact_generation_schema(schema):
     return _without_schema_annotations(schema)
 
 
-def designed_scene_schema():
+def designed_scene_schema(families=()):
     """A per-shape generation contract; saved scenes retain the legacy model.
 
     Cross-field rules (edge indices, grid dimensions and geometry) remain the
     compiler's responsibility; the generation grammar restricts each shape's
     fields and requires its data instead of suggesting empty numeric charts.
     """
+    requested = {families} if isinstance(families, str) else set(families or ())
     schema = ManimSceneSpec.model_json_schema()
     source = schema["$defs"].pop("Element")
     common = {"id", "type", "x", "y", "width", "height", "text", "caption", "tone", "stage"}
@@ -208,9 +240,14 @@ def designed_scene_schema():
         (("box", "decision", "circle", "database", "document", "text"), {}, ("text",)),
         (("grid",), {"values": {"minItems": 1, "items": {"type": "number", "minimum": 0, "maximum": 1}},
                      "columns": {}}, ("values", "columns")),
-        (("bars",), {"values": {"minItems": 1, "maxItems": 8, "items": {"type": "number", "minimum": 0, "maximum": 1e9}},
+        (("bars",), {"values": {"minItems": 1, "maxItems": 8, "items": {"type": "number", "minimum": -1e9, "maximum": 1e9}},
                      "labels": {"minItems": 1, "maxItems": 8}}, ("values", "labels")),
-        (("plot",), {"values": {"minItems": 2}}, ("values",)),
+        (("histogram",), {"samples": {"minItems": 1}, "bin_edges": {"minItems": 2},
+                           "x_label": {}, "y_label": {}}, ("samples", "bin_edges")),
+        (("scatter",), {"x_values": {"minItems": 2}, "values": {"minItems": 2},
+                         "labels": {}, "x_label": {}, "y_label": {}}, ("x_values", "values")),
+        (("plot",), {"values": {"minItems": 2}, "x_values": {"minItems": 2},
+                      "x_label": {}, "y_label": {}}, ("values",)),
         (("function_plot",), {key: {} for key in ("expression", "x_min", "x_max", "y_min", "y_max",
                                                       "asymptotes", "series", "tangent_at", "secant_x")},
          ("expression", "x_min", "x_max", "y_min", "y_max")),
@@ -221,10 +258,15 @@ def designed_scene_schema():
         (("tree",), {"labels": {"minItems": 3, "maxItems": 9},
                      "values": {"minItems": 2, "maxItems": 8, "items": {"type": "integer", "minimum": 0, "maximum": 7}}},
          ("labels", "values")),
-        (("network",), {"labels": {"minItems": 3, "maxItems": 8},
-                        "values": {"minItems": 2, "items": {"type": "integer", "minimum": 0, "maximum": 7}}},
+        (("network",), {"labels": {"minItems": 1, "maxItems": 8}, "directed": {},
+                        "values": {"minItems": 0, "items": {"type": "integer", "minimum": 0, "maximum": 7}}},
          ("labels", "values")),
     ]
+    primitive = {"box", "decision", "circle", "database", "document", "text"}
+    concrete = requested & {kind for kinds, _, _ in families for kind in kinds} - primitive
+    if concrete or "flowchart" in requested:
+        families = [(kinds, fields, required) for kinds, fields, required in families
+                    if set(kinds) & (primitive | concrete)]
     variants = []
     for kinds, fields, required in families:
         properties = {key: copy.deepcopy(item) for key, item in source["properties"].items()
@@ -236,13 +278,33 @@ def designed_scene_schema():
             properties["text"]["minLength"] = 1
         if kinds[0] == "function_plot":
             properties["expression"]["minLength"] = 1
+        if kinds[0] in ("histogram", "scatter"):
+            properties["width"]["minimum"] = 5
+            properties["height"]["minimum"] = 3.5
         for prop in properties.values():
             prop.pop("title", None)
             prop.pop("default", None)
         variants.append({"type": "object", "additionalProperties": False, "properties": properties,
                          "required": ["id", "type", "x", "y", "width", "height", *required]})
     schema["properties"]["elements"]["items"] = {"anyOf": variants}
-    return _compact_generation_schema(schema)
+    schema = _compact_generation_schema(schema)
+    # Keep only definitions reachable from the selected branches, including nested refs.
+    def references(value):
+        if isinstance(value, list):
+            return set().union(*(references(item) for item in value))
+        if not isinstance(value, dict):
+            return set()
+        result = {value["$ref"].removeprefix("#/$defs/")} if str(value.get("$ref", "")).startswith("#/$defs/") else set()
+        return result | set().union(*(references(item) for key, item in value.items() if key != "$defs"))
+    reachable, pending = set(), references(schema)
+    while pending:
+        key = pending.pop()
+        if key in reachable:
+            continue
+        reachable.add(key)
+        pending.update(references(schema["$defs"].get(key, {}))-reachable)
+    schema["$defs"] = {key: value for key, value in schema["$defs"].items() if key in reachable}
+    return schema
 
 
 def legacy_scene(diagram):
@@ -280,7 +342,9 @@ Usa numeri sintetici solo se l'utente chiede un esempio numerico didattico: in q
 'Esempio illustrativo' nel testo visibile. Le coordinate di layout e gli indici dei nodi non sono misure.
 Scegli il linguaggio visivo pertinente: decision per condizioni e rami sì/no; database per archivi;
 document per file; circle per entità; grid per pixel/matrici (valori 0..1); bars per confronti quantitativi
-(labels per ogni valore); plot per segnali/campioni; function_plot per il grafico cartesiano di una funzione;
+(labels per ogni valore, anche valori negativi o zero); histogram per distribuzioni numeriche con samples
+e bin_edges; scatter per coppie osservate x,y in x_values e values; plot per segnali/campioni;
+function_plot per il grafico cartesiano di una funzione;
 venn per 2–4 insiemi sovrapposti (nomi in labels);
 gantt per attività temporali (labels e coppie inizio,fine in values); timeline per eventi ordinati
 (labels e posizioni crescenti facoltative in values); tree per gerarchie (labels e indice del genitore
@@ -290,6 +354,16 @@ Ogni forma ha un contratto distinto: compila soltanto i suoi campi. grid/bars/pl
 non vuoto; grid richiede anche columns e barre una label per valore. network richiede labels dei
 nodi e values come lista PIATTA di coppie di indici interi a base zero, distinti e minori del numero
 di nodi. Gli archi rappresentano soltanto relazioni dichiarate nel contenuto, mai inferite dai titoli.
+network accetta anche un solo nodo o nodi isolati: values=[] senza aggiungere archi. Per archi orientati
+esplicitamente dichiarati imposta directed=true: ogni coppia [a,b] indica a→b; altrimenti directed=false.
+histogram richiede i campioni originali in samples e da 2 a 13 estremi crescenti in bin_edges che li
+comprendano tutti. Non inserire frequenze in values: il motore conta [a,b), incluso l'ultimo estremo.
+I rettangoli hanno ampiezza numerica reale; con classi non uniformi l'altezza è densità di frequenza.
+scatter richiede da 2 a 64 valori in x_values e altrettanti in values (ordinate): mostra punti,
+senza inventare una linea o correlazione. labels è facoltativo; x_label/y_label nominano gli assi.
+plot può usare x_values per ascisse osservate strettamente crescenti, una per ogni ordinata in values;
+se omesso usa gli indici dei campioni. Con x_values riserva width>=5,height>=3.5 per tacche numeriche.
+Non sostituire un istogramma con barre categoriali e non fabbricare campioni a partire da frequenze.
 Esempi JSON di sintassi (riusa la struttura, non i dati):
 {"id":"rete","type":"network","x":6,"y":4.15,"width":10,"height":5,"labels":["A","B","C"],"values":[0,1,1,2]}
 {"id":"matrice","type":"grid","x":6,"y":4.15,"width":9,"height":5,"columns":2,"values":[0,0.5,1,0.25],"text":"Esempio illustrativo"}
@@ -311,7 +385,8 @@ Esempio illustrativo: expression "x^2", tangent_at 1, secant_x [1,2],
 x_min -1,x_max 3,y_min -3,y_max 9,width 10,height 5.8. Non inventare campioni delle rette.
 Per confrontare grafici con assi DIVERSI, usa due function_plot affiancati con width=5.4,
 height=5.5,x=3 e x=9,y=4.15. Non sovrapporre pannelli distinti.
-Usa un elemento composto function_plot/venn/gantt/timeline/tree/network grande almeno width=5,height=3
+Usa un elemento composto histogram/scatter/function_plot/venn/gantt/timeline/tree/network grande almeno width=5,height=3
+(histogram/scatter height>=3.5)
 (Gantt height>=4), anziché approssimarlo con riquadri. Non forzare grafici numerici su argomenti senza dati.
 Tu progetti elementi e relazioni, Manim costruisce e renderizza la scena.
 Canvas 12 × 8, x cresce verso destra e y verso il basso. x,y sono il CENTRO, width,height l'ingombro totale.

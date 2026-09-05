@@ -66,7 +66,10 @@ def test_compact_generation_schema_preserves_expanded_contract_and_stays_within_
                 if key not in ("$defs", "title", "default")}
 
     assert expand(actual, actual["$defs"]) == expand(before[0], before[0]["$defs"])
-    assert len(json.dumps(actual, ensure_ascii=False)) < 9200
+    assert len(json.dumps(actual, ensure_ascii=False)) < 12000
+    # Concrete requests don't carry every supported chart's grammar.
+    for family in ("histogram", "scatter", "network", "function_plot"):
+        assert len(json.dumps(module.designed_scene_schema([family]), ensure_ascii=False)) < 6000
     assert "title" in actual["properties"] and "title" in actual["required"]
     assert {"id", "x", "y", "width", "height", "text", "caption", "tone", "stage"} <= actual["$defs"].keys()
 

@@ -368,13 +368,26 @@ Il codice Python che compila e renderizza la scena e distribuito con l'app e
 non proviene mai dal modello.
 
 Sono disponibili blocchi, decisioni, documenti, database, griglie di valori,
-grafici a barre e lineari, diagrammi di Venn, Gantt, timeline, alberi e reti.
+grafici a barre anche negative, istogrammi, dispersione, grafici lineari e di
+funzioni, diagrammi di Venn, Gantt, timeline, alberi e grafi orientati o non orientati.
 Venn/Gantt/timeline/albero/rete sono oggetti composti nativi: il modello ne
 specifica insiemi, attività e tempi, eventi, gerarchie o archi; il compilatore
 Manim dell'app costruisce forme e relazioni. Nei flowchart inizio/fine, decisioni
 e archivi usano forme semantiche e un flusso collegato di soli rettangoli viene
-rifiutato. Se il prompt nomina esplicitamente Gantt, Venn, timeline, albero,
-rete o diagramma di flusso, una famiglia diversa non supera la validazione.
+rifiutato. Nei confronti sono ammessi processi distinti con collegamenti interni:
+non è necessario ridurli a riquadri isolati. Se la richiesta locale della scena
+nomina uno o più tipi di grafico, una famiglia diversa non supera la validazione.
+Le menzioni nel prompt generale della presentazione non impongono tutti i tipi
+in ogni singola slide.
+
+Gli istogrammi richiedono campioni originali e limiti degli intervalli:
+i conteggi sono calcolati dall'app, senza inventare misure. Gli intervalli
+comprendono l'estremo sinistro e solo l'ultimo comprende anche quello destro.
+Con ampiezze diverse, l'altezza è il conteggio diviso per l'ampiezza, indicato
+sull'asse. La dispersione usa coppie x/y; i grafici lineari possono avere ascisse
+esplicite, mantenendone le distanze reali. Nell'editor sono disponibili campioni,
+intervalli, ascisse, nomi degli assi e direzione degli archi.
+
 I collegamenti sono instradati deterministicamente attorno agli altri oggetti;
 testi, sovrapposizioni, dimensione minima e limiti del canvas vengono verificati
 prima del salvataggio.
@@ -386,10 +399,15 @@ diagramma e il resto della presentazione prosegue; il log mantiene il motivo.
 anche se una singola scena non riesce; **Progetta Manim** riprova la sola slide.
 Gli errori comuni dei modelli remoti (numeri serializzati come testo, etichette
 troppo lunghe e piccoli difetti geometrici) vengono corretti prima del render.
-Lo schema fornito all'LLM distingue i campi richiesti per ogni forma: una rete
-richiede nodi e coppie di indici, una griglia richiede dati numerici e colonne.
+Lo schema fornito all'LLM distingue i campi richiesti per ogni forma e, quando
+il tipo è esplicito, include soltanto le famiglie richieste e le forme di base.
+Questo riduce il contesto anche per i modelli locali. Una rete richiede nodi e
+coppie di indici, una griglia dati numerici e colonne. Varianti non ambigue
+(ad esempio punti x/y o frecce esplicite inserite fra gli oggetti) vengono
+convertite nel formato corretto; dati contraddittori non vengono indovinati.
 Gli errori di dati, struttura e geometria ricevono correzioni diverse; se il
-modello ripete lo stesso errore sullo stesso candidato, i tentativi si fermano.
+modello ripete lo stesso errore sull'elemento non valido, i tentativi si fermano
+anche se ha cambiato il testo di altri elementi.
 I log riportano categoria, campo e regola, senza salvare la risposta del modello.
 Non vengono inventati valori o relazioni per superare la validazione.
 
@@ -465,7 +483,11 @@ nell'app: le parentesi LaTeX compongono formule in linea o isolate in
 anteprima, PDF, PPTX e Slidev. Il sorgente resta modificabile nell'editor.
 Il tipo Manim function_plot traccia deterministicamente funzioni di x,
 dominio, intervallo visibile e asintoti; sono ammessi operatori aritmetici e
-sin, cos, tan, sqrt, log, ln, exp, abs. Il parser non usa eval:
+sin, cos, tan, sqrt, log, ln, exp, abs. Il campionamento separa anche poli
+polinomiali e della tangente con argomento affine riconoscibili dall'espressione,
+evitando segmenti che attraversano discontinuità come quella di 1/x.
+Non è un risolutore simbolico universale: per funzioni più complesse si possono
+specificare gli asintoti e un dominio più ristretto. Il parser non usa eval:
 l'LLM non può eseguire Python o JavaScript arbitrario sul computer.
 
 Importazione: PDF completi fino a 1.500 pagine, 250 MB/file e 12 milioni di

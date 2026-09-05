@@ -13,7 +13,7 @@ from .storage import uid, now
 from .search_settings import SearchConfig
 from .web_research import (WebResearch, NoSearchResults, public_research, web_context,
                            web_evidence, source_citations, automatic_query)
-from .diagrams import ManimRenderer, design_diagram, fallback_diagram, requested_family
+from .diagrams import ManimRenderer, design_diagram, fallback_diagram, requested_scene_families
 
 KNOWLEDGE_CONTEXT = (
     "MODALITÀ CONOSCENZA DEL MODELLO — nessun documento allegato. "
@@ -513,7 +513,7 @@ class Worker:
                     previous_diagram = content.diagram.model_dump()
                     brief = (request.prompt if request.slide_id else
                              content.diagram.brief or slide.get("purpose", "") or content.title)
-                    required_family = requested_family(content.title + " " + brief)
+                    required_family = requested_scene_families(content.title, content.diagram.brief, brief)
                     used_fallback = False
                     try:
                         if content.diagram.kind == "manim" and content.diagram.scene and not request.replace_diagrams:
@@ -838,7 +838,8 @@ class Worker:
                         self.store.event(jid, "Progetto Manim non valido; verifico un fallback esplicito · " +
                                          str(exc)[:220])
                         try:
-                            required_family = requested_family(content.title + " " + content.diagram.brief)
+                            required_family = requested_scene_families(content.title, content.diagram.brief,
+                                                                      content.diagram.brief or slide.get("purpose", ""))
                             diagram = fallback_diagram(content, previous_diagram, required_family)
                             rendered = await self.renderer.render(pid, diagram, project)
                             content.diagram = type(content.diagram).model_validate(diagram)

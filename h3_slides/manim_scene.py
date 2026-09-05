@@ -7,6 +7,7 @@ from manim import (VGroup, Text, RoundedRectangle, Rectangle, Ellipse, Polygon,
 from .diagram_spec import ManimSceneSpec
 from .diagram_layout import bounds, route_connection
 from .math_expression import sample_expression, function_line, compile_expression
+from .chart_data import histogram_data, nice_axis, format_tick
 
 
 def point(x, y):
@@ -39,6 +40,7 @@ def build_scene(value, project):
         font = "Arial"
     texts, shortened_texts = [], 0
     plotted_curves = 0
+    charts = []
 
     def copy(value, width, height, size=30, minimum=22, bold=False):
         nonlocal shortened_texts
@@ -76,7 +78,7 @@ def build_scene(value, project):
         e, tone = element, colors[element.tone]
         w, h = e.width, e.height
         group = VGroup()
-        if e.type in ("grid", "bars", "plot", "function_plot", "venn", "gantt", "timeline", "tree", "network"):
+        if e.type in ("grid", "bars", "histogram", "scatter", "plot", "function_plot", "venn", "gantt", "timeline", "tree", "network"):
             panel = RoundedRectangle(width=w, height=h, corner_radius=.13, stroke_width=1.5,
                 color=mix(colors["bg"], tone, .55), fill_color=mix(colors["bg"], tone, .055), fill_opacity=1)
             group.add(panel)
@@ -103,20 +105,124 @@ def build_scene(value, project):
                         digit = copy(f"{value:g}", size-.1, size-.1, size=22, minimum=20).move_to(cell)
                         group.add(digit)
             elif e.type == "bars":
-                count, maximum = len(e.values), max(e.values)
-                chart_h = inner_h-.5
-                baseline = -inner_h/2+.2
+                count = len(e.values)
+                lo, hi = min(0, min(e.values)), max(0, max(e.values))
+                if lo == hi:
+                    hi = 1
+                bottom, top = -inner_h/2+.62, inner_h/2-.3
+                ordinate = lambda value: bottom+(top-bottom)*(value-lo)/(hi-lo)
+                baseline = ordinate(0)
                 group.add(Line([-inner_w/2, baseline, 0], [inner_w/2, baseline, 0],
                                color=colors["muted"], stroke_width=2))
                 for i, value in enumerate(e.values):
                     step = inner_w/count
                     x = -inner_w/2+(i+.5)*step
-                    bh = max(.015, chart_h*value/maximum)
-                    bar = Rectangle(width=step*.56, height=bh, stroke_width=0,
-                                    fill_color=mix(colors["bg"], tone, .65+.3*i/max(1, count-1)), fill_opacity=1).move_to([x, baseline+bh/2, 0])
-                    label = copy(e.labels[i], step-.1, .4, size=22, minimum=20).move_to([x, baseline-.28, 0])
-                    number = copy(f"{value:g}", step-.05, .35, size=22, minimum=20).move_to([x, baseline+bh+.19, 0])
-                    group.add(bar, label, number)
+                    endpoint = ordinate(value)
+                    if value:
+                        group.add(Rectangle(width=step*.56, height=abs(endpoint-baseline), stroke_width=0,
+                            fill_color=mix(colors["bg"], tone, .65+.3*i/max(1, count-1)), fill_opacity=1).move_to([x, (endpoint+baseline)/2, 0]))
+                    else:
+                        group.add(Line([x-step*.28, baseline, 0], [x+step*.28, baseline, 0], color=tone, stroke_width=4))
+                    label = copy(e.labels[i], step-.1, .4, size=22, minimum=20).move_to([x, -inner_h/2-.08, 0])
+                    number_y = endpoint+.17 if value >= 0 else endpoint-.17
+                    number = copy(f"{value:g}", step-.05, .3, size=22, minimum=20).move_to([x, number_y, 0])
+                    group.add(label, number)
+                charts.append({"id": e.id, "type": e.type, "values": list(e.values), "y_range": [lo, hi], "zero_baseline": baseline})
+            elif e.type in ("histogram", "scatter") or (e.type == "plot" and e.x_values):
+                histogram = histogram_data(e.samples, e.bin_edges) if e.type == "histogram" else None
+                if histogram:
+                    xs = {"min": e.bin_edges[0], "max": e.bin_edges[-1]}
+                    stride = max(1, math.ceil((len(e.bin_edges)-1)/5))
+                    xs["ticks"] = list(e.bin_edges[::stride])
+                    if xs["ticks"][-1] != e.bin_edges[-1]:
+                        xs["ticks"].append(e.bin_edges[-1])
+                    xs["step"] = min(b-a for a, b in zip(e.bin_edges, e.bin_edges[1:]))
+                    ys = nice_axis(histogram["heights"], include_zero=True, integer=not histogram["density"])
+                    y_title = ("Conteggio / ampiezza" if histogram["density"] else "Conteggio")
+                    if e.y_label and e.y_label != y_title:
+                        y_title += " · " + e.y_label
+                else:
+                    xs, ys = nice_axis(e.x_values), nice_axis(e.values)
+                    y_title = e.y_label or "y"
+                left, right = -inner_w/2+1.08, inner_w/2-.24
+                bottom, top = -inner_h/2+.58, inner_h/2-.56
+                if right-left < 2 or top-bottom < .75:
+                    raise ValueError(f"Grafico {e.id}: aumenta width/height per assi e tacche leggibili")
+                coordinate = lambda x, y: np.array([left+(right-left)*(x-xs["min"])/(xs["max"]-xs["min"]),
+                    bottom+(top-bottom)*(y-ys["min"])/(ys["max"]-ys["min"]), 0.])
+                # Numeric labels must never be shortened to an ellipsis.
+                def number_label(value, step, width=1.0):
+                    label = Text(format_tick(value, step), font=font, font_size=20, color=colors["fg"])
+                    if label.width > width or label.height > .31:
+                        raise ValueError(f"Grafico {e.id}: tacche numeriche non leggibili; amplia il riquadro o cambia unità")
+                    texts.append((label, 20))
+                    return label
+                y_labels = []
+                for index in [0, len(ys["ticks"])-1, *range(1, len(ys["ticks"])-1)]:
+                    tick = ys["ticks"][index]
+                    p = coordinate(xs["min"], tick)
+                    group.add(Line(p, [right, p[1], 0], color=mix(colors["bg"], colors["fg"], .16), stroke_width=1),
+                              Line(p+[-.04, 0, 0], p+[.04, 0, 0], color=colors["muted"], stroke_width=2))
+                    label = number_label(tick, ys["step"], .9).next_to(p, [-1, 0, 0], buff=.10)
+                    if any(label.get_bottom()[1] < other.get_top()[1]+.04 and label.get_top()[1] > other.get_bottom()[1]-.04
+                           for other in y_labels):
+                        texts.pop()
+                    else:
+                        group.add(label);y_labels.append(label)
+                x_labels = []
+                for index in [0, len(xs["ticks"])-1, *range(1, len(xs["ticks"])-1)]:
+                    tick = xs["ticks"][index]
+                    p = coordinate(tick, ys["min"])
+                    group.add(Line(p+[0, -.04, 0], p+[0, .04, 0], color=colors["muted"], stroke_width=2))
+                    label = number_label(tick, xs["step"], 1.1).next_to(p, [0, -1, 0], buff=.10)
+                    if any(label.get_left()[0] < other.get_right()[0]+.08 and label.get_right()[0] > other.get_left()[0]-.08
+                           for other in x_labels):
+                        texts.pop()
+                    else:
+                        group.add(label);x_labels.append(label)
+                group.add(Line([left, top, 0], [left, bottom, 0], color=colors["muted"], stroke_width=2),
+                          Line([left, bottom, 0], [right, bottom, 0], color=colors["muted"], stroke_width=2))
+                if xs["min"] < 0 < xs["max"]:
+                    group.add(Line(coordinate(0, ys["min"]), coordinate(0, ys["max"]), color=colors["muted"], stroke_width=1.5))
+                if ys["min"] < 0 < ys["max"]:
+                    group.add(Line(coordinate(xs["min"], 0), coordinate(xs["max"], 0), color=colors["muted"], stroke_width=1.5))
+                group.add(copy(y_title, inner_w, .33, size=20, minimum=20).move_to([0, inner_h/2-.11, 0]),
+                          copy(e.x_label or "x", inner_w, .3, size=20, minimum=20).move_to([(left+right)/2, -inner_h/2-.05, 0]))
+                report_data = {"id": e.id, "type": e.type, "x_range": [xs["min"], xs["max"]],
+                               "y_range": [ys["min"], ys["max"]], "x_ticks": xs["ticks"], "y_ticks": ys["ticks"]}
+                if histogram:
+                    for start, end, height, count in zip(e.bin_edges, e.bin_edges[1:], histogram["heights"], histogram["counts"]):
+                        a, b = coordinate(start, 0), coordinate(end, height)
+                        if height:
+                            group.add(Rectangle(width=b[0]-a[0], height=b[1]-a[1], color=tone, stroke_width=1.5,
+                                fill_color=mix(colors["bg"], tone, .55), fill_opacity=1).move_to((a+b)/2))
+                        else:
+                            group.add(Line(a, coordinate(end, 0), color=tone, stroke_width=3))
+                    report_data.update(histogram)
+                else:
+                    points = [coordinate(x, y) for x, y in zip(e.x_values, e.values)]
+                    if e.type == "plot":
+                        group.add(VMobject(color=tone, stroke_width=3).set_points_as_corners(points))
+                        plotted_curves += 1
+                    group.add(*[Dot(p, radius=.058, color=tone) for p in points])
+                    placed = []
+                    for index, name in enumerate(e.labels):
+                        label = copy(name, 1.1, .28, size=20, minimum=20)
+                        for direction in ([0, 1, 0], [1, 0, 0], [-1, 0, 0], [0, -1, 0], [1, 1, 0], [-1, -1, 0]):
+                            label.next_to(points[index], direction, buff=.12)
+                            x1, x2, y1, y2 = label.get_left()[0], label.get_right()[0], label.get_bottom()[1], label.get_top()[1]
+                            if x1 < left or x2 > right or y1 < bottom or y2 > top:
+                                continue
+                            if any(x1 < other.get_right()[0]+.04 and x2 > other.get_left()[0]-.04 and
+                                   y1 < other.get_top()[1]+.04 and y2 > other.get_bottom()[1]-.04 for other in placed):
+                                continue
+                            if any(x1-.07 < p[0] < x2+.07 and y1-.07 < p[1] < y2+.07 for p in points):
+                                continue
+                            placed.append(label);group.add(label);break
+                        else:
+                            raise ValueError(f"Grafico {e.id}: etichette dei punti troppo vicine; amplia il riquadro o usa meno etichette")
+                    report_data["points"] = [list(pair) for pair in zip(e.x_values, e.values)]
+                charts.append(report_data)
             elif e.type == "plot":
                 lo, hi = min(0, min(e.values)), max(e.values)
                 if hi <= lo:
@@ -283,10 +389,18 @@ def build_scene(value, project):
                 radius_x, radius_y = inner_w*.38, inner_h*.34
                 positions = [(radius_x*math.cos(-math.pi/2+2*math.pi*i/count),
                               radius_y*math.sin(-math.pi/2+2*math.pi*i/count)) for i in range(count)]
-                for a, b in zip(e.values[::2], e.values[1::2]):
-                    group.add(Line([*positions[int(a)], 0], [*positions[int(b)], 0],
-                                   color=colors["muted"], stroke_width=2))
+                if count == 1:
+                    positions = [(0, 0)]
                 node_w, node_h = min(1.35, inner_w*.22), min(.72, inner_h*.32)
+                for a, b in zip(e.values[::2], e.values[1::2]):
+                    start, end = np.array([*positions[int(a)], 0]), np.array([*positions[int(b)], 0])
+                    if e.directed:
+                        direction = (end-start)/np.linalg.norm(end-start)
+                        padding = 1/math.sqrt((direction[0]/(node_w/2))**2+(direction[1]/(node_h/2))**2)
+                        group.add(Arrow(start+direction*padding, end-direction*padding, buff=.035,
+                                        color=colors["muted"], stroke_width=2, tip_length=.13))
+                    else:
+                        group.add(Line(start, end, color=colors["muted"], stroke_width=2))
                 for index, (position, name) in enumerate(zip(positions, e.labels)):
                     node = Ellipse(width=node_w, height=node_h, color=tone,
                                    fill_color=mix(colors["bg"], tone, .18), fill_opacity=1,
@@ -375,7 +489,7 @@ def build_scene(value, project):
     report = {"engine": "manim", "elements": len(objects), "connections": len(links),
               "min_font_size": min(size for _, size in texts), "text_count": len(texts),
               "shortened_texts": shortened_texts, "bounds_checked": True,
-              "plotted_curves": plotted_curves,
+              "plotted_curves": plotted_curves, "charts": charts,
               "types": sorted({e.type for e in spec.elements})}
     return root, header, footer, stages, report
 
