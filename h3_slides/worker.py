@@ -530,6 +530,10 @@ class Worker:
             if self.store.job(jid)["status"] != "interrupted":
                 self.store.event(jid, "Generazione annullata; slide salvate conservate", status="cancelled")
         except Exception as exc:
+            if self.store.job(jid)["status"] in ("cancelled", "interrupted"):
+                # Windows temporary-render cleanup may raise while unwinding
+                # cancellation. It must not turn a requested stop into failure.
+                return
             # Only our bounded error strings: avoid storing Pydantic inputs containing documents.
             message = ("Risposta LLM non conforme allo schema della slide: " + validation_reason(exc)
                        if type(exc).__name__ == "ValidationError" else str(exc))

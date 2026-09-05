@@ -186,6 +186,31 @@ async def test_duplicate_job_rejected_and_cancel(store):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["cancelled", "interrupted"])
+async def test_cleanup_error_does_not_override_requested_stop(store, status):
+    p = project(store)
+    worker = Worker(store, SimpleNamespace())
+    entered = asyncio.Event()
+
+    class CleanupFailureLLM(FakeLLM):
+        async def prepare(self):
+            entered.set()
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                raise OSError(267, "Render temporary directory cleanup failed") from None
+
+    worker.clients = CleanupFailureLLM
+    job = worker.submit(p["id"], request())
+    await asyncio.wait_for(entered.wait(), 2)
+    store.event(job["id"], "Stop richiesto", status=status)
+    worker.tasks[job["id"]].cancel()
+    await worker.tasks[job["id"]]
+    assert store.job(job["id"])["status"] == status
+    assert not store.job(job["id"]).get("error")
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("mode", ["local", "remote"])
 async def test_prompt_only_generation_and_regeneration(store, mode):
     p = store.create(ProjectInput(prompt="La rivoluzione francese", count=2,
