@@ -206,6 +206,10 @@ non abilita da sola la ricerca, nemmeno in un nuovo progetto.
   risultati non bastano. Serve Internet. Le voci appartengono alla stessa
   enciclopedia: non sono fonti indipendenti e non coprono tutto il web;
   gli estratti possono omettere immagini e formule.
+  Per richieste con qualificatori come «cause ed esiti», cerca anche la voce
+  del soggetto principale, senza un'altra chiamata al modello. Quando la trova,
+  privilegia quella voce e i titoli esplicitamente pertinenti al focus: può
+  restituire meno fonti del massimo richiesto, anziché aggiungere risultati marginali.
 - **SearXNG locale**: indicare l'indirizzo del proprio servizio.
   Il JSON deve essere abilitato. Configurazione e launcher opzionali indipendenti
   dal PC sono in [deploy/searxng](deploy/searxng/README.md).
@@ -219,7 +223,10 @@ non come istruzioni. Limiti di tempo, redirect e dimensione proteggono il recupe
 Le fonti effettivamente lette, gli URL e la data di consultazione restano nel
 progetto e nelle note delle slide; il testo integrale della cache resta locale.
 La cache vale un'ora per progetto e query; **Aggiorna ricerca** la esclude.
-Solo se una ricerca restituisce **zero risultati**, l'app tenta una seconda
+Gli estratti conservati sono limitati a 240.000 caratteri per fonte; per ogni
+slide vengono recuperati solo i passaggi pertinenti, senza inviare l'intero articolo
+al modello. Un eventuale troncamento viene segnalato negli avvisi della ricerca.
+Solo se una ricerca restituisce **zero risultati**, l'app chiede al modello una
 query più semplice. CAPTCHA, rifiuti del servizio ed errori di connessione non
 vengono aggirati con altri tentativi. Se non acquisisce fonti web, usa **solo
 i documenti allegati**, quando presenti, e mostra **Documenti allegati · nessuna
@@ -235,6 +242,11 @@ prima del caricamento del LLM. Con il campo vuoto, una breve chiamata al modello
 prepara la query; lo stesso modello viene riusato per la presentazione.
 I passaggi appaiono nei log del job. La ricerca non aggiorna da sola slide già pronte: usare
 Rigenera per una slide oppure Rigenera per l'intera presentazione.
+Le citazioni già formattate dall'app vengono riconosciute anche in rigenerazione;
+se cambiano gli ID delle fonti, titolo e URL permettono di risolvere il riferimento
+senza attribuirlo a una fonte diversa. Citazioni mancanti o sconosciute attivano
+una correzione mirata, separata dal riadattamento dei paragrafi. Non vengono aggiunte
+fonti arbitrarie: se il modello non produce riferimenti validi, l'errore resta esplicito.
 I risultati vanno verificati dall'utente; il recupero di fonti non elimina
 allucinazioni, errori o incompletezza. Questa ricerca riguarda le fonti testuali;
 la ricerca di immagini ha una spunta indipendente, descritta sotto.

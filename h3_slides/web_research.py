@@ -1,22 +1,102 @@
 """Optional, free web research. No API keys, paid fallback, browser or JS execution."""
 import asyncio
 import hashlib
+from html import unescape
 from html.parser import HTMLParser
 import ipaddress
 import json
 import re
 import socket
 import time
+import unicodedata
 from urllib.parse import urljoin, urlsplit, urlunsplit, parse_qs, urlencode
 from urllib.robotparser import RobotFileParser
 import aiohttp
 from aiohttp.abc import AbstractResolver
 from .retrieval import rank_evidence
+from .citations import SourceCitationError, resolve_web_source
 
 AGENT = "H3-Slides/0.2 (https://github.com/emanuelealbertosi/H3-Slides)"
 CACHE_SECONDS = 3600
+CACHE_VERSION = "web-v3"
 SEARCH_URL = "https://html.duckduckgo.com/html/"
 MAX_PAGE_BYTES = 2_000_000
+MAX_SOURCE_CHARS = 240_000
+_WIKIPEDIA_FOCUS = {"cause", "causes", "conseguenze", "consequences", "esiti", "outcomes",
+                    "effetti", "effects", "caratteristiche", "characteristics", "funzionamento",
+                    "funzioni", "functions", "vantaggi", "svantaggi", "advantages", "disadvantages"}
+
+
+def wikipedia_queries(query):
+    """Keep the requested focus, also find the main article when qualifiers overconstrain it.
+
+    Only explicit trailing explanatory words are removed; identifiers, versions,
+    leading subject words and quoted/operator searches are never guessed away.
+    This adds at most one request per language and does not call the LLM.
+    """
+    if re.search(r'["«»]|\b\w+:', query):
+        return [query]
+    words = list(re.finditer(r"[^\W_]+(?:[-.][^\W_]+)*", query, re.UNICODE))
+    joiners = {"e", "ed", "le", "la", "i", "gli", "il", "delle", "della", "dei", "del",
+               "di", "con", "and", "the", "its", "of", "with"}
+    for position, word in enumerate(words):
+        if word.group().casefold() not in _WIKIPEDIA_FOCUS or position < 2:
+            continue
+        end = position
+        while end and words[end - 1].group().casefold() in joiners:
+            end -= 1
+        meaningful = [w for w in words[:end] if w.group().casefold() not in joiners]
+        if len(meaningful) < 2:
+            continue
+        subject = query[:words[end - 1].end()].strip(" ,;:–—-")
+        if subject and subject != query:
+            return [query, subject]
+    return [query]
+
+
+def _search_words(text):
+    normalized = "".join(c for c in unicodedata.normalize("NFKD", text.casefold())
+                         if not unicodedata.combining(c))
+    return re.findall(r"[^\W_]+", normalized, re.UNICODE)
+
+
+def wikipedia_relevance(candidate, query):
+    """Prefer the subject article over biographies that mention it incidentally.
+
+    The stable sort retains the provider's relevance order for tied candidates;
+    snippets are ranking hints only, never evidence fed to the model.
+    """
+    subject = _search_words(wikipedia_queries(query)[-1])
+    title = _search_words(candidate.get("title", ""))
+    snippet = _search_words(candidate.get("search_snippet", ""))
+    if not subject:
+        return (0, 0, 0)
+    phrase = " ".join(subject)
+    title_phrase = " " + " ".join(title) + " "
+    snippet_phrase = " " + " ".join(snippet) + " "
+    exact = title == subject
+    in_title = " " + phrase + " " in title_phrase
+    in_snippet = " " + phrase + " " in snippet_phrase
+    overlap = len(set(subject) & set(title)) / len(set(subject))
+    return (3 if exact else 2 if in_title else 1 if in_snippet else 0,
+            overlap, -len(title) if exact or in_title else 0)
+
+
+def focused_wikipedia_results(results, query):
+    ranked = sorted(results, key=lambda candidate: wikipedia_relevance(candidate, query), reverse=True)
+    variants = wikipedia_queries(query)
+    # Once the subject has been recovered exactly, do not top up the quota with
+    # incidental biographies, homonymous films or different events/versions.
+    # A complete central article is safer than five weak keyword matches. Keep
+    # explicit subtopic titles too; their text must still pass the normal reader.
+    if len(variants) > 1 and any(wikipedia_relevance(c, query)[0] == 3 for c in ranked):
+        subject_words = set(_search_words(variants[-1]))
+        focus_words = set(_search_words(query)) & _WIKIPEDIA_FOCUS
+        ranked = [candidate for candidate in ranked
+                  if wikipedia_relevance(candidate, query)[0] == 3 or
+                  (subject_words <= set(_search_words(candidate.get("title", ""))) and
+                   focus_words & set(_search_words(candidate.get("title", ""))))]
+    return ranked
 
 
 class NoSearchResults(ValueError):
@@ -200,8 +280,9 @@ async def read_page(session, candidate):
             raise ValueError("La fonte richiede verifica umana o accesso interattivo")
         if len(text.strip()) < 200:
             raise ValueError("Testo della fonte insufficiente")
-        return {"title": title or candidate["title"], "url": url, "text": text[:24000],
-                "retrieved_at": time.time(), "reading": "estratto testuale"}
+        return {"title": title or candidate["title"], "url": url, "text": text[:MAX_SOURCE_CHARS],
+                "retrieved_at": time.time(), "reading": "estratto testuale",
+                "truncated": len(text) > MAX_SOURCE_CHARS}
 
 
 class WebResearch:
@@ -210,19 +291,25 @@ class WebResearch:
 
     async def search(self, session, query, provider, endpoint):
         if provider == "wikipedia":
-            results = []
+            results, seen = [], set()
+            queries = wikipedia_queries(query)
             for language in ("it", "en"):
-                data = await wikipedia_api(session, language, list="search", srsearch=query,
-                                           srnamespace=0, srlimit=6, srprop="")
-                for item in data.get("query", {}).get("search", []):
-                    page_id = item.get("pageid")
-                    if isinstance(page_id, int) and page_id > 0:
-                        results.append({"title": str(item.get("title", ""))[:200],
-                            "url": f"https://{language}.wikipedia.org/?curid={page_id}",
-                            "wiki_language": language, "wiki_page_id": page_id})
-                if len(results) >= 5:
+                for search_query in queries:
+                    data = await wikipedia_api(session, language, list="search", srsearch=search_query,
+                                               srnamespace=0, srlimit=6, srprop="snippet")
+                    for item in data.get("query", {}).get("search", []):
+                        page_id = item.get("pageid")
+                        if isinstance(page_id, int) and page_id > 0 and (language, page_id) not in seen:
+                            seen.add((language, page_id))
+                            results.append({"title": str(item.get("title", ""))[:200],
+                                "url": f"https://{language}.wikipedia.org/?curid={page_id}",
+                                "wiki_language": language, "wiki_page_id": page_id,
+                                "search_snippet": unescape(re.sub(r"<[^>]*>", " ",
+                                    str(item.get("snippet", ""))))[:2000]})
+                if len(results) >= 5 or (len(queries) > 1 and
+                        any(wikipedia_relevance(candidate, query)[0] == 3 for candidate in results)):
                     break
-            return results
+            return focused_wikipedia_results(results, query)
         if provider == "searxng":
             from .search_settings import SearchSettings
             endpoint = SearchSettings(searxng_url=endpoint).searxng_url
@@ -279,7 +366,7 @@ class WebResearch:
         if not query or len(query) > 200 or not 3 <= limit <= 5:
             raise ValueError("Inserisci una query di massimo 200 caratteri e scegli 3–5 fonti")
         await checkpoint()
-        key = hashlib.sha256(json.dumps(["web-v2", provider, endpoint if provider=="searxng" else "", query, limit]).encode()).hexdigest()
+        key = hashlib.sha256(json.dumps([CACHE_VERSION, provider, endpoint if provider=="searxng" else "", query, limit]).encode()).hexdigest()
         cache = self.store.asset_path(pid, "web-" + key + ".json")
         if cache.exists() and not refresh:
             data = json.loads(cache.read_text(encoding="utf-8"))
@@ -294,12 +381,17 @@ class WebResearch:
         async with aiohttp.ClientSession(connector=connector, trust_env=False,
                 cookie_jar=aiohttp.DummyCookieJar(), headers={"User-Agent": AGENT},
                 timeout=aiohttp.ClientTimeout(total=18, connect=7)) as session:
+            focused_query = wikipedia_queries(query) if provider == "wikipedia" else [query]
+            if len(focused_query) > 1:
+                event("Web: ricerca anche della voce principale: " + focused_query[-1])
             candidates = (await self.search(session, query, provider, endpoint))[:min(8, limit+3)]
             if not candidates:
                 raise NoSearchResults("Nessun risultato web trovato per questa query")
             sources, warnings = [], (["Ricerca limitata a Wikipedia (italiano/inglese): più voci della stessa "
                 "enciclopedia, non fonti indipendenti. Gli estratti possono omettere figure e formule."]
                 if provider == "wikipedia" else [])
+            if len(focused_query) > 1 and any(wikipedia_relevance(c, query)[0] == 3 for c in candidates):
+                warnings.append("Seleziono voci direttamente pertinenti; non completo la quota con risultati marginali o omonimi.")
             for start in range(0, len(candidates), 3):
                 await checkpoint()
                 event(f"Web: lettura fonti {start+1}–{min(start+3,len(candidates))}")
@@ -320,6 +412,8 @@ class WebResearch:
         sources = [{**s, "id": f"W{i+1}"} for i, s in enumerate(sources[:limit])]
         if len(sources) < limit:
             warnings.append(f"Acquisite {len(sources)} fonti su {limit} richieste")
+        if any(source.get("truncated") for source in sources):
+            warnings.append("Una fonte molto lunga supera il limite di lettura: l'estratto conservato può omettere le sezioni finali.")
         data = {"provider":name, "query":query, "created_at":time.time(),
                 "sources":sources, "warnings":warnings, "cache_used":False}
         cache.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
@@ -361,8 +455,9 @@ async def read_wikipedia(session, candidate):
     url = public_url(page.get("fullurl") or candidate["url"])
     if urlsplit(url).hostname != language + ".wikipedia.org":
         raise ValueError("Fonte fuori da Wikipedia")
-    return {"title": str(page.get("title") or candidate["title"])[:200], "url": url, "text": text[:24000],
+    return {"title": str(page.get("title") or candidate["title"])[:200], "url": url, "text": text[:MAX_SOURCE_CHARS],
         "retrieved_at": time.time(), "reading": "estratto testuale Wikipedia", "language": language,
+        "truncated": len(text) > MAX_SOURCE_CHARS,
         "license": "CC BY-SA", "license_url": "https://creativecommons.org/licenses/by-sa/4.0/"}
 
 
@@ -445,12 +540,10 @@ def web_evidence(data, query):
 
 
 def source_citations(refs, data, documents):
-    known = {s["id"]: s for s in data["sources"]}
-    by_url = {s["url"]:s for s in data["sources"]}
     result = []
     for ref in refs:
         ref = ref.strip()
-        source = known.get(ref.strip("[]")) or by_url.get(ref)
+        source = resolve_web_source(ref, data)
         if source:
             date = time.strftime("%Y-%m-%d", time.localtime(source["retrieved_at"]))
             citation = f"{source['title']} — {source['url']} (consultato {date})"
@@ -461,5 +554,5 @@ def source_citations(refs, data, documents):
         if citation not in result:
             result.append(citation)
     if not result:
-        raise ValueError("Il modello non ha citato fonti acquisite: rigenera la slide")
+        raise SourceCitationError("Citazioni mancanti o non riconosciute nelle fonti acquisite")
     return result
