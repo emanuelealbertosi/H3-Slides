@@ -7,6 +7,8 @@ from .web_images import WebImages
 from .models import SlideContent
 from .content_rules import content_contract, validate_content, fit_complete_sentences
 from .document_coverage import assess_coverage, validate_coverage
+from .source_images import (source_image_catalog, ranked_source_images, image_prompt_catalog,
+                            automatic_source_image)
 from .storage import uid, now
 from .search_settings import SearchConfig
 from .web_research import (WebResearch, NoSearchResults, public_research, web_context,
@@ -512,6 +514,7 @@ class Worker:
                     brief = (request.prompt if request.slide_id else
                              content.diagram.brief or slide.get("purpose", "") or content.title)
                     required_family = requested_family(content.title + " " + brief)
+                    used_fallback = False
                     try:
                         if content.diagram.kind == "manim" and content.diagram.scene and not request.replace_diagrams:
                             diagram = content.diagram.model_dump()
@@ -528,6 +531,7 @@ class Worker:
                         try:
                             diagram = fallback_diagram(content, previous_diagram, required_family)
                             rendered = await self.renderer.render(pid, diagram, project)
+                            used_fallback = True
                         except ValueError as fallback_exc:
                             if request.slide_id:
                                 raise ValueError(str(exc) + "; fallback: " + str(fallback_exc)) from None
@@ -540,13 +544,25 @@ class Worker:
                         if request.slide_id:
                             raise ValueError("La slide è stata modificata durante il rendering: il diagramma non è stato applicato")
                         continue
+                    # A lone photo used the legacy visual slot. Once a diagram
+                    # is added, keep that photo's exact position under image.
+                    old_content = current["content"]
+                    had_diagram = (old_content.get("diagram", {}).get("kind") != "none" and
+                                   current.get("diagram_render", {}).get("engine") == "manim" and
+                                   current.get("diagram_render", {}).get("asset"))
+                    placements = old_content.get("freeform", {})
+                    if ((old_content.get("image_id") or old_content.get("image_placeholder")) and
+                            not had_diagram and "visual" in placements and "image" not in placements):
+                        placements["image"] = placements.pop("visual")
                     current["content"]["diagram"] = diagram
                     current["diagram_render"] = rendered
                     current["revision"] += 1
                     current["status"] = "ready"
                     self.store.save_project(project)
                     successful += 1
-                    self.store.event(jid, f"Diagramma Manim {index + 1}/{len(targets)} progettato e verificato",
+                    outcome = ("fallback verificato; la nuova progettazione non è riuscita"
+                               if used_fallback else "progettato e verificato")
+                    self.store.event(jid, f"Diagramma Manim {index + 1}/{len(targets)} {outcome}",
                                      progress=(index + 1) / len(targets))
                 if not successful:
                     raise ValueError("Nessun diagramma è stato inserito: controlla i motivi nel log")
@@ -602,6 +618,7 @@ class Worker:
             if not targets:
                 raise ValueError("Tutte le slide sono già pronte. Usa Rigenera sulla singola slide.")
             source_image_ids = {a["image_id"] for a in assets}
+            image_catalog = source_image_catalog(self.store, self.store.project(pid), assets)
             for index, sid in enumerate(targets):
                 await self.checkpoint(jid)
                 project = self.store.project(pid)
@@ -630,18 +647,23 @@ class Worker:
                           for s in ready]
                 from .retrieval import slide_evidence
                 evidence = slide_evidence(self.store, project, slide["content"]["title"] + " " + slide.get("purpose", ""))
-                slide_context, slide_assets, slide_latest = context, assets, latest
+                image_topic = slide["content"]["title"] + " " + slide.get("purpose", "")
+                ranked_images = ranked_source_images(image_catalog, image_topic) if project.get("use_source_images", True) else []
+                slide_context, slide_assets, slide_latest = context, image_prompt_catalog(ranked_images, image_topic), latest
                 if request.provider.mode == "remote":
                     # A single slide already receives the relevant literal
                     # passages. Avoid repeating the whole book summary and the
                     # entire deck in APIs configured with an 8K context.
                     slide_context = "" if evidence.strip() else context[:5000]
                     evidence = evidence[:5500]
-                    slide_assets = assets[:24]
                     slide_latest = latest[-4:]
                 visual_rules = (
                     "\nOPZIONI VISIVE VINCOLANTI:\n" +
-                    ("Puoi scegliere una figura pertinente. " if project.get("use_source_images", True) else
+                    ("Scegli image_id tra le FIGURE pertinenti in IMMAGINI DISPONIBILI, usando il contesto "
+                     "della loro pagina. Immagine e diagramma occupano blocchi DISTINTI: selezionare Manim "
+                     "non esclude la figura. Non usare una pagina intera al posto di un'illustrazione. "
+                     "Se nessuna figura riguarda questa slide, lascia image_id vuoto; non inventare ID. "
+                     if project.get("use_source_images", True) else
                      "Immagini delle fonti disattivate: image_id deve essere vuoto. ") +
                     ("Diagrammi Manim attivi: per ogni slide non di apertura DEVI scegliere diagram.kind=manim, "
                      "labels=[], scene=null e scrivere in diagram.brief cosa deve dimostrare la scena. Il diagramma "
@@ -655,7 +677,8 @@ class Worker:
                         "\nImmagini internet attive: image_query deve indicare un soggetto visivo preciso in 2–6 parole, "
                         "come un luogo, una persona, un oggetto o un fenomeno pertinente alla slide. "
                         "Usa italiano o inglese, senza URL. Preferisci una figura pertinente già fornita in image_id. "
-                        "L'app cerca su Wikimedia Commons se nessuna figura fornita o diagramma Manim occupa la slide." +
+                        "L'app cerca su Wikimedia Commons se manca una figura fornita. Un diagramma Manim "
+                        "può coesistere con l'immagine e non impedisce la ricerca." +
                         (" Openverse è abilitato come ulteriore ricerca facoltativa se Wikimedia non trova nulla."
                          if project.get("use_openverse_images") else ""))
                 visual_rules += "\nFORMATO DEL CONTENUTO VINCOLANTE:\n" + prose_rules
@@ -769,6 +792,25 @@ class Worker:
                         note = (DOCUMENT_SUFFICIENT_NOTE if document_fallback["skipped_reason"] ==
                                 "documents_sufficient" else DOCUMENT_UNCERTAIN_NOTE)
                     content.notes = note + "\n\n" + content.notes[:6000-len(note)-2]
+                if not content.image_id and project.get("use_source_images", True):
+                    selected_image = automatic_source_image(ranked_source_images(
+                        image_catalog, content.title + " " + slide.get("purpose", "") + " " +
+                        " ".join(block.heading for block in content.blocks)))
+                    if selected_image:
+                        content.image_id = selected_image["image_id"]
+                        self.store.event(jid, "Immagine dalla fonte · selezione per contesto della pagina: " +
+                                         selected_image["source"])
+                    elif project["sources"]:
+                        self.store.event(jid, "Immagini documento: nessuna figura con pertinenza sufficiente per questa slide")
+                if content.image_id in source_image_ids and project.get("use_source_images", True):
+                    content.image_origin, content.image_placeholder = "source", False
+                    source_label = next((item["source"] for item in image_catalog
+                                         if item["image_id"] == content.image_id), "")
+                    if source_label:
+                        credit = "Immagine dal documento: " + source_label
+                        if credit not in content.notes:
+                            content.notes = content.notes[:max(0, 5998-len(credit))] + "\n\n" + credit
+                        self.store.event(jid, "Figura del documento inserita · " + source_label)
                 if content.image_id in visual_assets:
                     content.image_origin = visual_assets[content.image_id]["origin"]
                 elif not project["sources"] or not project.get("use_source_images", True):
@@ -793,13 +835,14 @@ class Worker:
                             lambda message: self.store.event(jid, message), lambda: self.checkpoint(jid))
                         content.diagram = type(content.diagram).model_validate(diagram)
                     except ValueError as exc:
-                        self.store.event(jid, "Progetto Manim non valido; uso una scena deterministica · " +
+                        self.store.event(jid, "Progetto Manim non valido; verifico un fallback esplicito · " +
                                          str(exc)[:220])
                         try:
                             required_family = requested_family(content.title + " " + content.diagram.brief)
                             diagram = fallback_diagram(content, previous_diagram, required_family)
                             rendered = await self.renderer.render(pid, diagram, project)
                             content.diagram = type(content.diagram).model_validate(diagram)
+                            self.store.event(jid, "Fallback Manim verificato; controlla lo schema di riepilogo")
                         except ValueError as fallback_exc:
                             self.store.event(jid, "Diagramma Manim saltato; la slide viene salvata senza diagramma · " +
                                              str(fallback_exc)[:220])
@@ -807,7 +850,7 @@ class Worker:
                 if content.image_id and content.image_id not in valid_images:
                     raise ValueError("Il modello ha indicato un'immagine inesistente")
                 acquired = None
-                if project.get("use_web_images") and not content.image_id and not rendered:
+                if project.get("use_web_images") and not content.image_id:
                     query = content.image_query.strip() or content.title
                     self.store.event(jid, "Ricerca immagine internet · " + query)
                     try:

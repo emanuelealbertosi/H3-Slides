@@ -1,9 +1,17 @@
 """A bounded scene language compiled into real Manim objects, never Python eval."""
+import copy
+import json
 from typing import Annotated, Literal
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, model_validator
 from .math_expression import validate_expression, function_line
 
-Number = Annotated[float, Field(ge=-1e9, le=1e9, allow_inf_nan=False)]
+def _reject_boolean_number(value):
+    if isinstance(value, bool):
+        raise ValueError("Usa un numero JSON, non un booleano")
+    return value
+
+
+Number = Annotated[float, BeforeValidator(_reject_boolean_number), Field(ge=-1e9, le=1e9, allow_inf_nan=False)]
 Tone = Literal["accent", "blue", "amber", "red", "violet", "neutral"]
 
 
@@ -151,6 +159,92 @@ class ManimSceneSpec(BaseModel):
         return self
 
 
+def _without_schema_annotations(value, names=False):
+    """Remove annotations while preserving property/definition names like title."""
+    if isinstance(value, list):
+        return [_without_schema_annotations(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    if names:
+        return {key: _without_schema_annotations(item) for key, item in value.items()}
+    return {key: _without_schema_annotations(item, key in ("properties", "$defs", "definitions"))
+            for key, item in value.items() if key not in ("title", "default")}
+
+
+def _compact_generation_schema(schema):
+    """Share repeated scalar rules using the existing llama.cpp $ref contract.
+
+    Keep each anyOf branch closed and self-contained apart from scalar refs;
+    no allOf, conditional schemas or unevaluatedProperties are introduced.
+    """
+    variants = schema["properties"]["elements"]["items"]["anyOf"]
+    size = lambda value: len(json.dumps(value, ensure_ascii=False))
+    for key in ("id", "x", "y", "width", "height", "text", "caption", "tone", "stage"):
+        groups = {}
+        for variant in variants:
+            signature = json.dumps(variant["properties"][key], sort_keys=True)
+            groups.setdefault(signature, []).append(variant)
+        signature, matches = max(groups.items(), key=lambda item: len(item[1]))
+        rule = json.loads(signature)
+        reference = {"$ref": "#/$defs/" + key}
+        if len(matches) * (size(rule) - size(reference)) > size({key: rule}):
+            schema["$defs"][key] = rule
+            for variant in matches:
+                variant["properties"][key] = dict(reference)
+    return _without_schema_annotations(schema)
+
+
+def designed_scene_schema():
+    """A per-shape generation contract; saved scenes retain the legacy model.
+
+    Cross-field rules (edge indices, grid dimensions and geometry) remain the
+    compiler's responsibility; the generation grammar restricts each shape's
+    fields and requires its data instead of suggesting empty numeric charts.
+    """
+    schema = ManimSceneSpec.model_json_schema()
+    source = schema["$defs"].pop("Element")
+    common = {"id", "type", "x", "y", "width", "height", "text", "caption", "tone", "stage"}
+    families = [
+        (("box", "decision", "circle", "database", "document", "text"), {}, ("text",)),
+        (("grid",), {"values": {"minItems": 1, "items": {"type": "number", "minimum": 0, "maximum": 1}},
+                     "columns": {}}, ("values", "columns")),
+        (("bars",), {"values": {"minItems": 1, "maxItems": 8, "items": {"type": "number", "minimum": 0, "maximum": 1e9}},
+                     "labels": {"minItems": 1, "maxItems": 8}}, ("values", "labels")),
+        (("plot",), {"values": {"minItems": 2}}, ("values",)),
+        (("function_plot",), {key: {} for key in ("expression", "x_min", "x_max", "y_min", "y_max",
+                                                      "asymptotes", "series", "tangent_at", "secant_x")},
+         ("expression", "x_min", "x_max", "y_min", "y_max")),
+        (("venn",), {"labels": {"minItems": 2, "maxItems": 4}}, ("labels",)),
+        (("gantt",), {"labels": {"minItems": 1, "maxItems": 8}, "values": {"minItems": 2, "maxItems": 16}},
+         ("labels", "values")),
+        (("timeline",), {"labels": {"minItems": 2, "maxItems": 8}, "values": {"maxItems": 8}}, ("labels",)),
+        (("tree",), {"labels": {"minItems": 3, "maxItems": 9},
+                     "values": {"minItems": 2, "maxItems": 8, "items": {"type": "integer", "minimum": 0, "maximum": 7}}},
+         ("labels", "values")),
+        (("network",), {"labels": {"minItems": 3, "maxItems": 8},
+                        "values": {"minItems": 2, "items": {"type": "integer", "minimum": 0, "maximum": 7}}},
+         ("labels", "values")),
+    ]
+    variants = []
+    for kinds, fields, required in families:
+        properties = {key: copy.deepcopy(item) for key, item in source["properties"].items()
+                      if key in common or key in fields}
+        properties["type"] = {"type": "string", **({"const": kinds[0]} if len(kinds) == 1 else {"enum": list(kinds)})}
+        for key, constraints in fields.items():
+            properties[key].update(constraints)
+        if "text" in required:
+            properties["text"]["minLength"] = 1
+        if kinds[0] == "function_plot":
+            properties["expression"]["minLength"] = 1
+        for prop in properties.values():
+            prop.pop("title", None)
+            prop.pop("default", None)
+        variants.append({"type": "object", "additionalProperties": False, "properties": properties,
+                         "required": ["id", "type", "x", "y", "width", "height", *required]})
+    schema["properties"]["elements"]["items"] = {"anyOf": variants}
+    return _compact_generation_schema(schema)
+
+
 def legacy_scene(diagram):
     """Render old saved data faithfully; only an explicit AI redesign adds meaning."""
     labels = diagram.get("labels", [])
@@ -181,7 +275,9 @@ def legacy_scene(diagram):
 
 SCENE_PROMPT = """PROGETTA UNA SCENA MANIM, non una slide di testo e non una lista di scatole.
 Il disegno deve spiegare un meccanismo, una struttura o dati concreti presenti nella slide.
-Non inventare misurazioni. Per esempi numerici inventati a scopo didattico scrivi 'Esempio illustrativo'.
+Non inventare misurazioni, campioni, quantità o relazioni mancanti per riempire lo schema.
+Usa numeri sintetici solo se l'utente chiede un esempio numerico didattico: in quel caso scrivi
+'Esempio illustrativo' nel testo visibile. Le coordinate di layout e gli indici dei nodi non sono misure.
 Scegli il linguaggio visivo pertinente: decision per condizioni e rami sì/no; database per archivi;
 document per file; circle per entità; grid per pixel/matrici (valori 0..1); bars per confronti quantitativi
 (labels per ogni valore); plot per segnali/campioni; function_plot per il grafico cartesiano di una funzione;
@@ -190,6 +286,19 @@ gantt per attività temporali (labels e coppie inizio,fine in values); timeline 
 (labels e posizioni crescenti facoltative in values); tree per gerarchie (labels e indice del genitore
 di ogni nodo dopo la radice in values); network per grafi (labels e coppie di indici collegate in values).
 values accetta ESCLUSIVAMENTE numeri JSON, mai formule, parole, null, unità o valori come "O(n)".
+Ogni forma ha un contratto distinto: compila soltanto i suoi campi. grid/bars/plot richiedono values
+non vuoto; grid richiede anche columns e barre una label per valore. network richiede labels dei
+nodi e values come lista PIATTA di coppie di indici interi a base zero, distinti e minori del numero
+di nodi. Gli archi rappresentano soltanto relazioni dichiarate nel contenuto, mai inferite dai titoli.
+Esempi JSON di sintassi (riusa la struttura, non i dati):
+{"id":"rete","type":"network","x":6,"y":4.15,"width":10,"height":5,"labels":["A","B","C"],"values":[0,1,1,2]}
+{"id":"matrice","type":"grid","x":6,"y":4.15,"width":9,"height":5,"columns":2,"values":[0,0.5,1,0.25],"text":"Esempio illustrativo"}
+Per piani, superfici, componenti, aree o ritagli descritti qualitativamente, usa box/circle/document
+e brevi annotazioni text senza values. Non usare una griglia di intensità, barre o campioni per
+illustrare una semplice forma geometrica. Mostra solo le relazioni o differenze documentate;
+quando la DSL non può esprimerle fedelmente, scegli pannelli qualitativi esplicitamente schematici.
+Un confronto qualitativo usa due o più pannelli affiancati con la stessa proprietà descritta.
+Le intestazioni indipendenti non costituiscono un processo: non collegarle con frecce automatiche.
 Per function_plot usa expression con la sola variabile x, numeri, + - * / ^ e le funzioni
 sin, cos, tan, sqrt, log, ln, exp, abs; imposta x_min,x_max,y_min,y_max e gli eventuali
 asintoti verticali in asymptotes. Per y=1/x usa expression "1/x" e asymptotes [0]:

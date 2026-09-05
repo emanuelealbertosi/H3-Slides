@@ -536,11 +536,15 @@ function elementDeleteButton(kind,index,label){
   return button;
 }
 function positionVisualActions(card){
-  const frame=card?.querySelector('.slide-frame'),visual=frame?.querySelector('.visual'),actions=frame?.querySelector('.visual-actions');
-  if(!frame||!visual||!actions)return;
-  const root=frame.getBoundingClientRect(),box=visual.getBoundingClientRect();
-  actions.style.left=((box.right-root.left)/Math.max(1,root.width)*100)+'%';
-  actions.style.top=((box.top-root.top)/Math.max(1,root.height)*100)+'%';
+  const frame=card?.querySelector('.slide-frame');if(!frame)return;
+  const root=frame.getBoundingClientRect();
+  for(const actions of frame.querySelectorAll('.visual-actions')){
+    const visual=frame.querySelector('.visual[data-visual-kind="'+actions.dataset.visualKind+'"]');
+    if(!visual)continue;
+    const box=visual.getBoundingClientRect();
+    actions.style.left=((box.right-root.left)/Math.max(1,root.width)*100)+'%';
+    actions.style.top=((box.top-root.top)/Math.max(1,root.height)*100)+'%';
+  }
 }
 function positionFreeformHandles(card){
   const frame=card?.querySelector('.slide-frame');if(!frame)return;
@@ -575,10 +579,11 @@ function installElementControls(card,slide){
       target.setAttribute('aria-label',target.dataset.editRaw??target.textContent.trim());
     target.classList.add('deletable-element');target.append(elementDeleteButton(kind,index,label));
   }
-  const frame=card.querySelector('.slide-frame'),visual=frame?.querySelector('.visual');
-  if(!visual)return;
+  const frame=card.querySelector('.slide-frame');
+  for(const visual of frame.querySelectorAll('.visual')){
   const actions=document.createElement('div');actions.className='visual-actions';
-  if(visual.classList.contains('diagram-render')){
+  actions.dataset.visualKind=visual.dataset.visualKind;
+  if(visual.dataset.visualKind==='diagram'){
     const redesign=document.createElement('button');redesign.type='button';redesign.className='diagram-live-action';
     redesign.dataset.action='diagram-live';redesign.textContent='↻ Riprogetta Manim';actions.append(redesign);
   }else{
@@ -587,8 +592,9 @@ function installElementControls(card,slide){
     upload.title='Carica dal computer · JPG, PNG o WebP · massimo 20 MB';
     actions.append(upload);
   }
-  actions.append(elementDeleteButton('visual',undefined,slide.diagram_render?.engine==='manim'?'diagramma':'immagine'));
+  actions.append(elementDeleteButton(visual.dataset.visualKind,undefined,visual.dataset.visualKind==='diagram'?'diagramma':'immagine'));
   frame.append(actions);requestAnimationFrame(()=>positionVisualActions(card));
+  }
 }
 function render(){
   const display=current?{...current,...design(),theme:$('theme').value}:null;
@@ -656,6 +662,7 @@ function render(){
     const signature=JSON.stringify([slide,display.theme,design(),index,arranging]);
     if(card.dataset.signature!==signature&&!card.dataset.saving&&!card.querySelector('[contenteditable="plaintext-only"]')){
       card.dataset.signature=signature;
+      const media=visualFor(display,slide.content,slide),assetURL=id=>id?'/api/assets/'+current.id+'/'+id:'';
       card.innerHTML='<div class="slide-top"><span class="slide-label">⠿ '+String(index+1).padStart(2,'0')+' / '+esc(slide.status==='ready'?'Pronta':slide.status==='generating'?'Generazione…':'In attesa')+'</span>'+
         '<button class="quiet" data-action="up" aria-label="Sposta su">↑</button><button class="quiet" data-action="down" aria-label="Sposta giù">↓</button>'+
         '<button class="quiet" data-action="edit">Modifica</button><button class="quiet" data-action="regenerate">Rigenera</button>'+
@@ -672,10 +679,10 @@ function render(){
         '<button class="quiet" data-action="recompose" '+(slide.status!=='ready'?'disabled':'')+'>↻ Ricomponi</button>'+
         '<button class="quiet" data-action="split" '+(slide.status!=='ready'?'disabled':'')+'>Dividi</button><span class="composition-status" aria-live="polite"></span>'+
         (arranging||slide.content.layout==='freeform'?'<span class="arrange-hint">'+
-          (slide.content.layout==='freeform'?'Modalità libera: trascina titolo, box e diagramma in qualsiasi punto. La griglia resta invisibile.':
+          (slide.content.layout==='freeform'?'Modalità libera: trascina titolo, box, immagini e diagrammi in qualsiasi punto. La griglia resta invisibile.':
           'Trascina titolo e contenuti; immagini e diagrammi sono sempre spostabili.')+'</span>':'')+'</div>'+
         '<div class="slide-preview" title="'+(arranging?'Trascina gli elementi nelle zone evidenziate':'Doppio clic su un testo per modificarlo')+'">'+slideHTML(display,slide,index,
-          visualFor(display,slide.content,slide).image?'/api/assets/'+current.id+'/'+visualFor(display,slide.content,slide).image:'')+
+          {diagram:assetURL(media.diagramAsset),image:assetURL(media.photo)})+
           '<div class="anchor-indicator" aria-live="polite"></div></div>'+
         (slide.content.diagram?.kind!=='none'&&!slide.diagram_render?.asset?
           '<p class="diagram-pending">'+(slide.content.diagram?.kind==='manim'&&slide.content.diagram?.scene?
@@ -685,7 +692,7 @@ function render(){
       for(const item of card.querySelectorAll('.prose-box,li'))item.draggable=false;
       const freeform=slide.content.layout==='freeform';
       const headingElement=card.querySelector('.heading');if(headingElement)headingElement.draggable=slide.status==='ready'&&!freeform;
-      const visualElement=card.querySelector('.visual');if(visualElement)visualElement.draggable=slide.status==='ready'&&!freeform;
+      for(const visualElement of card.querySelectorAll('.visual'))visualElement.draggable=slide.status==='ready'&&!freeform&&!card.querySelector('.has-multiple-visuals');
       if(slide.status==='ready'){installElementControls(card,slide);installFreeformHandles(card,slide)}
       resize.observe(card.querySelector('.slide-preview'));
       const fit=()=>{
@@ -868,7 +875,7 @@ function addTextBlock(id){
 }
 function deleteSlideElement(id,kind,index){
   const labels={title:'il titolo',subtitle:'il sottotitolo',block:'questo blocco di testo',
-    bullet:'questo punto',visual:'questo elemento visivo'};
+    bullet:'questo punto',visual:'questo elemento visivo',diagram:'questo diagramma',image:'questa immagine'};
   if(!confirm('Eliminare '+(labels[kind]||'questo elemento')+'?'))return Promise.resolve();
   return saveContentChange(id,content=>{
     if(kind==='title'){content.title='\u00a0';content.subtitle=''}
@@ -878,11 +885,22 @@ function deleteSlideElement(id,kind,index){
     }else if(kind==='bullet'){
       content.bullets.splice(index,1);shiftFreeformSlots(content,'bullet-',index);
     }
-    else if(kind==='visual'){
-      if(content.diagram?.kind&&content.diagram.kind!=='none')
+    else if(kind==='diagram'||kind==='image'||kind==='visual'){
+      const deleteDiagram=kind==='diagram'||kind==='visual'&&content.diagram?.kind&&content.diagram.kind!=='none';
+      if(deleteDiagram){
         content.diagram={kind:'none',labels:[],brief:'',scene:null};
-      content.image_id='';content.image_placeholder=false;content.image_query='';
-      if(content.freeform)delete content.freeform.visual;
+        if(content.freeform){
+          delete content.freeform.visual;
+          if(content.freeform.image){content.freeform.visual=content.freeform.image;delete content.freeform.image}
+        }
+      }else{
+        content.image_id='';content.image_placeholder=false;content.image_query='';
+        if(content.freeform){
+          delete content.freeform.image;
+          if(content.diagram?.kind==='none'||!content.diagram?.kind)delete content.freeform.visual;
+        }
+      }
+      return;
     }
     content.layout='content';content.layout_locked=false;content.layout_variant=0;
   },'Elemento eliminato e composizione ricalcolata.');
@@ -905,7 +923,6 @@ async function addImageBlock(id,imageId){
   return saveContentChange(id,content=>{
     const hadVisual=content.image_id||content.image_placeholder;
     content.image_id=imageId;content.image_origin=origin;content.image_placeholder=false;
-    content.diagram={kind:'none',labels:[],brief:'',scene:null};
     if(!hadVisual&&content.layout!=='freeform'&&!String(content.layout||'').startsWith('visual-'))content.layout='visual-right';
   },'Immagine aggiunta e impaginazione ricalcolata.');
 }
@@ -943,7 +960,7 @@ async function saveHeadingLayout(id,position,align){
 }
 function redesignLiveDiagram(id){
   const slide=current.slides.find(item=>item.id===id),card=document.getElementById('slide-'+id);
-  const frame=card?.querySelector('.slide-frame'),visual=frame?.querySelector('.visual');
+  const frame=card?.querySelector('.slide-frame'),visual=frame?.querySelector('.visual[data-visual-kind="diagram"]');
   if(!slide||!frame||!visual){toast('Il diagramma non è ancora visibile nella slide');return}
   const base=slide.content.diagram?.brief||slide.content.title||'';
   const correction=prompt('Cosa deve correggere o rappresentare il nuovo diagramma Manim?',base);
@@ -1032,11 +1049,12 @@ async function reorderSlideItems(id,field,from,to){
     toast('Ordine dei testi salvato; impaginazione ricalcolata.');
   }finally{delete card.dataset.saving;delete card.dataset.signature;render()}
 }
-async function saveFreePlacement(id,key,placement){
+async function saveFreePlacement(id,key,placement,adaptive=null,placements=null){
   return saveContentChange(id,content=>{
     content.layout='freeform';content.layout_locked=true;
-    content.freeform={...(content.freeform||{}),[key]:placement};
-  },'Posizione libera salvata; testi e diagramma invariati.');
+    content.freeform={...(content.freeform||{}),...(placements||adaptive?.placements||{}),[key]:placement};
+    if(adaptive){content.freeform_base=adaptive.base;content.freeform_compact=adaptive.compact}
+  },'Posizione libera salvata.');
 }
 async function splitSlide(id){
   await finishInlineEdits();
@@ -1101,14 +1119,23 @@ function applyFreePlacement(element,placement){
 }
 function beginFreePointerDrag(pointer){
   const {card,item}=pointer;
+  const frame=card.querySelector('.slide-frame');
+  let adaptive=null;
+  if(frame.dataset.layout!=='freeform'){
+    adaptive={placements:measureFreeform(card),base:frame.dataset.layout,compact:frame.classList.contains('compact-spacing'),
+      candidates:frame.dataset.candidates,freeBase:frame.dataset.freeBase};
+    for(const element of frame.querySelectorAll('[data-free-key]'))applyFreePlacement(element,adaptive.placements[element.dataset.freeKey]);
+    frame.dataset.freeBase=adaptive.base;frame.dataset.candidates='["freeform"]';
+    frame.dataset.freeCompact=String(adaptive.compact);fitSlide(frame);
+  }
   const placement={
     x:Number(item.dataset.freeX),y:Number(item.dataset.freeY),
     w:Number(item.dataset.freeW),h:Number(item.dataset.freeH)
   };
-  const frame=card.querySelector('.slide-frame'),root=frame.getBoundingClientRect(),box=item.getBoundingClientRect();
+  const root=frame.getBoundingClientRect(),box=item.getBoundingClientRect();
   const scale=root.width/1280||1;
   componentDrag={type:'freeform',id:card.dataset.id,key:item.dataset.freeKey,source:item,
-    original:{...placement},placement:{...placement}};
+    original:{...placement},placement:{...placement},adaptive,placements:measureFreeform(card)};
   pointer.offsetX=(pointer.startX-box.left)/scale;pointer.offsetY=(pointer.startY-box.top)/scale;
   card.classList.add('component-dragging');item.classList.add('dragging','free-item-dragging');
   const indicator=card.querySelector('.anchor-indicator');
@@ -1198,6 +1225,10 @@ function clearComponentDrag(restore=true){
   const drag=componentDrag;componentDrag=null;
   finishItemDragPreview(drag,restore);
   if(restore&&drag?.type==='freeform'&&drag.source)applyFreePlacement(drag.source,drag.original);
+  if(restore&&drag?.adaptive){
+    const frame=drag.source.closest('.slide-frame');
+    frame.dataset.candidates=drag.adaptive.candidates;frame.dataset.freeBase=drag.adaptive.freeBase;fitSlide(frame);
+  }
   document.querySelectorAll('.slide-frame[data-drag-candidates]').forEach(frame=>{
     if(restore){frame.dataset.candidates=frame.dataset.dragCandidates;fitSlide(frame)}
     delete frame.dataset.dragCandidates;
@@ -1265,7 +1296,7 @@ function commitComponentDrag(event,pointedOnly=false){
   clearComponentDrag(!validCard);
   if(!validCard)return true;
   if(drag.type==='freeform'){
-    saveFreePlacement(drag.id,drag.key,drag.placement).catch(error=>toast(error.message));
+    saveFreePlacement(drag.id,drag.key,drag.placement,drag.adaptive,drag.placements).catch(error=>toast(error.message));
   }else if(drag.type==='visual'){
     let layout=drag.layout;
     if(!layout){
@@ -1311,13 +1342,14 @@ $('slides').onpointerdown=e=>{
   const resizeHandle=e.target.closest('[data-free-resize]');
   const candidate=resizeHandle||e.target.closest('[data-free-key],[data-block-index],[data-bullet-index]');
   const frame=candidate?.closest('.slide-frame');
+  const adaptiveVisual=frame?.classList.contains('has-multiple-visuals')?e.target.closest('.visual'):null;
   const freeItem=frame?.dataset.layout==='freeform'?
     (resizeHandle?frame.querySelector('[data-free-key="'+resizeHandle.dataset.freeResize+'"]'):e.target.closest('[data-free-key]')):null;
-  const item=freeItem||e.target.closest('[data-block-index],[data-bullet-index]');
+  const item=freeItem||adaptiveVisual||e.target.closest('[data-block-index],[data-bullet-index]');
   const card=item?.closest('.slide-card');
   if(!item||!card||!card.classList.contains('ready'))return;
   const originalCardDraggable=card.draggable;card.draggable=false;
-  itemPointer={item,card,mode:resizeHandle?'resize':freeItem?'freeform':'order',block:item.hasAttribute('data-block-index'),pointerId:e.pointerId,
+  itemPointer={item,card,mode:resizeHandle?'resize':freeItem||adaptiveVisual?'freeform':'order',block:item.hasAttribute('data-block-index'),pointerId:e.pointerId,
     startX:e.clientX,startY:e.clientY,active:false,originalCardDraggable};
 };
 $('slides').onpointermove=e=>{

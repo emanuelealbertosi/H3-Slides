@@ -400,8 +400,12 @@ async def test_invalid_optional_diagram_does_not_abort_slide_generation(tmp_path
     assert result["slides"][0]["content"]["title"] == "Ricerca aggiornata"
     assert result["slides"][0]["content"]["diagram"]["kind"] == "manim"
     assert result["slides"][0]["diagram_render"]["engine"] == "manim"
-    assert any("uso una scena deterministica" in event["message"]
+    assert any("verifico un fallback esplicito" in event["message"]
                for event in store.job(job["id"])["events"])
+    assert any("Fallback Manim verificato" in event["message"]
+               for event in store.job(job["id"])["events"])
+    scene = result["slides"][0]["content"]["diagram"]["scene"]
+    assert scene["title"].startswith("Riepilogo") and not scene["connections"]
     store.db.close()
 
 

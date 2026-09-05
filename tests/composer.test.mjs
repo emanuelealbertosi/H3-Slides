@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {fileURLToPath} from 'node:url';
 import {chromium} from 'playwright-chromium';
-import {slideHTML,slideCSS,layouts,layoutCandidates,fitSlide,visualAnchorAt} from '../static/deck.mjs';
+import {slideHTML,slideCSS,layouts,layoutCandidates,fitSlide,visualAnchorAt,visualFor} from '../static/deck.mjs';
 import {buildExports,measureLayouts} from '../scripts/export.mjs';
 process.env.PLAYWRIGHT_BROWSERS_PATH ||= fileURLToPath(new URL('../runtime/browsers',import.meta.url));
 const text='Un concetto diventa più chiaro quando colleghiamo la spiegazione a un esempio concreto. Le relazioni tra le parti aiutano a capire il risultato.';
@@ -44,6 +44,86 @@ test('heading placement is persisted as renderer classes',()=>{
   const content=make('editorial');content.heading_position='bottom';content.heading_align='right';
   const html=slideHTML({title:'Test',theme:'paper'},{content},0);
   assert.match(html,/heading-bottom heading-align-right/);
+});
+
+test('diagram and photo visibility are independent, including placeholders and legacy URLs',()=>{
+  const content={...make('content'),image_id:'photo.jpg',diagram:{kind:'manim',scene:{}}};
+  const slide={content,diagram_render:{engine:'manim',asset:'manim-test.png'}};
+  const project={title:'Due media',theme:'paper',use_manim_diagrams:true,use_source_images:true};
+  const visual=visualFor(project,content,slide);
+  assert.equal(visual.image,'manim-test.png');assert.equal(visual.photo,'photo.jpg');
+  assert.equal(visual.diagramAsset,'manim-test.png');
+  const html=slideHTML(project,slide,0,{diagram:'diagram.png',image:'photo.jpg'});
+  assert.match(html,/data-visual-kind="diagram"/);assert.match(html,/data-visual-kind="image"/);
+  assert.match(html,/data-free-key="image"/);assert.match(html,/has-multiple-visuals/);
+  assert.equal(visualFor({...project,use_source_images:false},content,slide).photo,'');
+  assert.equal(visualFor({...project,use_manim_diagrams:false},content,slide).photo,'photo.jpg');
+  assert.equal(visualFor({...project,use_manim_diagrams:false},content,slide).diagramAsset,'');
+  const hiddenDiagram={...slide,content:{...content,layout:'freeform',freeform:{visual:{x:48,y:200,w:500,h:220},image:{x:700,y:200,w:500,h:220}}}};
+  const photoOnly=slideHTML({...project,use_manim_diagrams:false},hiddenDiagram,0,{image:'photo.jpg'});
+  assert.match(photoOnly,/data-visual-kind="image" data-free-key="image"/,'Hiding a diagram keeps the independent photo key');
+  const web={...content,image_origin:'web'};
+  assert.equal(visualFor({...project,use_source_images:false,use_web_images:true},web,slide).photo,'photo.jpg');
+  assert.equal(visualFor({...project,use_web_images:false},web,slide).photo,'photo.jpg','The web search option does not hide saved photos');
+  assert.equal(visualFor({...project,use_source_images:false,use_web_images:false},{...content,image_origin:'upload'},slide).photo,'photo.jpg');
+  const pending={...slide,content:{...content,image_id:'',image_placeholder:true}};
+  assert.match(slideHTML(project,pending,0,{diagram:'diagram.png'}),/image-placeholder/);
+  assert.equal(visualFor(project,pending.content,pending).photoPlaceholder,true);
+  assert.match(slideHTML(project,slide,0,'legacy.png'),/src="legacy.png"/);
+  assert.equal(content.image_id,'photo.jpg');
+});
+
+test('two media fit without overlaps and preserve independent freeform rectangles',async()=>{
+  const browser=await chromium.launch({headless:true});
+  try{
+    const page=await browser.newPage({viewport:{width:1280,height:720}});
+    const data='data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XMG8WQAAAABJRU5ErkJggg==';
+    const project={title:'Due media',theme:'paper',use_manim_diagrams:true,use_source_images:true};
+    const slides=['content','visual-left','visual-right','visual-top','visual-bottom','cover','cards','freeform'].map(layout=>({
+      content:{...make(layout),image_id:'photo.jpg',diagram:{kind:'manim',scene:{}}},
+      diagram_render:{engine:'manim',asset:'manim-test.png'}}));
+    const free=slides.at(-1).content;free.freeform={visual:{x:710,y:200,w:500,h:240},image:{x:710,y:465,w:500,h:185}};
+    await page.setContent('<style>'+slideCSS+'body{margin:0}</style>'+slides.map((s,i)=>slideHTML(project,s,i,{diagram:data,image:data})).join(''));
+    const measured=await measureLayouts(page);
+    assert.ok(measured.every(m=>!m.overflow),JSON.stringify(measured.map(m=>({layout:m.layout,overflow:m.overflow}))));
+    assert.ok(measured.every(m=>m.visuals.length===2));
+    const collisions=await page.locator('.slide-frame').evaluateAll(frames=>frames.flatMap((frame,index)=>{
+      const nodes=[...frame.querySelectorAll('.heading,.prose-box,.visual')];
+      return nodes.flatMap((a,i)=>nodes.slice(i+1).flatMap(b=>{
+        const x=a.getBoundingClientRect(),y=b.getBoundingClientRect();
+        return Math.min(x.right,y.right)-Math.max(x.left,y.left)>1&&Math.min(x.bottom,y.bottom)-Math.max(x.top,y.top)>1?
+          [{index,a:a.className,b:b.className}]:[];
+      }));
+    }));
+    assert.deepEqual(collisions,[]);
+    const rectangles=await page.locator('.slide-frame').last().locator('.visual').evaluateAll(nodes=>nodes.map(e=>({
+      key:e.dataset.freeKey,x:e.offsetLeft,y:e.offsetTop,w:e.offsetWidth,h:e.offsetHeight})));
+    assert.deepEqual(rectangles,[{key:'visual',...free.freeform.visual},{key:'image',...free.freeform.image}]);
+    for(const frame of await page.locator('.slide-frame').all())assert.ok(Number.parseFloat(await frame.locator('.prose-box p').first().evaluate(e=>getComputedStyle(e).fontSize))>=20);
+  }finally{await browser.close()}
+});
+
+test('adding either media to a legacy freeform slot keeps both inside its column',async()=>{
+  const browser=await chromium.launch({headless:true});
+  try{
+    const page=await browser.newPage({viewport:{width:1280,height:720}});
+    const project={title:'Colonna libera',theme:'paper',use_manim_diagrams:true,use_source_images:true};
+    const original={x:449,y:200,w:381,h:450};
+    const slides=['visual','image'].map(key=>({content:{...make('freeform'),image_id:'photo.jpg',diagram:{kind:'manim',scene:{}},
+      freeform:{'block-0':{x:48,y:200,w:381,h:450},'block-1':{x:850,y:200,w:381,h:450},[key]:original}},
+      diagram_render:{engine:'manim',asset:'manim-test.png'}}));
+    const unchanged=JSON.stringify(slides),pixel='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+    await page.setContent('<style>'+slideCSS+'body{margin:0}</style>'+slides.map((slide,index)=>slideHTML(project,slide,index,{diagram:pixel,image:pixel})).join(''));
+    const measured=await measureLayouts(page);assert.ok(measured.every(layout=>!layout.overflow));
+    const geometries=await page.locator('.slide-frame').evaluateAll(frames=>frames.map(frame=>[...frame.querySelectorAll('.visual')].map(element=>({
+      x:element.offsetLeft,y:element.offsetTop,w:element.offsetWidth,h:element.offsetHeight}))));
+    for(const [diagram,image] of geometries){
+      assert.equal(diagram.x,original.x);assert.equal(diagram.y,original.y);assert.equal(diagram.w,original.w);
+      assert.equal(image.x,original.x);assert.equal(image.w,original.w);
+      assert.ok(diagram.y+diagram.h<image.y);assert.equal(image.y+image.h,original.y+original.h);
+    }
+    assert.equal(JSON.stringify(slides),unchanged,'Rendering must not rewrite the saved legacy coordinates');
+  }finally{await browser.close()}
 });
 
 test('all compositions fit and native exports use the same measured layouts',async()=>{

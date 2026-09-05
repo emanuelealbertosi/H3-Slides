@@ -17,9 +17,9 @@ def write_slidev(project, assets, output, strict=False):
                    and rendered.get("engine") == "manim" and rendered.get("asset"))
         record = next((a for a in project.get("visual_assets", []) if a["id"] == c.get("image_id")), {})
         origin = record.get("origin", c.get("image_origin", "source"))
-        image = rendered.get("asset") if diagram else (
-            c.get("image_id", "") if origin != "source" or project.get("use_source_images", True) else "")
-        if image:
+        photo = c.get("image_id", "") if origin != "source" or project.get("use_source_images", True) else ""
+        images = {image for image in (rendered.get("asset") if diagram else "", photo) if image}
+        for image in images:
             (output / "assets").mkdir(exist_ok=True)
             src, dst = assets / image, output / "assets" / image
             if not dst.exists():

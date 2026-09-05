@@ -63,8 +63,8 @@ class SlideContent(BaseModel):
     layout_variant: int = Field(default=0, ge=0, le=10000)
     heading_position: Literal["top", "bottom"] = "top"
     heading_align: Literal["left", "center", "right"] = "left"
-    freeform: dict[Annotated[str, Field(pattern=r"^(heading|visual|block-[0-3]|bullet-[0-4])$")],
-                   FreePlacement] = Field(default_factory=dict, max_length=11)
+    freeform: dict[Annotated[str, Field(pattern=r"^(heading|visual|image|block-[0-3]|bullet-[0-4])$")],
+                   FreePlacement] = Field(default_factory=dict, max_length=12)
     freeform_base: Literal["cover", "editorial", "comparison", "cards", "steps", "timeline", "focus",
                            "quote", "visual-left", "visual-right", "visual-top", "visual-bottom",
                            "visual-left-wide", "visual-right-wide", "stack"] = "editorial"

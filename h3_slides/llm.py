@@ -264,7 +264,7 @@ class LLM:
         if schema:
             # Grammar constrains tokens but does not tell the model what the
             # fields mean. Include the contract in the actual conversation too.
-            prompt = "Schema JSON richiesto:\n" + json.dumps(schema, ensure_ascii=False) + "\n\n" + prompt
+            prompt = "Schema JSON richiesto:\n" + json.dumps(schema, ensure_ascii=False, separators=(",", ":")) + "\n\n" + prompt
         content = [{"type": "text", "text": prompt}]
         if images:
             if not self.provider.vision:

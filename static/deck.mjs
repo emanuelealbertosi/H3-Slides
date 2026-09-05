@@ -48,8 +48,12 @@ export function visualFor(project,content,slide=null){
   const diagram=Boolean(asset);
   const record=(project.visual_assets||[]).find(item=>item.id===content.image_id);
   const origin=record?.origin||content.image_origin||'source';
-  const image=asset||(!diagram&&(origin!=='source'||project.use_source_images!==false)?(content.image_id||''):'');
-  return {diagram,image,placeholder:!image&&!diagram&&Boolean(content.image_placeholder)};
+  const enabled=origin!=='source'||project.use_source_images!==false;
+  const photo=enabled?(content.image_id||''):'';
+  const photoPlaceholder=!photo&&Boolean(content.image_placeholder);
+  // Keep the original primary-image contract for integrations with one media slot.
+  return {diagram,image:asset||photo,placeholder:!diagram&&photoPlaceholder,
+    photo,diagramAsset:asset,photoPlaceholder};
 }
 export function templateFor(project,content,index=0,slide=null){
   const visual=visualFor(project,content,slide);
@@ -70,10 +74,16 @@ function validFreePlacement(value,fallback){
   const w=clamp(Math.round(Number(value.w)),80,1280),h=clamp(Math.round(Number(value.h)),44,680);
   return {x:clamp(Math.round(Number(value.x)),0,1280-w),y:clamp(Math.round(Number(value.y)),0,680-h),w,h};
 }
-function defaultFreePlacements(content,hasVisual){
+function defaultFreePlacements(content,hasVisual,hasPhoto=false){
   const placements={heading:{x:48,y:60,w:1184,h:120}};
   const textKeys=(content.blocks||[]).length?(content.blocks||[]).map((_,index)=>'block-'+index):
     (content.bullets||[]).map((_,index)=>'bullet-'+index);
+  if(hasVisual&&hasPhoto){
+    const gap=20,height=Math.floor((450-gap*Math.max(0,textKeys.length-1))/Math.max(1,textKeys.length));
+    textKeys.forEach((key,index)=>{placements[key]={x:48,y:200+index*(height+gap),w:630,h:height}});
+    placements.visual={x:698,y:200,w:534,h:250};placements.image={x:698,y:470,w:534,h:180};
+    return placements;
+  }
   const keys=hasVisual&&textKeys.length===2?[textKeys[0],'visual',textKeys[1]]:
     [...textKeys,...(hasVisual?['visual']:[])];
   const columns=Math.min(3,Math.max(1,keys.length)),rows=Math.ceil(keys.length/columns);
@@ -86,9 +96,20 @@ function defaultFreePlacements(content,hasVisual){
   });
   return placements;
 }
-function freePlacementData(content,hasVisual){
-  const defaults=defaultFreePlacements(content,hasVisual),stored=content.freeform||{};
-  return Object.fromEntries(Object.entries(defaults).map(([key,value])=>[key,validFreePlacement(stored[key],value)]));
+function freePlacementData(content,hasVisual,hasPhoto=false){
+  const defaults=defaultFreePlacements(content,hasVisual,hasPhoto),stored=content.freeform||{};
+  const placements=Object.fromEntries(Object.entries(defaults).map(([key,value])=>[key,validFreePlacement(stored[key],value)]));
+  // A legacy single media slot becomes a shared column until both positions are saved.
+  // This keeps surrounding text and the original stored rectangle intact.
+  if(hasPhoto&&Boolean(stored.visual)!==Boolean(stored.image)){
+    const source=validFreePlacement(stored.visual||stored.image,defaults.visual);
+    const gap=Math.min(20,Math.max(8,source.h*.05)),height=Math.round((source.h-gap)*.58);
+    if(height>=44&&source.h-height-gap>=44){
+      placements.visual={...source,h:height};
+      placements.image={...source,y:source.y+height+gap,h:source.h-height-gap};
+    }
+  }
+  return placements;
 }
 const freeStyle=(placements,key)=>{
   const p=placements[key];return p?'--free-x:'+p.x+'px;--free-y:'+p.y+'px;--free-w:'+p.w+'px;--free-h:'+p.h+'px':'';
@@ -103,13 +124,18 @@ export const slideCSS = '*{box-sizing:border-box}.slide-frame{width:1280px;heigh
 
 export function slideHTML(project,slide,index,imageUrl=''){
   const c=slide.content,t=themeFor(project),visual=visualFor(project,c,slide),template=templateFor(project,c,index,slide);
+  const urls=typeof imageUrl==='string'?(visual.diagram?{diagram:imageUrl}:{image:imageUrl}):(imageUrl||{});
+  const hasPhoto=Boolean(visual.photo||visual.photoPlaceholder),dual=Boolean(visual.diagram&&hasPhoto);
   const freeBases=['cover','editorial','comparison','cards','steps','timeline','focus','quote','visual-left',
     'visual-right','visual-top','visual-bottom','visual-left-wide','visual-right-wide','stack'];
   const freeBase=freeBases.includes(c.freeform_base)?c.freeform_base:'editorial';
   const candidates=layoutCandidates(project,c,index,Boolean(visual.diagram||visual.image||visual.placeholder));
   const font=['Arial','Calibri','Segoe UI','Georgia','Verdana','Consolas'].includes(project.font)?project.font:'Arial';
   const d=project.theme_design||{},card=blockColors(project,{kind:'explanation'});
-  const placements=freePlacementData(c,Boolean(visual.diagram||visual.image||visual.placeholder));
+  const placements=freePlacementData(c,Boolean(visual.diagram||hasPhoto),dual);
+  if(!visual.diagram&&c.freeform?.image){
+    placements.image=validFreePlacement(c.freeform.image,placements.visual);delete placements.visual;
+  }
   const style=Object.entries(t).map(([k,v])=>'--'+k+':'+v).join(';')+';--font:'+font+
     ';--card-bg:'+card.bg+';--card-fg:'+card.fg+';--card-border:'+card.border+';--card-border-width:'+(d.border_width??1)+'px'+
     ';--box-border-width:'+(d.border_width||0)+'px;--box-radius:'+(d.box_radius??18)+'px'+
@@ -124,22 +150,24 @@ export function slideHTML(project,slide,index,imageUrl=''){
       '<p data-edit-field="block-text" data-index="'+i+'"'+rawAttr(b.text)+'>'+mathHTML(b.text)+'</p>'+
       '<div class="prose-source" data-edit-field="block-source" data-index="'+i+'"'+rawAttr(b.source)+'>'+mathHTML(b.source)+'</div></section>';
   };
-  const record=(project.visual_assets||[]).find(item=>item.id===visual.image);
+  const record=[...(project.visual_assets||[]),...(project.sources||[]).flatMap(source=>source.images||[])].find(item=>item.id===visual.photo);
   const credit=record?.origin==='web'?[record.author,record.license,'Wikimedia Commons'].filter(Boolean).join(' · '):'';
   const attribution=credit?'<figcaption class="image-credit" title="'+esc(credit)+'">'+
     (/^https:\/\/commons\.wikimedia\.org\//.test(record.source)?'<a href="'+esc(record.source)+
       '" target="_blank" rel="noopener noreferrer">'+esc(credit)+'</a>':esc(credit))+'</figcaption>':'';
-  const visualMarkup=visual.image&&imageUrl?(visual.diagram?
-    '<img class="visual diagram-render"'+freeData(placements,'visual')+' style="'+freeStyle(placements,'visual')+
-      '" src="'+esc(imageUrl)+'" alt="Diagramma renderizzato con Manim">':
-    '<figure class="visual photo-visual"'+freeData(placements,'visual')+' style="'+freeStyle(placements,'visual')+'">'+
-      '<img src="'+esc(imageUrl)+'" alt="'+esc(record?.label||c.image_query||'Immagine del documento')+'">'+attribution+'</figure>'):
-    visual.placeholder?'<div class="visual image-placeholder"'+freeData(placements,'visual')+' style="'+freeStyle(placements,'visual')+'">'+
+  const photoKey=dual||c.freeform?.image?'image':'visual';
+  const diagramMarkup=visual.diagram&&urls.diagram?
+    '<img class="visual diagram-render" data-visual-kind="diagram"'+freeData(placements,'visual')+' style="'+freeStyle(placements,'visual')+
+      '" src="'+esc(urls.diagram)+'" alt="Diagramma renderizzato con Manim">':'';
+  const photoMarkup=visual.photo&&urls.image?
+    '<figure class="visual photo-visual" data-visual-kind="image"'+freeData(placements,photoKey)+' style="'+freeStyle(placements,photoKey)+'">'+
+      '<img src="'+esc(urls.image)+'" alt="'+esc(record?.label||c.image_query||'Immagine del documento')+'">'+attribution+'</figure>':
+    visual.photoPlaceholder?'<div class="visual image-placeholder" data-visual-kind="image"'+freeData(placements,photoKey)+' style="'+freeStyle(placements,photoKey)+'">'+
       '<div class="placeholder-copy"><strong class="placeholder-title">Immagine da inserire</strong>'+
       '<p class="placeholder-query">'+esc(c.image_query||c.title)+'</p></div></div>':'';
   return '<article class="slide-frame tpl-'+esc(template)+(template==='freeform'?' tpl-'+esc(freeBase):'')+
     ' density-'+esc(project.text_density||'detailed')+
-    (visual.diagram||visual.image||visual.placeholder?' has-visual':'')+(visual.diagram?' has-diagram':'')+(blocks.reduce((n,b)=>n+b.text.length,0)>1100?' copy-dense':'')+
+    (visual.diagram||hasPhoto?' has-visual':'')+(visual.diagram?' has-diagram':'')+(dual?' has-multiple-visuals':'')+(blocks.reduce((n,b)=>n+b.text.length,0)>1100?' copy-dense':'')+
     ' heading-'+esc(c.heading_position||'top')+' heading-align-'+esc(c.heading_align||'left')+
     (d.title_size?' custom-title-size':'')+(d.body_size?' custom-body-size':'')+
     (template==='freeform'&&c.freeform_compact?' compact-spacing':'')+'" data-candidates="'+esc(JSON.stringify(candidates))+
@@ -152,6 +180,6 @@ export function slideHTML(project,slide,index,imageUrl=''){
     '<div class="slide-columns"><div class="copy">'+(blocks.length?
       '<div class="prose-grid count-'+blocks.length+'">'+blocks.map(box).join('')+'</div>':
       '<ul>'+(c.bullets||[]).map((item,i)=>point(item,i).replace('<li','<li data-bullet-index="'+i+'"')).join('')+'</ul>')+'</div>'+
-    visualMarkup+'</div>'+
+    diagramMarkup+photoMarkup+'</div>'+
     '<div class="footer"><span>'+esc(project.title)+'</span><span>'+String(index+1).padStart(2,'0')+'</span></div></article>';
 }

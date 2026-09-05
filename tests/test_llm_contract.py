@@ -39,7 +39,7 @@ async def test_schema_is_both_visible_and_constrained():
         schema = {"type": "object", "properties": {"ok": {"type": "boolean"}}}
         assert await client.json("Estrai i dati", schema=schema) == {"ok": True}
     body = bodies[0]
-    assert json.dumps(schema, ensure_ascii=False) in body["messages"][1]["content"][0]["text"]
+    assert json.dumps(schema, ensure_ascii=False, separators=(",", ":")) in body["messages"][1]["content"][0]["text"]
     assert body["response_format"]["schema"] == schema
     assert body["chat_template_kwargs"]["enable_thinking"] is False
     assert body["reasoning_effort"] == "none"

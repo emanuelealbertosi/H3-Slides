@@ -271,9 +271,20 @@ diagrammi Manim o immagini già caricate. Disattivando **Cerca immagini in
 internet**, anche Openverse resta inattivo, pur ricordando la sua spunta.
 La ricerca di fonti testuali e la priorità ai documenti non cambiano.
 
-La slide ha uno spazio visivo principale: Manim, poi la figura selezionata dal
-documento, poi la ricerca internet. La ricerca non sostituisce una figura scelta
-o un diagramma già renderizzato. Se fallisce, la generazione continua e salva un
+La slide può contenere **una foto e un diagramma Manim insieme**, con posizioni,
+caricamento e cestini indipendenti, anche in PPTX, PDF e Slidev. Il layout li
+dispone nello spazio disponibile; spostandoli puoi regolare separatamente i
+due elementi. Sostituire una foto non elimina né rigenera il diagramma.
+
+Le figure dei documenti vengono ordinate per pertinenza al contenuto della
+singola slide, prima di limitare il catalogo inviato al modello. Il catalogo
+include estratti delle pagine, non solo nomi di file; le anteprime delle pagine
+intere sono escluse. Se il modello omette la scelta, una selezione locale può
+usare corrispondenze testuali nel contesto della figura, senza altre chiamate
+LLM: non è un controllo visivo e la pertinenza va verificata.
+
+La ricerca internet non sostituisce una figura già scelta, ma può aggiungere
+una foto anche quando è presente un diagramma. Se fallisce, la generazione continua e salva un
 **segnaposto**. Passandoci sopra compare **↑ Carica immagine**: scegli JPG, PNG
 o WebP (massimo 20 MB e 32 MP). Puoi anche sostituire una foto o usare il pulsante
 di caricamento nella barra della slide. Non serve chiamare il modello.
@@ -375,12 +386,21 @@ diagramma e il resto della presentazione prosegue; il log mantiene il motivo.
 anche se una singola scena non riesce; **Progetta Manim** riprova la sola slide.
 Gli errori comuni dei modelli remoti (numeri serializzati come testo, etichette
 troppo lunghe e piccoli difetti geometrici) vengono corretti prima del render.
-Se i tre tentativi LLM restano inutilizzabili, l'app costruisce e verifica una
-scena Manim conservativa usando titolo, box ed eventuali etichette già approvate,
-invece di lasciare silenziosamente la slide senza diagramma.
+Lo schema fornito all'LLM distingue i campi richiesti per ogni forma: una rete
+richiede nodi e coppie di indici, una griglia richiede dati numerici e colonne.
+Gli errori di dati, struttura e geometria ricevono correzioni diverse; se il
+modello ripete lo stesso errore sullo stesso candidato, i tentativi si fermano.
+I log riportano categoria, campo e regola, senza salvare la risposta del modello.
+Non vengono inventati valori o relazioni per superare la validazione.
+
+Se la progettazione fallisce, nella riprogettazione si può conservare una scena
+precedente valida; altrimenti l'app può verificare un **Riepilogo** esplicito,
+senza frecce fra titoli indipendenti. Un riepilogo non sostituisce una famiglia
+specifica richiesta, come Gantt, Venn o un diagramma di flusso. Il log segnala il
+fallback e distingue questo risultato da una nuova progettazione riuscita.
 Il render 1800 × 1200 viene riusato nell'editor, nel PPTX, nel PDF e in Slidev;
-l'export Manim anima progressivamente la stessa scena. Un diagramma attivo ha
-priorità sulla figura della stessa slide.
+l'export Manim anima progressivamente la stessa scena. La foto della slide
+rimane un elemento indipendente nell'editor e negli export PPTX, PDF e Slidev.
 
 **Progetta Manim** crea o riprogetta la scena usando l'LLM locale o remoto
 selezionato. **Renderizza Manim** ricostruisce invece un progetto già valido

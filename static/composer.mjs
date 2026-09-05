@@ -170,6 +170,25 @@ export const composerCSS=`
 .slide-frame.compact-spacing .prose-box{padding:16px;gap:8px}
 .slide-frame.custom-title-size h1{font-size:var(--title-size)}
 .slide-frame.custom-body-size .prose-box p,.slide-frame.custom-body-size li{font-size:var(--custom-body-size)!important}
+.slide-frame.has-multiple-visuals:not(.tpl-freeform){padding-left:48px}
+.slide-frame.has-multiple-visuals:not(.tpl-freeform) .slide-columns{display:grid;grid-template-columns:minmax(0,1.45fr) minmax(0,1fr);grid-template-rows:minmax(0,1.25fr) minmax(0,1fr);gap:20px 28px}
+.slide-frame.has-multiple-visuals:not(.tpl-freeform) .copy{grid-column:1;grid-row:1 / 3}
+.slide-frame.has-multiple-visuals:not(.tpl-freeform) .prose-grid{grid-template-columns:1fr}
+.slide-frame.has-multiple-visuals:not(.tpl-freeform) .visual{position:static;grid-column:2;width:100%;height:100%;min-width:0;min-height:0}
+.slide-frame.has-multiple-visuals:not(.tpl-freeform) [data-visual-kind="diagram"]{grid-row:1}
+.slide-frame.has-multiple-visuals:not(.tpl-freeform) [data-visual-kind="image"]{grid-row:2}
+.slide-frame.has-multiple-visuals.tpl-visual-left:not(.tpl-freeform) .slide-columns,.slide-frame.has-multiple-visuals.tpl-visual-left-wide:not(.tpl-freeform) .slide-columns{grid-template-columns:minmax(0,1fr) minmax(0,1.45fr)}
+.slide-frame.has-multiple-visuals.tpl-visual-left:not(.tpl-freeform) .copy,.slide-frame.has-multiple-visuals.tpl-visual-left-wide:not(.tpl-freeform) .copy{grid-column:2}
+.slide-frame.has-multiple-visuals.tpl-visual-left:not(.tpl-freeform) .visual,.slide-frame.has-multiple-visuals.tpl-visual-left-wide:not(.tpl-freeform) .visual{grid-column:1}
+.slide-frame.has-multiple-visuals.tpl-visual-top:not(.tpl-freeform) .slide-columns,.slide-frame.has-multiple-visuals.tpl-visual-bottom:not(.tpl-freeform) .slide-columns{grid-template-columns:repeat(2,minmax(0,1fr));grid-template-rows:260px minmax(0,1fr)}
+.slide-frame.has-multiple-visuals.tpl-visual-top:not(.tpl-freeform) .copy{grid-column:1 / 3;grid-row:2}
+.slide-frame.has-multiple-visuals.tpl-visual-bottom:not(.tpl-freeform) .slide-columns{grid-template-rows:minmax(0,1fr) 260px}
+.slide-frame.has-multiple-visuals.tpl-visual-bottom:not(.tpl-freeform) .copy{grid-column:1 / 3;grid-row:1}
+.slide-frame.has-multiple-visuals.tpl-visual-top:not(.tpl-freeform) .visual{grid-row:1}
+.slide-frame.has-multiple-visuals.tpl-visual-bottom:not(.tpl-freeform) .visual{grid-row:2}
+.slide-frame.has-multiple-visuals:is(.tpl-visual-top,.tpl-visual-bottom):not(.tpl-freeform) [data-visual-kind="diagram"]{grid-column:1}
+.slide-frame.has-multiple-visuals:is(.tpl-visual-top,.tpl-visual-bottom):not(.tpl-freeform) [data-visual-kind="image"]{grid-column:2}
+.slide-frame.has-multiple-visuals:is(.tpl-visual-top,.tpl-visual-bottom):not(.tpl-freeform) .prose-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
 .slide-frame [contenteditable="plaintext-only"]{outline:2px solid var(--accent);outline-offset:4px;min-width:40px;cursor:text}
 .slide-frame.tpl-freeform{display:block;padding:0!important}
 .slide-frame.tpl-freeform .kicker{position:absolute;left:48px;top:24px;margin:0}

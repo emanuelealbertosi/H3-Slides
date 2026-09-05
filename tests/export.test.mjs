@@ -7,6 +7,36 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import {fileURLToPath} from 'node:url';
+import JSZip from 'jszip';
+import {execFile} from 'node:child_process';
+
+test('photo and diagram export as two images with attribution in PDF, PPTX and Slidev',async()=>{
+  const {buildExports}=await import('../scripts/export.mjs');
+  const out=await fs.mkdtemp(path.join(os.tmpdir(),'h3-dual-media-'));
+  const diagram='manim-'+'a'.repeat(64)+'.png',photo='aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee.jpg';
+  const pixels=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M/wHwAF/gL+XMG8WQAAAABJRU5ErkJggg==','base64');
+  await Promise.all([fs.writeFile(path.join(out,diagram),pixels),fs.writeFile(path.join(out,photo),pixels)]);
+  const project={title:'Due media',theme:'paper',font:'Arial',use_manim_diagrams:true,use_web_images:true,
+    visual_assets:[{id:photo,origin:'web',author:'Autore prova',license:'CC BY 4.0',source:'https://commons.wikimedia.org/wiki/File:Example.jpg'}],
+    slides:[{content:{title:'Una figura e un diagramma',subtitle:'',layout:'content',bullets:['Spiegazione breve.'],blocks:[],sources:['Fonte prova'],
+      notes:'Note della slide',image_id:photo,diagram:{kind:'manim',scene:{}}},diagram_render:{engine:'manim',asset:diagram}}]};
+  const pptx=await buildExports(project,out,path.join(out,'pptx'),'pptx');
+  const zip=await JSZip.loadAsync(await fs.readFile(pptx));
+  const xml=await zip.file('ppt/slides/slide1.xml').async('string');
+  assert.equal((xml.match(/<p:pic>/g)||[]).length,2,'Two independently movable pictures in PowerPoint');
+  assert.match(xml,/Autore prova/);
+  const notes=await zip.file('ppt/notesSlides/notesSlide1.xml').async('string');
+  assert.match(notes,/CC BY 4.0/);assert.match(notes,/Note della slide/);
+  assert.ok((await fs.stat(await buildExports(project,out,path.join(out,'pdf'),'pdf'))).size>500);
+  const result=await new Promise((resolve,reject)=>{
+    const child=execFile(process.execPath,[fileURLToPath(new URL('../scripts/slidev_source.mjs',import.meta.url))],{maxBuffer:5*1024*1024},(error,stdout)=>error?reject(error):resolve(stdout));
+    child.stdin.end(JSON.stringify(project));
+  });
+  const slidev=JSON.parse(result);
+  assert.match(slidev.markdown,new RegExp('./assets/'+diagram));
+  assert.match(slidev.markdown,new RegExp('./assets/'+photo));
+  assert.match(slidev.markdown,/Autore prova/);assert.deepEqual(slidev.overflow,[]);
+});
 test('slide renderer escapes source text and HTML',()=>{
   const html=slideHTML({title:'Project',theme:'ink'},{content:{layout:'content',title:'<script>alert(1)</script>',subtitle:'',bullets:['<img onerror=x>']}},0);
   assert.ok(!html.includes('<script>'));

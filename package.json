@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "slidev": "slidev examples/slides.md --port 3031 --bind 127.0.0.1",
-    "test": "node --test tests/export.test.mjs tests/composer.test.mjs tests/dependency-security.test.mjs tests/remote-models.test.mjs tests/api-settings.test.mjs tests/web-research-ui.mjs tests/web-consents-ui.mjs tests/openverse-images-ui.mjs tests/floating-generation-ui.mjs",
+    "test": "node --test tests/export.test.mjs tests/composer.test.mjs tests/dependency-security.test.mjs tests/remote-models.test.mjs tests/api-settings.test.mjs tests/web-research-ui.mjs tests/web-consents-ui.mjs tests/openverse-images-ui.mjs tests/floating-generation-ui.mjs tests/dual-media-ui.mjs",
     "verify:vendor": "node scripts/vendor-pptxgenjs.mjs"
   },
   "overrides": {

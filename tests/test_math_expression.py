@@ -133,7 +133,9 @@ async def test_calculus_llm_contract_and_real_manim_render(tmp_path):
     class Client:
         async def json(self, prompt, schema=None):
             assert "tangent_at" in prompt and "secant_x" in prompt
-            assert "series" in schema["$defs"]["Element"]["properties"]
+            function_schema = next(variant for variant in schema["properties"]["elements"]["items"]["anyOf"]
+                                   if variant["properties"]["type"].get("const") == "function_plot")
+            assert "series" in function_schema["properties"]
             return calculus_scene()
 
     async def checkpoint():

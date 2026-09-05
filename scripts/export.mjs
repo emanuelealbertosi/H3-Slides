@@ -23,11 +23,13 @@ export async function measureLayouts(page){
         shadow:c.boxShadow!=='none',borders:['Top','Right','Bottom','Left'].map(side=>({
           color:c['border'+side+'Color'],width:parseFloat(c['border'+side+'Width'])*.75}))};
     });
-    const visual=node.querySelector('.visual');
-    const img=visual?.matches('img')?visual:visual?.querySelector('img');
+    const visuals=[...node.querySelectorAll('.visual')].map(visual=>{
+      const img=visual.matches('img')?visual:visual.querySelector('img');
+      return {kind:visual.dataset.visualKind||'image',frame:img?rect(img):rect(visual),
+        image:img?{width:img.naturalWidth,height:img.naturalHeight}:null};
+    });
     return {layout:node.dataset.layout,overflow:node.dataset.overflow==='true',texts,boxes,
-      visual:img?rect(img):visual?rect(visual):null,
-      image:img?{width:img.naturalWidth,height:img.naturalHeight}:null,
+      visuals,visual:visuals[0]?.frame||null,image:visuals[0]?.image||null,
       footer:rect(node.querySelector('.footer'))};
   }));
 }
@@ -43,10 +45,12 @@ export async function buildExports(project,assetsDir,outDir,format){
   };
   const articles=[];
   for(const [index,item] of project.slides.entries()){
-    const image=visualFor(project,item.content,item).image;
-    const mime=image.endsWith('.png')?'image/png':'image/jpeg';
-    const url=image?'data:'+mime+';base64,'+(await fs.readFile(imagePath(image))).toString('base64'):'';
-    articles.push(slideHTML(project,item,index,url));
+    const visual=visualFor(project,item.content,item),urls={};
+    for(const [kind,id] of [['diagram',visual.diagramAsset],['image',visual.photo]]){
+      if(id)urls[kind]='data:'+(id.endsWith('.png')?'image/png':'image/jpeg')+';base64,'+
+        (await fs.readFile(imagePath(id))).toString('base64');
+    }
+    articles.push(slideHTML(project,item,index,urls));
   }
   const browser=await chromium.launch({headless:true});
   try{
@@ -101,16 +105,17 @@ export async function buildExports(project,assetsDir,outDir,format){
           valign:'top',fit:'shrink',paraSpaceAfterPt:0,...(Number.isFinite(b.lineHeight)?{lineSpacingMultiple:b.lineHeight/b.size}:{} )});
       }
       s.addShape(pptx.ShapeType.line,{x:layout.footer.x,y:layout.footer.y,w:layout.footer.w,h:0,line:{color:t.line.slice(1),width:.75}});
-      const frame=layout.visual;
-      if(visual.image&&frame){
-        const p=imagePath(visual.image),dims=layout.image;
+      for(const media of layout.visuals){
+        const id=media.kind==='diagram'?visual.diagramAsset:visual.photo;
+        if(!id)continue;
+        const frame=media.frame,p=imagePath(id),dims=media.image;
         if(!dims||!Number.isFinite(dims.width)||!Number.isFinite(dims.height)||dims.width<=0||dims.height<=0)
           throw new Error('Immagine non decodificabile: esportazione annullata.');
         const ratio=Math.min(frame.w/dims.width,frame.h/dims.height);
         const w=dims.width*ratio,h=dims.height*ratio;
         s.addImage({path:p,x:frame.x+(frame.w-w)/2,y:frame.y+(frame.h-h)/2,w,h});
       }
-      const credit=(project.visual_assets||[]).find(asset=>asset.id===visual.image&&asset.origin==='web');
+      const credit=(project.visual_assets||[]).find(asset=>asset.id===visual.photo&&asset.origin==='web');
       s.addNotes((c.notes||'')+'\n\n[Sources]\n'+(c.sources||[]).join('\n')+'\n[/Sources]'+
         (credit?'\n\n[Image attribution]\n'+[credit.label,credit.author,credit.license,credit.source,credit.license_url].join('\n'):''));
     }

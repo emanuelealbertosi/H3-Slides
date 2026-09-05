@@ -80,7 +80,7 @@ async def test_licensed_download_and_public_destination_guards(tmp_path, monkeyp
 @pytest.mark.asyncio
 @pytest.mark.parametrize("use_openverse", [False, True])
 @pytest.mark.parametrize("mode", ["download", "missing", "offline", "source", "disabled", "manim", "existing"])
-async def test_worker_images_are_optional_and_do_not_replace_source_or_manim(tmp_path, mode, monkeypatch, use_openverse):
+async def test_worker_images_are_optional_and_independent_of_manim(tmp_path, mode, monkeypatch, use_openverse):
     db = Store(tmp_path)
     try:
         p = db.create(ProjectInput(prompt="Spiega il soggetto", count=1, text_density="brief",
@@ -127,8 +127,8 @@ async def test_worker_images_are_optional_and_do_not_replace_source_or_manim(tmp
         result = db.project(p["id"])
         content = result["slides"][0]["content"]
         assert len(result["sources"]) == 1
-        assert bool(calls) == (mode in ("download", "missing", "offline"))
-        assert content["image_placeholder"] == (mode in ("missing", "offline"))
+        assert bool(calls) == (mode in ("download", "missing", "offline", "manim"))
+        assert content["image_placeholder"] == (mode in ("missing", "offline", "manim"))
         if mode == "source":
             assert content["image_id"] == source_image["id"]
         if mode == "existing":

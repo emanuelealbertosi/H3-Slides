@@ -21,6 +21,7 @@ from .worker import Worker
 from .slidev import write_slidev
 from .local_models import choose_model_file
 from .composition import split_content
+from .diagrams import fingerprint
 from .remote_models import RemoteModelRequest, list_remote_models
 from .web_images import store_image, MAX_IMAGE_BYTES
 
@@ -445,11 +446,11 @@ def create_app(root=None, data_root=None):
         return web.json_response(public_project(store.project(pid)))
 
     async def slide(request):
+        edit = SlideEdit.model_validate(await request.json())
         p = store.project(request.match_info["pid"])
         item = next((s for s in p["slides"] if s["id"] == request.match_info["sid"]), None)
         if item is None:
             raise KeyError()
-        edit = SlideEdit.model_validate(await request.json())
         if item["revision"] != edit.revision:
             return web.json_response({"error": "Slide aggiornata altrove: ricarica prima di salvare", "slide": item}, status=409)
         visuals = {i["id"]: i for i in p.get("visual_assets", [])}
@@ -463,13 +464,21 @@ def create_app(root=None, data_root=None):
             raise ValueError("Massimo 160 caratteri per punto")
         rendered = None
         if edit.content.diagram.kind == "manim":
-            rendered = await worker.renderer.render(p["id"], edit.content.diagram.model_dump(), p)
-            # Recheck after rendering: an edit made meanwhile must win.
-            p = store.project(request.match_info["pid"])
-            item = next((s for s in p["slides"] if s["id"] == request.match_info["sid"]), None)
-            if item is None or item["revision"] != edit.revision:
-                return web.json_response({"error": "Slide aggiornata durante il rendering: ricarica prima di salvare",
-                                          "slide": item}, status=409)
+            previous_diagram = SlideContent.model_validate(item["content"]).diagram
+            cached = item.get("diagram_render", {})
+            if (edit.content.diagram == previous_diagram and cached.get("engine") == "manim"
+                    and cached.get("asset")
+                    and store.asset_path(p["id"], cached["asset"]).is_file()
+                    and cached.get("fingerprint") == fingerprint(edit.content.diagram.model_dump(), p)):
+                rendered = cached
+            else:
+                rendered = await worker.renderer.render(p["id"], edit.content.diagram.model_dump(), p)
+                # Recheck after rendering: an edit made meanwhile must win.
+                p = store.project(request.match_info["pid"])
+                item = next((s for s in p["slides"] if s["id"] == request.match_info["sid"]), None)
+                if item is None or item["revision"] != edit.revision:
+                    return web.json_response({"error": "Slide aggiornata durante il rendering: ricarica prima di salvare",
+                                              "slide": item}, status=409)
         item.update(content=edit.content.model_dump(), revision=item["revision"] + 1, status="ready")
         if rendered:
             item["diagram_render"] = rendered
@@ -512,9 +521,7 @@ def create_app(root=None, data_root=None):
         asset = store_image(store, pid, bytes(raw), Path(filename).name)
         content = SlideContent.model_validate(item["content"])
         content.image_id, content.image_origin, content.image_placeholder = asset["id"], "upload", False
-        content.diagram = type(content.diagram)()
         item.update(content=content.model_dump(), revision=revision+1, status="ready")
-        item.pop("diagram_render", None)
         p.setdefault("visual_assets", []).append(asset)
         store.save_project(p)
         return web.json_response({"slide": item, "visual_asset": asset})
