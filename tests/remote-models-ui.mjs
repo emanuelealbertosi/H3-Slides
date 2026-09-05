@@ -113,6 +113,18 @@ try{
   await page.locator('#provider').selectOption('local');
   assert.equal(await page.locator('#remote-fields').isVisible(),false);
   assert.equal(await page.locator('#local-fields').isVisible(),true);
+  await page.locator('#provider').selectOption('remote');
+  await page.locator('#api-url').fill('https://provider.example/v1');
+  await page.locator('#consent').check();
+  await page.reload();
+  assert.equal(await page.locator('#consent').isChecked(),true);
+  await page.locator('#api-url').fill('https://other.example/v1');
+  assert.equal(await page.locator('#consent').isChecked(),false);
+  await page.locator('#api-url').fill('https://provider.example/v1');
+  assert.equal(await page.locator('#consent').isChecked(),true);
+  await page.locator('#consent').uncheck();
+  await page.reload();
+  assert.equal(await page.locator('#consent').isChecked(),false);
   await page.setViewportSize({width:390,height:844});
   const mobileLayout=await page.evaluate(()=>({fits:document.documentElement.scrollWidth<=window.innerWidth,
     width:document.documentElement.scrollWidth,viewport:window.innerWidth,

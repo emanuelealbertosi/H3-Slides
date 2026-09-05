@@ -1,7 +1,7 @@
 import asyncio
 import json
 import hashlib
-from .llm import LLM
+from .llm import LLM, parse_json
 from .models import SlideContent
 from .content_rules import content_contract, validate_content, fit_complete_sentences
 from .storage import uid, now
@@ -30,12 +30,43 @@ def validation_reason(exc):
     return "; ".join(parts) or "Contenuto non conforme allo schema"
 
 
-def normalize_slide_candidate(value):
+def normalize_slide_candidate(value, scaffold=None):
     """Remove fields reserved for the trusted second-stage diagram compiler."""
+    for _ in range(4):
+        if isinstance(value, str):
+            try:
+                nested = parse_json(value)
+            except (AttributeError, TypeError, ValueError):
+                break
+            if nested == value:
+                break
+            value = nested
+            continue
+        if isinstance(value, list):
+            full_slides = [item for item in value if isinstance(item, dict) and
+                           ("title" in item or isinstance(item.get("content"), dict))]
+            if full_slides:
+                value = full_slides[0]
+                continue
+            if scaffold and value and all(isinstance(item, dict) and "text" in item for item in value):
+                value = {**scaffold, "bullets": [], "blocks": value[:4]}
+                continue
+            if scaffold and value and all(isinstance(item, str) for item in value) and any(
+                    "\\" in item or "=" in item for item in value):
+                value = {**scaffold, "bullets": [], "blocks": [{
+                    "heading": "", "text": "\n".join(value), "kind": "key", "source": ""
+                }]}
+                continue
+            break
+        if isinstance(value, dict) and not value.get("title"):
+            nested = next((value.get(key) for key in ("content", "slide", "response", "result", "data", "risposta")
+                           if isinstance(value.get(key), (dict, list, str))), None)
+            if nested is not None:
+                value = nested
+                continue
+        break
     if not isinstance(value, dict):
         return value
-    if not value.get("title") and isinstance(value.get("content"), dict):
-        value = value["content"]
     result = {**value, "layout_variant": 0}
     diagram = result.get("diagram")
     if isinstance(diagram, dict) and diagram.get("kind") in ("manim", "none"):
@@ -391,7 +422,7 @@ class Worker:
                             "soltanto con un singolo oggetto JSON completo conforme allo schema, senza Markdown, "
                             "commenti o testo prima e dopo l'oggetto.")
                         continue
-                    result = normalize_slide_candidate(result)
+                    result = normalize_slide_candidate(result, slide["content"])
                     try:
                         content = SlideContent.model_validate(result)
                         if attempt and fit_complete_sentences(content, project):

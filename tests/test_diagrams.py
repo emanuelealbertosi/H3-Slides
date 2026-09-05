@@ -191,6 +191,12 @@ def test_first_stage_cannot_inject_or_duplicate_a_manim_scene():
     wrapped = normalize_slide_candidate({"id":"slide","revision":2,"status":"ready",
                                          "content":{"title":"Contenuto corretto"}})
     assert wrapped == {"title":"Contenuto corretto","layout_variant":0}
+    scaffold = SlideContent(title="Formule", layout="cards").model_dump()
+    assert normalize_slide_candidate({"risposta": {"title":"Risposta corretta"}}, scaffold)["title"] == "Risposta corretta"
+    assert normalize_slide_candidate([{"title":"Prima"}, {"title":"Seconda"}], scaffold)["title"] == "Prima"
+    formulas = normalize_slide_candidate([r"\(f'(x)=2x\)", r"\[\int x\,dx=x^2/2+C\]"], scaffold)
+    assert formulas["title"] == "Formule" and len(formulas["blocks"]) == 1
+    assert r"\int" in formulas["blocks"][0]["text"]
 
 
 @pytest.mark.asyncio

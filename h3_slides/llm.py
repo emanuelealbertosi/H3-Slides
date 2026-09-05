@@ -16,12 +16,28 @@ from .local_models import LocalModelFiles, validate_model
 from .remote_models import remote_api_url
 
 
+_LATEX_ESCAPE = re.compile(
+    r"(?<!\\)\\(?=(?:[()\[\]{},;!:]|frac\b|sqrt\b|int\b|sum\b|prod\b|lim\b|"
+    r"sin\b|cos\b|tan\b|ln\b|log\b|exp\b|cdot\b|times\b|left\b|right\b|"
+    r"mathrm\b|text\b|partial\b|infty\b|begin\b|end\b|alpha\b|beta\b|"
+    r"gamma\b|delta\b|Delta\b|theta\b|lambda\b|mu\b|pi\b|sigma\b|omega\b|"
+    r"overline\b|underline\b|vec\b|cdots\b|ldots\b|geq?\b|leq?\b|neq\b|"
+    r"approx\b|to\b|pm\b|mp\b|in\b|notin\b|cup\b|cap\b))"
+)
+
+
+def _escape_latex_in_json(text):
+    """Protect common raw LaTeX slashes without repairing arbitrary JSON."""
+    return _LATEX_ESCAPE.sub(lambda _: "\\\\", text)
+
+
 def parse_json(text):
     text = text.strip()
     if text.startswith("~~~"):
         text = text[3:].removeprefix("json").strip().removesuffix("~~~").strip()
     if text.startswith(chr(96) * 3):
         text = text[3:].removeprefix("json").strip().removesuffix(chr(96) * 3).strip()
+    text = _escape_latex_in_json(text)
     try:
         return json.loads(text)
     except json.JSONDecodeError as original:

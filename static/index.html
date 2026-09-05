@@ -145,12 +145,13 @@
   <details><summary class="hint">Alternativa: ID manuale</summary>
   <label class="check"><input id="api-model-manual" type="checkbox">Usa un identificativo manuale</label>
   <label>Identificativo modello<input id="api-model-id" disabled autocomplete="off" placeholder="Solo se il server non espone il catalogo"></label></details>
-  <label class="check"><input id="consent" type="checkbox">Autorizzo l'invio del prompt e degli eventuali allegati a questo provider.</label></div>
+  <label class="check"><input id="consent" type="checkbox">Autorizzo l'invio del prompt e degli eventuali allegati a questo provider.</label>
+  <p class="hint muted">La scelta viene ricordata in questo browser per questo indirizzo API. Deseleziona la casella per revocarla.</p></div>
   <label class="check"><input id="vision" type="checkbox" checked>Vision per immagini e PDF scansionati</label>
   </section>
 <section id="remote-inference" class="admin-card" hidden>
 <h2>Inferenza API</h2>
-<p class="hint muted">Valori salvati automaticamente in questo browser, separati per server e modello. Seleziona prima un modello. Chiave e consenso non vengono salvati.</p>
+<p class="hint muted">Valori salvati automaticamente in questo browser, separati per server e modello. Seleziona prima un modello. La chiave non viene mai salvata; il consenso resta associato all’indirizzo API finché non lo revochi.</p>
 <fieldset id="api-inference-fields" disabled>
 <label class="check"><input id="api-server-tokens" type="checkbox">Lascia il limite di output al server</label>
 <div class="admin-grid">

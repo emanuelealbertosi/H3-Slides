@@ -61,6 +61,11 @@ const designFields={'template':'template','font':'font','text-density':'text_den
   'web-enabled':'web_enabled','web-provider':'web_provider','web-query':'web_query','web-max-sources':'web_max_sources'};
 const preferenceIds=['provider','model','api-url','api-model','vision',...Object.keys(designFields).filter(id=>!['web-query','web-enabled'].includes(id))];
 const pref=JSON.parse(localStorage.getItem('h3slides-settings')||'{}');
+const remoteConsents={...(pref.remote_consents||{})};
+const remoteConsentKey=()=>String($('api-url').value||'').trim().replace(/\/+$/,'');
+function restoreRemoteConsent(){
+  $('consent').checked=Boolean(remoteConsentKey()&&remoteConsents[remoteConsentKey()]);
+}
 for(const id of preferenceIds) {
   if(pref[id]!==undefined&&!['model','api-model'].includes(id)) { if($(id).type==='checkbox')$(id).checked=pref[id];else $(id).value=pref[id]; }
 }
@@ -68,6 +73,7 @@ function savePrefs(){
   const values={};for(const id of preferenceIds)values[id]=$(id).type==='checkbox'?$(id).checked:$(id).value;
   values['api-model']=remoteModels.value();values.remote_models=remoteModels.preferences();
   apiSettings?.sync();values.api_profiles=apiSettings?.preferences()||pref.api_profiles||{};
+  values.remote_consents=remoteConsents;
   localStorage.setItem('h3slides-settings',JSON.stringify(values));
   updateModelSummary();
 }
@@ -119,9 +125,18 @@ $('model').addEventListener('change',()=>{
   adminDirty=false;$('model').dataset.previous=$('model').value;savePrefs();loadAdmin();
 });
 for(const id of ['api-url','api-key']){
-  $(id).addEventListener('input',()=>{remoteModels.invalidate();apiSettings.sync();updateModelSummary();if(id==='api-url')$('consent').checked=false});
+  $(id).addEventListener('input',()=>{remoteModels.invalidate();apiSettings.sync();updateModelSummary();if(id==='api-url')restoreRemoteConsent()});
   $(id).addEventListener('change',()=>remoteModels.load());
 }
+$('consent').addEventListener('change',()=>{
+  const key=remoteConsentKey();
+  if(key){
+    if($('consent').checked)remoteConsents[key]=true;
+    else delete remoteConsents[key];
+  }
+  savePrefs();
+});
+restoreRemoteConsent();
 for(const id of ['title','prompt','count','theme'])$(id).addEventListener('input',()=>{drafts.add('brief');$('save-status').textContent='Brief non salvato'});
 for(const id of Object.keys(designFields))$(id).addEventListener('input',()=>{
   if(id.startsWith('web-'))$('web-consent').checked=false;

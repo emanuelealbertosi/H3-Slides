@@ -23,6 +23,16 @@ def test_freeform_geometry_is_editor_owned_and_bounded():
                      freeform={"block-0": {"x": 1200, "y": 200, "w": 380, "h": 440}})
 
 
+def test_mathematical_blocks_can_be_formula_dense_instead_of_prose():
+    project = ProjectInput(text_density="complete").model_dump()
+    content = SlideContent(title="Derivate", blocks=[{
+        "heading": "Formule fondamentali",
+        "text": r"\(f(x)=x^n\) → \(f'(x)=nx^{n-1}\)" + " " * 6,
+        "kind": "key"
+    }])
+    validate_content(content, project, "")
+
+
 def test_old_slides_remain_valid():
     old = SlideContent(title="Vecchia slide", bullets=["Testo conservato"])
     assert old.blocks == []

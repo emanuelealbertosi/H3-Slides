@@ -17,6 +17,11 @@ def test_json_parser_accepts_valid_wrapped_payload(raw):
     assert parse_json(raw) in ({"ok":True}, [{"ok":True}])
 
 
+def test_json_parser_preserves_unescaped_latex_commands():
+    parsed = parse_json(r'{"formula":"\(f(x)=\frac{1}{x}\)","integral":"\[\int x\,dx\]"}')
+    assert parsed == {"formula": r"\(f(x)=\frac{1}{x}\)", "integral": r"\[\int x\,dx\]"}
+
+
 @pytest.mark.asyncio
 async def test_schema_is_both_visible_and_constrained():
     bodies = []

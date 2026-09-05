@@ -9,6 +9,11 @@ def paragraph_budget(project):
     return (480 if visual else 800) if project.get("text_density") == "complete" else (370 if visual else 650)
 
 
+def mathematical_block(text):
+    markers = re.findall(r"\\(?:\(|\[|frac\b|sqrt\b|int\b|sum\b|lim\b|sin\b|cos\b|tan\b)", text)
+    return len(markers) >= 2 or (len(markers) >= 1 and len(re.findall(r"[=+\-*/^_]", text)) >= 2)
+
+
 def content_contract(project, block_count=None):
     density = project.get("text_density", "detailed")
     schema = SlideContent.model_json_schema()
@@ -83,10 +88,12 @@ def validate_content(content, project, evidence):
     if sum(len(b.text) for b in content.blocks) > budget:
         raise ValueError(f"Budget complessivo superato: massimo {budget} caratteri tra tutti i paragrafi")
     for index, block in enumerate(content.blocks):
-        if not limits["minLength"] <= len(block.text) <= limits["maxLength"]-120:
-            raise ValueError(f"Box {index+1}: {len(block.text)} caratteri; servono {limits['minLength']}–{limits['maxLength']-120}. "
+        math_content = mathematical_block(block.text)
+        minimum = 24 if math_content else limits["minLength"]
+        if not minimum <= len(block.text) <= limits["maxLength"]-120:
+            raise ValueError(f"Box {index+1}: {len(block.text)} caratteri; servono {minimum}–{limits['maxLength']-120}. "
                              "Riduci le frasi, non tagliare parole")
-        if block.kind != "quote" and not re.search(r'[.!?][\"»”)\]]*$', block.text.strip()):
+        if block.kind != "quote" and not math_content and not re.search(r'[.!?][\"»”)\]]*$', block.text.strip()):
             raise ValueError("Il paragrafo termina con una frase incompleta: chiudi il periodo senza tagliare parole")
         if len(block.heading) > 45:
             raise ValueError("Titolo del box troppo lungo")
