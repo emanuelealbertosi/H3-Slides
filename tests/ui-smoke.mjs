@@ -201,10 +201,11 @@ try{
   await page.locator('#web-query').fill('Query visibile prima del consenso');
   await page.locator('#web-consent').check();
   await page.locator('#web-query').fill('Query cambiata');
-  assert.equal(await page.locator('#web-consent').isChecked(),false);
+  assert.equal(await page.locator('#web-consent').isChecked(),true);
   await page.reload();
   await page.locator('.slide-card').waitFor();
   assert.equal(await page.locator('#web-enabled').isChecked(),false);
+  assert.equal(await page.locator('#web-consent').isChecked(),true);
   const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth);
   assert.equal(overflow,false);
   assert.deepEqual(errors,[]);

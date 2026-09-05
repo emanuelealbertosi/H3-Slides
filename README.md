@@ -163,14 +163,38 @@ inviata appare nei log. Al motore di ricerca viene inviata solo questa query:
 mai allegati, prompt completo o credenziali del modello.
 Il consenso comprende la query manuale o automatica ed è distinto da quello
 per inviare prompt e fonti a un LLM remoto.
+La spunta viene ricordata **in questo browser per il motore scelto**; per
+SearXNG è associata anche all'indirizzo del servizio salvato. Non serve
+riconfermarla quando cambi query, progetto o numero di fonti, né dopo Genera
+o un ricaricamento. Un altro motore o un nuovo indirizzo non eredita il consenso:
+richiede la propria autorizzazione. Deselezionare la casella revoca e salva
+la scelta. Nessuna chiave API viene salvata da questa preferenza, che non
+attiva automaticamente la ricerca web nei nuovi progetti.
 La ricerca funziona anche con il modello locale, senza API di ricerca a pagamento.
 
 **I documenti allegati hanno la priorità**, anche nei progetti già esistenti.
 Quando sono presenti, la tendina **Priorità delle fonti** propone **Documenti
-allegati (predefinito)**: l'app legge e usa prima il materiale fornito, poi il
-web aggiunge informazioni senza sostituirlo come fonte principale. Solo
+allegati (predefinito)**: l'app legge il materiale e valuta quali argomenti
+richiesti copre. **Se i documenti bastano, salta la ricerca web**. Se identifica
+lacune, cerca solo gli argomenti mancanti, senza sostituire i documenti come
+fonte principale. Una verifica non conclusiva non viene spacciata per copertura
+completa: l'app la segnala e usa i documenti senza avviare ricerche generiche. Solo
 scegliendo esplicitamente **Web** si parte dalle fonti online. La scelta resta
 salvata nel progetto; ogni nuovo progetto riparte dalla priorità ai documenti.
+Il pannello distingue **Ricerca web saltata · documenti sufficienti** da
+**Ricerca web saltata · verifica non conclusiva**. In entrambi i casi non mostra
+query inviate o vecchie fonti web. Quando integra lacune, indica brevemente
+gli argomenti cercati.
+La query automatica si concentra sulle lacune; se hai scritto una query
+manuale, viene rispettata e usata solo quando occorre l'integrazione
+(oppure con **Cerca sempre in Internet**).
+
+La spunta **Cerca sempre in Internet**, disattivata inizialmente anche nei
+vecchi progetti, forza la ricerca senza verificare prima se i documenti bastano.
+Non cambia la priorità delle fonti: i documenti restano primi se così impostato.
+La scelta si salva nel progetto e nelle preferenze del browser ed è revocabile
+deselezionandola. Richiede comunque **Integra fonti dal web** e il consenso:
+non abilita da sola la ricerca, nemmeno in un nuovo progetto.
 
 - **Wikipedia diretta** (predefinita per i nuovi progetti): cerca voci e legge
   estratti testuali tramite le API pubbliche, senza server di ricerca,

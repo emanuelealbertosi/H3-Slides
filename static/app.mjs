@@ -60,12 +60,35 @@ async function finishInlineEdits(){
   if($('slides').querySelector('[contenteditable]'))throw new Error('Salva o annulla il testo ancora in modifica.');
 }
 const designFields={'template':'template','font':'font','text-density':'text_density','background-color':'background_color','accent-color':'accent_color','source-images':'use_source_images','web-images':'use_web_images','openverse-images':'use_openverse_images','manim-diagrams':'use_manim_diagrams','pdf-scope':'pdf_scope',
-  'web-enabled':'web_enabled','web-provider':'web_provider','web-query':'web_query','web-max-sources':'web_max_sources','source-priority':'source_priority'};
+  'web-enabled':'web_enabled','web-provider':'web_provider','web-query':'web_query','web-max-sources':'web_max_sources','source-priority':'source_priority','web-always-search':'web_always_search'};
 // Source priority belongs to the project: a previous web-first choice must not
 // silently make new projects web-first as well.
 const preferenceIds=['provider','model','api-url','api-model','vision',...Object.keys(designFields).filter(id=>!['web-query','web-enabled','source-priority'].includes(id))];
 const pref=JSON.parse(localStorage.getItem('h3slides-settings')||'{}');
 const remoteConsents={...(pref.remote_consents||{})};
+const webConsents={...(pref.web_consents||{})};
+let searchSettingsEndpoint=null;
+function normalizedSearchEndpoint(value){
+  try{
+    const url=new URL(String(value||'').trim());
+    if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.search||url.hash)return '';
+    return url.origin+url.pathname.replace(/\/+$/,'');
+  }catch{return ''}
+}
+function webConsentKey(){
+  const engine=$('web-provider').value;
+  if(['wikipedia','duckduckgo'].includes(engine))return engine;
+  const saved=normalizedSearchEndpoint(searchSettingsEndpoint);
+  return engine==='searxng'&&saved&&saved===normalizedSearchEndpoint($('searxng-url').value)?'searxng|'+saved:'';
+}
+function restoreWebConsent(){
+  const key=webConsentKey();
+  $('web-consent').checked=Boolean(key&&webConsents[key]===true);
+  $('web-consent').disabled=!key;
+  $('web-consent-hint').textContent=key?
+    'Scelta ricordata in questo browser per questo motore e, con SearXNG, per questo indirizzo. Deseleziona per revocarla. Non attiva la ricerca nei nuovi progetti.':
+    'Carica o salva l’indirizzo SearXNG prima di autorizzarlo. Ogni nuova destinazione richiede una scelta esplicita.';
+}
 const remoteConsentKey=()=>String($('api-url').value||'').trim().replace(/\/+$/,'');
 function restoreRemoteConsent(){
   $('consent').checked=Boolean(remoteConsentKey()&&remoteConsents[remoteConsentKey()]);
@@ -78,6 +101,7 @@ function savePrefs(){
   values['api-model']=remoteModels.value();values.remote_models=remoteModels.preferences();
   apiSettings?.sync();values.api_profiles=apiSettings?.preferences()||pref.api_profiles||{};
   values.remote_consents=remoteConsents;
+  values.web_consents=webConsents;
   localStorage.setItem('h3slides-settings',JSON.stringify(values));
   updateModelSummary();
 }
@@ -141,9 +165,19 @@ $('consent').addEventListener('change',()=>{
   savePrefs();
 });
 restoreRemoteConsent();
+restoreWebConsent();
+$('web-consent').addEventListener('change',()=>{
+  const key=webConsentKey();
+  if(key){
+    if($('web-consent').checked)webConsents[key]=true;
+    else delete webConsents[key];
+  }
+  savePrefs();restoreWebConsent();
+});
+$('searxng-url').addEventListener('input',restoreWebConsent);
 for(const id of ['title','prompt','count','theme'])$(id).addEventListener('input',()=>{drafts.add('brief');$('save-status').textContent='Brief non salvato'});
 for(const id of Object.keys(designFields))$(id).addEventListener('input',()=>{
-  if(['web-enabled','web-provider','web-query','web-max-sources'].includes(id))$('web-consent').checked=false;
+  if(id==='web-provider')restoreWebConsent();
   drafts.add('brief');$('save-status').textContent='Stile in anteprima · salva per conservarlo';savePrefs();render();
 });
 $('theme').addEventListener('change',()=>{const t=themes[$('theme').value];$('background-color').value=t.bg;$('accent-color').value=t.accent;render()});
@@ -222,9 +256,9 @@ async function selectProject(id){
   $('project-list').value=id;
   for(const key of ['title','prompt','count','theme'])$(key).value=current[key];
   const defaults={template:'auto',font:'Arial',text_density:'detailed',background_color:themes[current.theme].bg,accent_color:themes[current.theme].accent,use_source_images:true,use_web_images:false,use_openverse_images:false,use_manim_diagrams:false,pdf_scope:'auto',
-    web_enabled:false,web_provider:'wikipedia',web_query:'',web_max_sources:3,source_priority:'documents'};
+    web_enabled:false,web_provider:'wikipedia',web_query:'',web_max_sources:3,source_priority:'documents',web_always_search:false};
   for(const [id,key] of Object.entries(designFields)){const value=current[key]??defaults[key];if($(id).type==='checkbox')$(id).checked=value;else $(id).value=value||defaults[key]}
-  $('web-consent').checked=false;$('web-refresh').checked=false;
+  restoreWebConsent();$('web-refresh').checked=false;
   fillThemeDesign(current.theme_design);$('theme-presets').value='';
   localStorage.setItem('h3slides-project',id);$('save-status').textContent='Salvato sul PC';render();
 }
@@ -239,7 +273,7 @@ async function newProject(){
   try{await finishInlineEdits()}catch(error){toast(error.message);return}
   if(drafts.size&&!confirm('Lasciare le modifiche non salvate?'))return;
   current=null;drafts.clear();$('title').value='Nuova presentazione';$('prompt').value='';$('project-list').value='';
-  $('web-enabled').checked=false;$('web-query').value='';$('source-priority').value='documents';$('web-consent').checked=false;$('web-refresh').checked=false;render();
+  $('web-enabled').checked=false;$('web-query').value='';$('source-priority').value='documents';restoreWebConsent();$('web-refresh').checked=false;render();
   navigatePage('create');
 }
 $('new').onclick=$('library-new').onclick=newProject;
@@ -394,7 +428,7 @@ async function generate(slideId=null,diagramOnly=false,regenerateAll=false,repla
     job=await api('/api/projects/'+current.id+'/generate','POST',{provider:selected,prompt:instructions,count:Number($('count').value),slide_id:slideId,
       diagram_only:diagramOnly,replace_diagrams:replaceDiagrams,regenerate_all:regenerateAll,rebuild_outline:rebuildOutline,
       web_consent:diagramOnly?false:$('web-consent').checked,web_refresh:diagramOnly?false:$('web-refresh').checked});
-    $('web-consent').checked=false;$('web-refresh').checked=false;
+    $('web-refresh').checked=false;
     toast('Generazione avviata');await poll();
   }catch(e){toast(e.message)}finally{busy=false;updateGenerationButtons()}
 }
@@ -404,11 +438,19 @@ for(const button of document.querySelectorAll('[data-generate-presentation]'))bu
 };
 $('generate-missing-diagrams').onclick=()=>generate(null,true);
 $('redesign-diagrams').onclick=()=>generate(null,true,false,true);
-api('/api/admin/search').then(settings=>{$('searxng-url').value=settings.searxng_url}).catch(e=>{$('search-settings-status').textContent=e.message});
+const initialSearchAddress=$('searxng-url').value;
+api('/api/admin/search').then(settings=>{
+  searchSettingsEndpoint=settings.searxng_url;
+  if($('searxng-url').value===initialSearchAddress)$('searxng-url').value=settings.searxng_url;
+  restoreWebConsent();
+}).catch(e=>{$('search-settings-status').textContent=e.message;restoreWebConsent()});
 $('save-search-settings').onclick=async()=>{
   try{
-    const settings=await api('/api/admin/search','POST',{searxng_url:$('searxng-url').value});
-    $('searxng-url').value=settings.searxng_url;$('web-consent').checked=false;
+    const submitted=$('searxng-url').value;
+    const settings=await api('/api/admin/search','POST',{searxng_url:submitted});
+    searchSettingsEndpoint=settings.searxng_url;
+    if($('searxng-url').value===submitted)$('searxng-url').value=settings.searxng_url;
+    restoreWebConsent();
     $('search-settings-status').textContent='Indirizzo salvato solo su questo computer. Nessun servizio avviato automaticamente.';
   }catch(e){$('search-settings-status').textContent=e.message}
 };
@@ -537,29 +579,42 @@ function render(){
   $('wikipedia-hint').hidden=$('web-provider').value!=='wikipedia';
   const research=current?.web_research;
   const documentFallback=research?.status==='document_fallback',researchFailed=research?.status==='failed';
+  const researchSkipped=research?.status==='skipped',coverageUncertain=research?.skipped_reason==='coverage_uncertain';
+  const noWebSources=documentFallback||researchFailed||researchSkipped;
   $('source-mode').textContent=$('web-enabled').checked?(documentFallback?
     'Documenti allegati · nessuna integrazione web nell’ultima generazione. La ricerca verrà ritentata alla prossima generazione.':
     researchFailed?'Ultima ricerca non completata: nessuna fonte web usata. Senza allegati la generazione si è fermata.':
+    researchSkipped?(coverageUncertain?'Ultima generazione: solo documenti allegati. Verifica non conclusiva, nessuna ricerca web eseguita.':
+      'Ultima generazione: documenti sufficienti per il brief, ricerca web saltata.'):
     current?.sources.length?($('source-priority').value==='web'?
       'Priorità al web, scelta esplicita per questo progetto. I documenti allegati integrano le fonti trovate.':
-      'Prima i documenti allegati. La ricerca web aggiunge informazioni senza sostituire la fonte principale.'):
+      $('web-always-search').checked?'Prima i documenti allegati. La ricerca web viene eseguita sempre, come richiesto, senza cambiare priorità.':
+      'Prima i documenti allegati. La ricerca web integra solo gli argomenti mancanti; se bastano i documenti, viene saltata.'):
     'Ricerca web attiva: uso gli estratti delle pagine lette. Verifica le fonti prima dell’uso.'):
     current?.sources.length?'Con documenti allegati: il modello usa le fonti fornite. Le immagini richiedono vision.':'Nessun allegato: genera dalla conoscenza del modello. Nessuna ricerca web; verifica fatti e date importanti.';
-  const attemptedQueries=research?(Array.isArray(research.attempted_queries)&&research.attempted_queries.length?
+  const attemptedQueries=research&&!researchSkipped?(Array.isArray(research.attempted_queries)&&research.attempted_queries.length?
     research.attempted_queries:[research.query].filter(Boolean)):[];
-  $('web-sources').innerHTML=research?'<details open data-research-status="'+(documentFallback?'document_fallback':researchFailed?'failed':'completed')+
-    '"><summary>'+(documentFallback?'Documenti allegati · nessuna integrazione web':researchFailed?'Ultima ricerca non completata':'Ultima ricerca completata')+
+  const missingTopics=!noWebSources&&research?.coverage?.status==='missing'&&Array.isArray(research.coverage.missing_topics)?
+    research.coverage.missing_topics.filter(topic=>typeof topic==='string').slice(0,8):[];
+  $('web-sources').innerHTML=research?'<details open data-research-status="'+(documentFallback?'document_fallback':researchFailed?'failed':researchSkipped?'skipped':'completed')+
+    '"><summary>'+(documentFallback?'Documenti allegati · nessuna integrazione web':researchFailed?'Ultima ricerca non completata':
+      researchSkipped?(coverageUncertain?'Ricerca web saltata · verifica non conclusiva':'Ricerca web saltata · documenti sufficienti'):'Ultima ricerca completata')+
     ' · '+esc(research.provider)+'</summary>'+
     (documentFallback?'<p class="hint" role="status"><strong>Solo documenti allegati, nessuna fonte web usata.</strong></p>':
-      researchFailed?'<p class="hint" role="status"><strong>Nessuna fonte web usata. Senza allegati la generazione si è fermata.</strong></p>':'')+
-    '<p class="hint">'+(research.query_mode==='automatic'?'Query automatica · ':'')+esc(new Date(research.created_at*1000).toLocaleString())+
-    (research.cache_used?' · cache locale':'')+'</p>'+
+      researchFailed?'<p class="hint" role="status"><strong>Nessuna fonte web usata. Senza allegati la generazione si è fermata.</strong></p>':
+      researchSkipped?'<p class="hint" role="status">'+(coverageUncertain?
+        'La verifica non ha confermato lacune specifiche. Uso solo i documenti allegati, senza affermare che coprano tutto il brief.':
+        'I documenti coprono il brief: nessuna query inviata e nessuna fonte web usata.')+'</p>':'')+
+    '<p class="hint">'+(!researchSkipped&&research.query_mode==='automatic'?'Query automatica · ':'')+esc(new Date(research.created_at*1000).toLocaleString())+
+    (!researchSkipped&&research.cache_used?' · cache locale':'')+'</p>'+
+    (missingTopics.length?'<p class="hint" data-web-missing-topics>Integrazione mirata · argomenti mancanti: '+esc(missingTopics.join('; '))+'.</p>':'')+
     (attemptedQueries.length?'<p class="hint">'+(attemptedQueries.length>1?'Query tentate:':'Query tentata:')+'</p><ol>'+
       attemptedQueries.map(query=>'<li class="hint">'+esc(query)+'</li>').join('')+'</ol>':'')+
-    (documentFallback||researchFailed?[]:research.sources||[]).map(s=>'<p class="hint"><a href="'+esc(/^https?:\/\//.test(s.url)?s.url:'#')+
+    (noWebSources?[]:research.sources||[]).map(s=>'<p class="hint"><a href="'+esc(/^https?:\/\//.test(s.url)?s.url:'#')+
       '" target="_blank" rel="noopener noreferrer">'+esc(s.id+' · '+s.title)+'</a></p>').join('')+
     (research.warnings||[]).map(w=>'<p class="hint">'+esc(w)+'</p>').join('')+
-    '<small>'+(documentFallback||researchFailed?'Esito dell’ultimo tentativo. Rigenera per riprovare la ricerca.':
+    '<small>'+(researchSkipped?'Valutazione dell’ultima generazione: modificare il brief richiede Rigenera per valutarlo di nuovo.':
+      documentFallback||researchFailed?'Esito dell’ultimo tentativo. Rigenera per riprovare la ricerca.':
       'Fonti lette in quella generazione: modificare la query non aggiorna le slide già pronte.')+'</small></details>':'';
   $('empty').hidden=Boolean(current?.slides.length);$('slide-count').textContent=(current?.slides.length||0)+' slide';
   const container=$('slides'),ids=new Set();

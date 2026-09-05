@@ -132,6 +132,7 @@ class ProjectInput(BaseModel):
     pdf_scope: Literal["auto", "whole"] = "auto"
     use_manim_diagrams: bool = False
     web_enabled: bool = False
+    web_always_search: bool = False
     web_provider: Literal["wikipedia", "searxng", "duckduckgo"] = "wikipedia"
     web_query: str = Field(default="", max_length=200)
     web_max_sources: int = Field(default=3, ge=3, le=5)

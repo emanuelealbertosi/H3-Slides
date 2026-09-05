@@ -297,7 +297,7 @@ async def test_automatic_query_uses_new_brief_one_client_and_keeps_input_empty(s
             prepared.append(1)
         async def json(self, prompt, **kwargs):
             if "RICAVA LA QUERY DI RICERCA" in prompt:
-                assert '"istruzioni_attuali": "Spiega Python con 6 slide colorate"' in prompt
+                assert '"instructions": "Spiega Python con 6 slide colorate"' in prompt
                 assert "Vecchio argomento" not in prompt
                 assert kwargs["schema"]["required"] == ["query"]
                 return {"query": "Python"}
@@ -348,7 +348,7 @@ async def test_automatic_query_snapshots_brief_and_excludes_document_bodies(stor
             await release.wait()
         async def json(self, prompt, **kwargs):
             assert "PRIVATE ATTACHMENT BODY" not in prompt
-            assert '"istruzioni_attuali": "Argomento originale"' in prompt
+            assert '"instructions": "Argomento originale"' in prompt
             assert "Modifica successiva" not in prompt
             return {"query": "Argomento originale"}
     calls = []
@@ -454,7 +454,7 @@ async def test_simpler_query_success_reuses_client_and_preserves_choice(store, m
 @pytest.mark.parametrize("mode", ["local", "remote"])
 @pytest.mark.parametrize("provider", ["wikipedia", "duckduckgo", "searxng"])
 async def test_empty_web_results_continue_from_documents_without_stale_web_sources(store, mode, provider):
-    p = document_project(store, web_provider=provider)
+    p = document_project(store, web_provider=provider, web_always_search=True)
     old_note = "Origine: fonti web lette dall'app; ricerca «vecchia». Verificare le affermazioni prima dell'uso."
     p["text_density"] = "detailed"
     p["slides"] = [{"id": "existing", "revision": 2, "status": "ready",
@@ -523,7 +523,7 @@ async def test_empty_web_results_continue_from_documents_without_stale_web_sourc
     ValueError("DuckDuckGo richiede un CAPTCHA"), ValueError("Wikipedia HTTP 429"),
     ValueError("Nessuna pagina ha permesso la lettura"), OSError("Rete non disponibile")])
 async def test_unavailable_or_denied_web_does_not_retry_and_only_uses_attached_documents(store, failure):
-    p = document_project(store, web_query="Python")
+    p = document_project(store, web_query="Python", web_always_search=True)
     calls = []
     class Research:
         async def collect(self, pid, **kwargs):
@@ -610,7 +610,7 @@ async def test_cancellation_while_simplifying_never_starts_document_fallback(sto
 @pytest.mark.parametrize("priority", ["documents", "web", "legacy"])
 @pytest.mark.parametrize("mode", ["local", "remote"])
 async def test_documents_are_read_and_cited_first_unless_web_priority_is_explicit(store, priority, mode):
-    p = document_project(store, web_query="Python")
+    p = document_project(store, web_query="Python", web_always_search=True)
     if priority == "legacy":
         p.pop("source_priority")
     else:
@@ -670,7 +670,7 @@ async def test_unreadable_primary_document_is_not_silently_replaced_by_web(store
 
 @pytest.mark.asyncio
 async def test_invalid_optional_query_does_not_block_primary_document_generation(store):
-    p = document_project(store)
+    p = document_project(store, web_always_search=True)
     calls = []
     class LLM:
         def __init__(self, *_): pass

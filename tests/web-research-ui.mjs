@@ -97,6 +97,29 @@ try{
   await page.locator('#web-sources [data-research-status="completed"]').waitFor();
   assert.equal(await page.locator('#source-priority-option').isHidden(),true,'Priority control requires attachments');
   projectOverrides={};
+  for(const skipped_reason of ['documents_sufficient','coverage_uncertain']){
+    // Even malformed/stale metadata must not expose a query or source as used.
+    research={...baseResearch,status:'skipped',skipped_reason,
+      coverage:{status:skipped_reason==='documents_sufficient'?'sufficient':'uncertain',
+        reason:'PRIVATE_DOCUMENT_EVIDENCE',missing_topics:[]}};
+    await page.reload();
+    const panel=page.locator('#web-sources');
+    await panel.locator('[data-research-status="skipped"]').waitFor();
+    const text=await panel.textContent();
+    assert.match(text,skipped_reason==='documents_sufficient'?
+      /Ricerca web saltata · documenti sufficienti/:/Ricerca web saltata · verifica non conclusiva/);
+    assert.doesNotMatch(text,/Ultima ricerca completata|Query automatica|Query tentat|OM-5 Mark II|PRIVATE_DOCUMENT_EVIDENCE/);
+    assert.equal(await panel.locator('a,ol').count(),0);
+    if(skipped_reason==='coverage_uncertain')assert.doesNotMatch(text,/documenti sufficienti|I documenti coprono/);
+  }
+  research={...baseResearch,status:'completed',coverage:{status:'missing',
+    reason:'PRIVATE_DOCUMENT_EVIDENCE',missing_topics:['Stabilizzazione','<script>Non eseguire</script>'],
+    evidence:['PRIVATE_RAW_DOCUMENT']}};
+  await page.reload();
+  await page.locator('#web-sources [data-research-status="completed"]').waitFor();
+  assert.match(await page.locator('[data-web-missing-topics]').textContent(),/Stabilizzazione/);
+  assert.equal(await page.locator('#web-sources script').count(),0);
+  assert.doesNotMatch(await page.locator('#web-sources').textContent(),/PRIVATE_DOCUMENT_EVIDENCE|PRIVATE_RAW_DOCUMENT/);
   research={...baseResearch,status:'document_fallback',attempted_queries:['<img src=x onerror=alert(1)>'],
     warnings:['<script>alert(1)</script>'],sources:baseResearch.sources};
   await page.reload();
@@ -104,5 +127,5 @@ try{
   assert.equal(await page.locator('#web-sources img,#web-sources script,#web-sources a').count(),0);
   assert.equal(await page.locator('#web-sources li').textContent(),research.attempted_queries[0]);
   assert.deepEqual(errors,[]);
-  console.log('Research UI: statuses, document-first defaults, explicit persisted priority, queries, safe metadata and image flags passed.');
+  console.log('Research UI: skipped/uncertain/targeted coverage, statuses, priority, queries, safe metadata and image flags passed.');
 }finally{await page.unrouteAll({behavior:'wait'});await browser.close()}

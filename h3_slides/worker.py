@@ -6,6 +6,7 @@ from .llm import LLM, parse_json
 from .web_images import WebImages
 from .models import SlideContent
 from .content_rules import content_contract, validate_content, fit_complete_sentences
+from .document_coverage import assess_coverage, validate_coverage
 from .storage import uid, now
 from .search_settings import SearchConfig
 from .web_research import (WebResearch, NoSearchResults, public_research, web_context,
@@ -30,6 +31,19 @@ DOCUMENT_FALLBACK_RULE = (
     "Non dichiarare ricerche riuscite, aggiornamenti o verifiche web. Cita nome e pagina degli allegati; "
     "non riusare ID W1/W2, URL o citazioni web delle versioni precedenti."
 )
+DOCUMENT_SUFFICIENT_NOTE = (
+    "Origine: documenti allegati. Ricerca web saltata: la verifica dei contenuti disponibili "
+    "indica che coprono la richiesta."
+)
+DOCUMENT_UNCERTAIN_NOTE = (
+    "Origine: documenti allegati. Verifica di copertura non conclusiva; ricerca web non eseguita. "
+    "Controllare eventuali informazioni mancanti."
+)
+DOCUMENT_ONLY_RULE = (
+    "\nRICERCA WEB NON ESEGUITA: usa soltanto i documenti allegati e segnala ciò che non documentano. "
+    "Non inventare informazioni mancanti o verifiche web. Cita nome e pagina degli allegati; "
+    "non riusare ID W1/W2, URL o citazioni web delle versioni precedenti."
+)
 
 
 def document_only_content(content, documents):
@@ -43,7 +57,8 @@ def document_only_content(content, documents):
             block["source"] = ""
     result["notes"] = "\n".join(line for line in result.get("notes", "").splitlines() if not (
         line.startswith(("Origine: fonti web lette dall'app;", "Origine: documenti allegati (fonti principali)"))
-        or line in (KNOWLEDGE_NOTE, DOCUMENT_FALLBACK_NOTE))).strip()
+        or line in (KNOWLEDGE_NOTE, DOCUMENT_FALLBACK_NOTE, DOCUMENT_SUFFICIENT_NOTE,
+                    DOCUMENT_UNCERTAIN_NOTE))).strip()
     return result
 
 
@@ -156,18 +171,19 @@ class Worker:
             query = project.get("web_query", "").strip()
             search_options = {"query": query, "provider": project.get("web_provider", "wikipedia"),
                               "source_priority": project.get("source_priority", "documents"),
+                              "always_search": project.get("web_always_search", False),
                               "limit": project.get("web_max_sources", 3),
                               "endpoint": (self.search_config.read()["searxng_url"]
                                            if project.get("web_provider") == "searxng" else ""),
                               "refresh": request.web_refresh}
+            # Snapshot submitted instructions for both coverage and automatic queries.
+            brief = {"title": project["title"], "instructions": request.prompt}
+            if request.slide_id:
+                slide = next(s for s in project["slides"] if s["id"] == request.slide_id)
+                brief.update(project_prompt=project["prompt"], slide_title=slide["content"]["title"])
+            search_options["document_brief"] = brief
             if not query:
-                # Snapshot the submitted instructions, not a later edit or the old project prompt.
-                search_options["automatic_brief"] = {
-                    "titolo_progetto": project["title"], "istruzioni_attuali": request.prompt}
-                if request.slide_id:
-                    slide = next(s for s in project["slides"] if s["id"] == request.slide_id)
-                    search_options["automatic_brief"].update(
-                        argomento_progetto=project["prompt"], titolo_slide=slide["content"]["title"])
+                search_options["automatic_brief"] = brief
         if not request.slide_id:
             project.update(prompt=request.prompt, count=request.count)
         self.store.save_project(project)
@@ -262,13 +278,74 @@ class Worker:
                               encoding="utf-8")
         return context, asset_labels
 
+    async def assess_document_coverage(self, client, project, request, context, jid, brief):
+        """Reuse a verified decision only for the same task, passages and model settings."""
+        from .retrieval import slide_evidence
+        await self.checkpoint(jid)
+        evidence = slide_evidence(self.store, project, request.prompt)
+        provider = getattr(client, "provider", None)
+        identity = {
+            "version": 1, "brief": brief, "context": context, "evidence": evidence,
+            "model": getattr(provider, "model", type(client).__name__),
+            "mode": getattr(provider, "mode", ""),
+            "endpoint": getattr(provider, "base_url", ""),
+            "sampling": {k: v for k, v in getattr(client, "sampling", {}).items()
+                         if k != "timeout_seconds"},
+        }
+        fingerprint = hashlib.sha256(json.dumps(identity, ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+        path = self.store.asset_path(project["id"], "coverage-" + fingerprint + ".json")
+        if path.exists():
+            try:
+                cached = validate_coverage(json.loads(path.read_text(encoding="utf-8")),
+                                           brief, context, evidence)
+                if cached["status"] in ("sufficient", "missing"):
+                    self.store.event(jid, "Copertura documenti: riuso della verifica già effettuata")
+                    return cached
+            except (ValueError, OSError):
+                pass
+        self.store.event(jid, "Verifico se i documenti coprono la richiesta · attesa massima 30 secondi")
+        result = await assess_coverage(client, brief, context, evidence, lambda: self.checkpoint(jid))
+        await self.checkpoint(jid)
+        if result["status"] in ("sufficient", "missing"):
+            try:
+                path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+            except OSError:
+                pass  # A cache failure must not discard a usable coverage assessment.
+        return result
+
+    def skip_document_research(self, jid, pid, options, coverage):
+        sufficient = coverage["status"] == "sufficient"
+        notice = ("Documenti sufficienti: ricerca web saltata." if sufficient else
+                  "Verifica di copertura non conclusiva: continuo dai documenti, senza ricerca web. "
+                  "Puoi abilitare «Cerca sempre in Internet» per un'integrazione.")
+        metadata = {
+            "status": "skipped", "skipped_reason": "documents_sufficient" if sufficient else "coverage_uncertain",
+            "provider": options["provider"], "query": "", "query_mode": "automatic" if
+            options.get("automatic_brief") is not None else "manual", "attempted_queries": [],
+            "sources": [], "created_at": now(), "cache_used": False,
+            "coverage": {key: coverage[key] for key in ("status", "reason", "missing_topics")},
+            "warnings": [] if sufficient else [notice], "job_id": jid,
+        }
+        project = self.store.project(pid)
+        project["web_research"] = metadata
+        self.store.save_project(project)
+        job = self.store.job(jid)
+        job.update(web_research=metadata, source_mode="documents")
+        self.store.save_job(job)
+        self.store.event(jid, notice, progress=.03)
+        return metadata
+
     async def collect_research(self, jid, pid, request, search_options, client=None):
         """One faithful query simplification; unavailable web can only fall back to attachments."""
         research, failure = None, None
         attempted, warnings = [], []
         options = dict(search_options)
         options.pop("source_priority", None)
+        options.pop("always_search", None)
+        options.pop("document_brief", None)
+        coverage = options.pop("document_coverage", None)
         brief = options.pop("automatic_brief", None)
+        gaps = coverage["missing_topics"] if coverage else None
         checkpoint = lambda: self.checkpoint(jid)
         if brief is not None:
             self.store.event(jid, "Preparazione query di ricerca automatica", status="running")
@@ -279,7 +356,7 @@ class Worker:
                 await client.prepare()
             self.store.event(jid, "Ricavo la query dall'argomento e dalle istruzioni")
             try:
-                options["query"] = await automatic_query(client, brief, checkpoint)
+                options["query"] = await automatic_query(client, brief, checkpoint, missing_topics=gaps)
             except ValueError:
                 failure = ValueError("Il modello non ha prodotto una query automatica utilizzabile")
             else:
@@ -311,7 +388,7 @@ class Worker:
                     await client.prepare()
                 try:
                     query = await automatic_query(client, {"query_originale": options["query"]},
-                                                  checkpoint, simplify=True)
+                                                  checkpoint, simplify=True, missing_topics=gaps)
                 except ValueError:
                     warnings.append("Il modello non ha prodotto una query semplificata utilizzabile.")
                     break
@@ -328,6 +405,8 @@ class Worker:
                         "query_mode": "automatic" if brief is not None else "manual",
                         "attempted_queries": attempted,
                         "warnings": warnings + research.get("warnings", [])}
+            if coverage:
+                research["coverage"] = coverage
             metadata = public_research(research)
         else:
             fallback = bool(project["sources"])
@@ -345,6 +424,8 @@ class Worker:
                 "warnings": warnings + [notice, reason], "cache_used": False,
             }
             self.store.event(jid, "Avviso · " + notice + " Motivo: " + reason)
+            if coverage:
+                metadata["coverage"] = coverage
         # Replace stale successful results too: never display last run's sources as current.
         project["web_research"] = {**metadata, "job_id": jid}
         self.store.save_project(project)
@@ -372,7 +453,21 @@ class Worker:
                 context, assets = await self.sources_context(client, project, jid)
                 if not context.strip() and not assets:
                     raise ValueError("Documento principale senza contenuti leggibili: verifica l'allegato")
-            if search_options:
+                if not search_options.get("always_search"):
+                    project = self.store.project(pid)  # Include the passages selected during retrieval.
+                    brief = search_options.get("document_brief") or {
+                        "title": project["title"], "instructions": request.prompt}
+                    coverage = await self.assess_document_coverage(client, project, request, context, jid, brief)
+                    await self.checkpoint(jid)
+                    if coverage["status"] != "missing":
+                        document_fallback = self.skip_document_research(jid, pid, search_options, coverage)
+                    else:
+                        search_options = {**search_options, "document_coverage": {
+                            key: coverage[key] for key in ("status", "reason", "missing_topics")}}
+                        self.store.event(jid, "Documenti parziali: cerco sul web le informazioni mancanti")
+                else:
+                    self.store.event(jid, "Cerca sempre in Internet attivo: integro il web mantenendo prioritari i documenti")
+            if search_options and not document_fallback:
                 research, client, document_fallback = await self.collect_research(
                     jid, pid, request, search_options, client)
             if client is None:
@@ -392,7 +487,10 @@ class Worker:
             elif document_fallback:
                 if not context.strip() and not assets:
                     raise ValueError("Nessun contenuto leggibile nei documenti: non posso usarli al posto del web")
-            priority_rules = source_priority_rule(project, priority, bool(research)) if not document_fallback else DOCUMENT_FALLBACK_RULE
+            priority_rules = source_priority_rule(project, priority, bool(research))
+            if document_fallback:
+                priority_rules += (DOCUMENT_ONLY_RULE if document_fallback.get("status") == "skipped"
+                                   else DOCUMENT_FALLBACK_RULE)
             context += priority_rules
             if request.diagram_only:
                 project = self.store.project(pid)
@@ -666,7 +764,11 @@ class Worker:
                     content.notes = prefix + content.notes[:6000-len(prefix)]
                 elif document_fallback:
                     content = SlideContent.model_validate(document_only_content(content.model_dump(), project["sources"]))
-                    content.notes = DOCUMENT_FALLBACK_NOTE + "\n\n" + content.notes[:6000-len(DOCUMENT_FALLBACK_NOTE)-2]
+                    note = DOCUMENT_FALLBACK_NOTE
+                    if document_fallback.get("status") == "skipped":
+                        note = (DOCUMENT_SUFFICIENT_NOTE if document_fallback["skipped_reason"] ==
+                                "documents_sufficient" else DOCUMENT_UNCERTAIN_NOTE)
+                    content.notes = note + "\n\n" + content.notes[:6000-len(note)-2]
                 if content.image_id in visual_assets:
                     content.image_origin = visual_assets[content.image_id]["origin"]
                 elif not project["sources"] or not project.get("use_source_images", True):
