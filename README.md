@@ -218,6 +218,10 @@ In **Materiale visivo**:
 - **Usa immagini del libro/documento** mantiene il comportamento esistente.
 - **Cerca immagini in internet** è indipendente: può essere attivata insieme
   alla precedente, anche senza la ricerca di fonti testuali.
+- **Estendi la ricerca a Openverse (facoltativo)** aggiunge un secondo catalogo
+  solo quando la ricerca immagini è attiva e Commons/Wikipedia non hanno fornito
+  un'immagine valida. È disattivato inizialmente, anche nei vecchi progetti;
+  la scelta si salva nel progetto e nelle preferenze del browser.
 
 L'app invia a Wikimedia Commons un soggetto visivo breve proposto dal modello,
 non il documento completo. Cerca immagini e usa anche la figura principale di
@@ -226,6 +230,18 @@ soltanto immagini compatibili con licenze Public domain, CC0, CC BY o CC BY-SA.
 Autore, licenza e pagina della fonte restano nel progetto; attribuzione visibile
 sull'immagine e completa nelle note PPTX. Verificare sempre pertinenza e licenza.
 Non servono API key, servizi a pagamento o un server di ricerca.
+
+Con l'estensione abilitata, Openverse riceve solo il soggetto visivo breve,
+mai i documenti allegati. L'accesso è gratuito e anonimo, senza installazioni
+aggiuntive; i limiti del servizio vengono rispettati. Sono accettate soltanto
+licenze CC0, Public domain, CC BY e CC BY-SA, con un riscontro specifico sulla
+pagina originale dell'immagine. Questo controllo non garantisce tutti i
+diritti d'uso: verifica sempre fonte, autore e licenza prima di pubblicare.
+Servizio offline, HTTP 429 o licenza senza riscontro lasciano il segnaposto,
+senza bloccare le slide. Openverse non sostituisce figure degli allegati,
+diagrammi Manim o immagini già caricate. Disattivando **Cerca immagini in
+internet**, anche Openverse resta inattivo, pur ricordando la sua spunta.
+La ricerca di fonti testuali e la priorità ai documenti non cambiano.
 
 La slide ha uno spazio visivo principale: Manim, poi la figura selezionata dal
 documento, poi la ricerca internet. La ricerca non sostituisce una figura scelta

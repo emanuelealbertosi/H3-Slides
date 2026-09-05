@@ -78,12 +78,13 @@ async def test_licensed_download_and_public_destination_guards(tmp_path, monkeyp
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("use_openverse", [False, True])
 @pytest.mark.parametrize("mode", ["download", "missing", "offline", "source", "disabled", "manim", "existing"])
-async def test_worker_images_are_optional_and_do_not_replace_source_or_manim(tmp_path, mode, monkeypatch):
+async def test_worker_images_are_optional_and_do_not_replace_source_or_manim(tmp_path, mode, monkeypatch, use_openverse):
     db = Store(tmp_path)
     try:
         p = db.create(ProjectInput(prompt="Spiega il soggetto", count=1, text_density="brief",
-            use_web_images=mode != "disabled", use_source_images=True,
+            use_web_images=mode != "disabled", use_source_images=True, use_openverse_images=use_openverse,
             use_manim_diagrams=mode == "manim").model_dump())
         source_image = store_image(db, p["id"], png(), "Figura dal libro")
         p["sources"] = [{"id": "doc", "name": "Libro", "text": "Un testo utile.", "images": [source_image]}]
@@ -104,12 +105,14 @@ async def test_worker_images_are_optional_and_do_not_replace_source_or_manim(tmp
         async def context(*_):
             return "Dati del documento", [{"image_id": source_image["id"], "source": "Libro"}]
         calls = []
-        async def acquire(*_):
+        async def acquire(store, pid, query, extended, event):
+            assert extended is use_openverse
             calls.append(1)
             if mode == "offline":
                 raise OSError("Offline")
             if mode == "download":
                 return store_image(db, p["id"], png(), "Foto", origin="web", author="Author",
+                    image_provider="Openverse" if use_openverse else "Wikimedia Commons",
                     license="CC BY 4.0", source="https://commons.wikimedia.org/wiki/File:Foto",
                     license_url="https://creativecommons.org/licenses/by/4.0/")
             return None
@@ -134,6 +137,8 @@ async def test_worker_images_are_optional_and_do_not_replace_source_or_manim(tmp
         if mode == "download":
             assert len(result["visual_assets"]) == 1 and content["image_origin"] == "web"
             assert "commons.wikimedia.org" in content["notes"]
+            assert any(("Openverse" if use_openverse else "Wikimedia Commons") in e["message"]
+                       for e in db.job(job["id"])["events"])
         if mode == "manim":
             assert result["slides"][0]["diagram_render"]["engine"] == "manim"
     finally:

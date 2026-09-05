@@ -557,7 +557,9 @@ class Worker:
                         "\nImmagini internet attive: image_query deve indicare un soggetto visivo preciso in 2–6 parole, "
                         "come un luogo, una persona, un oggetto o un fenomeno pertinente alla slide. "
                         "Usa italiano o inglese, senza URL. Preferisci una figura pertinente già fornita in image_id. "
-                        "L'app cerca su Wikimedia Commons se nessuna figura fornita o diagramma Manim occupa la slide.")
+                        "L'app cerca su Wikimedia Commons se nessuna figura fornita o diagramma Manim occupa la slide." +
+                        (" Openverse è abilitato come ulteriore ricerca facoltativa se Wikimedia non trova nulla."
+                         if project.get("use_openverse_images") else ""))
                 visual_rules += "\nFORMATO DEL CONTENUTO VINCOLANTE:\n" + prose_rules
                 visual_rules += priority_rules
                 if research:
@@ -707,7 +709,9 @@ class Worker:
                     query = content.image_query.strip() or content.title
                     self.store.event(jid, "Ricerca immagine internet · " + query)
                     try:
-                        acquired = await self.web_images.acquire(self.store, pid, query)
+                        acquired = await self.web_images.acquire(self.store, pid, query,
+                            project.get("use_openverse_images", False),
+                            lambda message: self.store.event(jid, message))
                     except (ValueError, OSError, TimeoutError) as exc:
                         self.store.event(jid, "Ricerca immagini non disponibile; preparo il segnaposto")
                     except Exception as exc:
@@ -721,7 +725,8 @@ class Worker:
                         credit = "Immagine: " + acquired["label"] + " · " + acquired["author"] + " · " + acquired["license"]
                         attribution = credit + "\n" + acquired["source"] + "\n" + acquired["license_url"]
                         content.notes = content.notes[:max(0, 5998-len(attribution))] + "\n\n" + attribution
-                        self.store.event(jid, "Immagine scaricata · Wikimedia Commons · " + acquired["license"])
+                        self.store.event(jid, "Immagine scaricata · " +
+                            acquired.get("image_provider", "Wikimedia Commons") + " · " + acquired["license"])
                     else:
                         self.store.event(jid, "Nessuna immagine trovata: caricala dal segnaposto nell'anteprima")
                     if acquired:

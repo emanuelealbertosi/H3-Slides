@@ -127,6 +127,7 @@ class ProjectInput(BaseModel):
     theme: Literal["ink", "paper", "forest"] = "ink"
     use_source_images: bool = True
     use_web_images: bool = False
+    use_openverse_images: bool = False
     source_priority: Literal["documents", "web"] = "documents"
     pdf_scope: Literal["auto", "whole"] = "auto"
     use_manim_diagrams: bool = False

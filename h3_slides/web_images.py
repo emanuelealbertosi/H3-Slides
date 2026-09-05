@@ -1,4 +1,4 @@
-"""Optional Wikimedia images, downloaded locally with attribution.
+"""Optional Wikimedia/Openverse images, downloaded locally with attribution.
 
 Uses the Wikipedia -> Commons metadata -> licensed download approach of
 H3-Documentary (pipeline/engine/acquire.py); no paid providers or API keys.
@@ -65,6 +65,10 @@ def store_image(store, pid, raw, label, origin="upload", **metadata):
 
 
 class WebImages:
+    def __init__(self):
+        from .openverse_images import OpenverseImages
+        self.openverse = OpenverseImages()
+
     async def fetch(self, session, url, limit):
         for _ in range(4):
             url = public_url(url)
@@ -113,13 +117,29 @@ class WebImages:
                         for info in p.get("imageinfo", [])[:1]]
         return []
 
-    async def acquire(self, store, pid, query):
+    async def acquire(self, store, pid, query, use_openverse=False, event=None):
+        """Openverse is contacted only after Wikimedia and only by explicit opt-in."""
+        try:
+            asset = await self.acquire_commons(store, pid, query)
+            if asset:
+                return asset
+        except (ValueError, aiohttp.ClientError, OSError, TimeoutError):
+            if not use_openverse:
+                raise
+            if event:
+                event("Wikimedia non disponibile; estensione Openverse abilitata")
+        if use_openverse:
+            return await self.openverse.acquire(store, pid, query, event)
+        return None
+
+    async def acquire_commons(self, store, pid, query):
         query = " ".join(query.split())[:180]
         if not query:
             return None
         async with asyncio.timeout(35):
-            connector = aiohttp.TCPConnector(resolver=PublicResolver())
+            connector = aiohttp.TCPConnector(resolver=PublicResolver(), use_dns_cache=False)
             async with aiohttp.ClientSession(connector=connector, trust_env=False,
+                    cookie_jar=aiohttp.DummyCookieJar(),
                     headers={"User-Agent":AGENT}, timeout=aiohttp.ClientTimeout(total=12)) as session:
                 candidates = await self.candidates(session, query)
                 for batch in (candidates, None):
@@ -142,7 +162,7 @@ class WebImages:
                             return store_image(store, pid, raw, title.removeprefix("File:"), origin="web",
                                 query=query, source=source, download_url=image_url, license=licence,
                                 license_url=plain(meta.get("LicenseUrl", {}).get("value"), 500),
-                                author=plain(meta.get("Artist", {}).get("value")))
+                                author=plain(meta.get("Artist", {}).get("value")), image_provider="Wikimedia Commons")
                         except (ValueError, aiohttp.ClientError, TimeoutError):
                             continue
         return None

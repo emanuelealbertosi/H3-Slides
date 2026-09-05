@@ -59,7 +59,7 @@ async function finishInlineEdits(){
   await Promise.all([...inlineSaves]);
   if($('slides').querySelector('[contenteditable]'))throw new Error('Salva o annulla il testo ancora in modifica.');
 }
-const designFields={'template':'template','font':'font','text-density':'text_density','background-color':'background_color','accent-color':'accent_color','source-images':'use_source_images','web-images':'use_web_images','manim-diagrams':'use_manim_diagrams','pdf-scope':'pdf_scope',
+const designFields={'template':'template','font':'font','text-density':'text_density','background-color':'background_color','accent-color':'accent_color','source-images':'use_source_images','web-images':'use_web_images','openverse-images':'use_openverse_images','manim-diagrams':'use_manim_diagrams','pdf-scope':'pdf_scope',
   'web-enabled':'web_enabled','web-provider':'web_provider','web-query':'web_query','web-max-sources':'web_max_sources','source-priority':'source_priority'};
 // Source priority belongs to the project: a previous web-first choice must not
 // silently make new projects web-first as well.
@@ -221,7 +221,7 @@ async function selectProject(id){
   current=await api('/api/projects/'+id);drafts.clear();
   $('project-list').value=id;
   for(const key of ['title','prompt','count','theme'])$(key).value=current[key];
-  const defaults={template:'auto',font:'Arial',text_density:'detailed',background_color:themes[current.theme].bg,accent_color:themes[current.theme].accent,use_source_images:true,use_web_images:false,use_manim_diagrams:false,pdf_scope:'auto',
+  const defaults={template:'auto',font:'Arial',text_density:'detailed',background_color:themes[current.theme].bg,accent_color:themes[current.theme].accent,use_source_images:true,use_web_images:false,use_openverse_images:false,use_manim_diagrams:false,pdf_scope:'auto',
     web_enabled:false,web_provider:'wikipedia',web_query:'',web_max_sources:3,source_priority:'documents'};
   for(const [id,key] of Object.entries(designFields)){const value=current[key]??defaults[key];if($(id).type==='checkbox')$(id).checked=value;else $(id).value=value||defaults[key]}
   $('web-consent').checked=false;$('web-refresh').checked=false;
@@ -532,6 +532,7 @@ function render(){
   $('sources').innerHTML=current?current.sources.map(sourceHTML).join(''):'';
   renderDocumentLibrary();
   $('web-options').hidden=!$('web-enabled').checked;
+  $('openverse-images').disabled=!$('web-images').checked;
   $('source-priority-option').hidden=!current?.sources.length;
   $('wikipedia-hint').hidden=$('web-provider').value!=='wikipedia';
   const research=current?.web_research;
