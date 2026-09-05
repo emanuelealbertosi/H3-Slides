@@ -478,6 +478,14 @@ usano lo stesso progetto strutturato, ma il loro layout non è identico al pixel
 Le animazioni non diventano animazioni native PowerPoint e il PDF è statico.
 L'HTML Manim incorpora i video; il framework RevealJS può richiedere Internet.
 
+Il nome proposto quando si scarica un export usa il **titolo del progetto**,
+seguito da data e ora, ad esempio Rivoluzione_francese_2026-09-05_14-30-09.pdf.
+Puoi cambiare il titolo in Crea prima di esportare. Per un progetto ancora
+senza nome viene usato il titolo della copertina, se presente. Gli archivi
+aggiungono Slidev o Manim_video_slide al nome; accenti e caratteri Unicode
+sono conservati, mentre quelli vietati nei nomi dei file vengono ripuliti.
+Il nome dei nuovi export resta fissato anche se in seguito rinomini il progetto.
+
 Il renderer usa testo, immagini e scene dichiarative. KaTeX è incluso
 nell'app: le parentesi LaTeX compongono formule in linea o isolate in
 anteprima, PDF, PPTX e Slidev. Il sorgente resta modificabile nell'editor.

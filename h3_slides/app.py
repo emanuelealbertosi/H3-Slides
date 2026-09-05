@@ -24,6 +24,7 @@ from .composition import split_content
 from .diagrams import fingerprint
 from .remote_models import RemoteModelRequest, list_remote_models
 from .web_images import store_image, MAX_IMAGE_BYTES
+from .export_names import EXPORT_FORMATS, save_download_name, download_filename, attachment_header
 
 
 def public_project(project):
@@ -644,19 +645,22 @@ def create_app(root=None, data_root=None):
                     if not videos:
                         raise ValueError("Video Manim non prodotto")
                     archive.write(videos[0], "presentazione.mp4")
-            return web.json_response({"url": f"/api/exports/{p['id']}/{eid}/{filename}", "filename": filename})
+            suggested_name = save_download_name(output, p, fmt)
+            return web.json_response({"url": f"/api/exports/{p['id']}/{eid}/{filename}",
+                                      "filename": suggested_name})
 
     async def download(request):
         p = store.project(request.match_info["pid"])
         eid, name = request.match_info["eid"], request.match_info["name"]
         if len(eid) != 36 or any(c not in "0123456789abcdef-" for c in eid):
             raise KeyError()
-        if name not in ("presentazione.pptx", "presentazione.pdf", "slidev.zip", "manim-video-slides.zip"):
+        if name not in EXPORT_FORMATS:
             raise KeyError()
         path = root / "outputs" / p["id"] / eid / name
         if not path.is_file():
             raise KeyError()
-        return web.FileResponse(path, headers={"Content-Disposition": f'attachment; filename="{name}"'})
+        suggested_name = download_filename(path.parent, name)
+        return web.FileResponse(path, headers={"Content-Disposition": attachment_header(suggested_name)})
 
     async def shutdown(request):
         app["stop_event"].set()
