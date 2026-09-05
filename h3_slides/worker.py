@@ -7,7 +7,7 @@ from .models import SlideContent
 from .content_rules import content_contract, validate_content, fit_complete_sentences
 from .storage import uid, now
 from .search_settings import SearchConfig
-from .web_research import WebResearch, public_research, web_context, web_evidence, source_citations
+from .web_research import WebResearch, public_research, web_context, web_evidence, source_citations, automatic_query
 from .diagrams import ManimRenderer, design_diagram, fallback_diagram, requested_family
 
 KNOWLEDGE_CONTEXT = (
@@ -110,13 +110,19 @@ class Worker:
             if not request.web_consent:
                 raise ValueError("Conferma l'invio della query al motore di ricerca e la lettura delle pagine web")
             query = project.get("web_query", "").strip()
-            if not query:
-                raise ValueError("Inserisci la query da cercare sul web; gli allegati non vengono inviati al motore")
             search_options = {"query": query, "provider": project.get("web_provider", "wikipedia"),
                               "limit": project.get("web_max_sources", 3),
                               "endpoint": (self.search_config.read()["searxng_url"]
                                            if project.get("web_provider") == "searxng" else ""),
                               "refresh": request.web_refresh}
+            if not query:
+                # Snapshot the submitted instructions, not a later edit or the old project prompt.
+                search_options["automatic_brief"] = {
+                    "titolo_progetto": project["title"], "istruzioni_attuali": request.prompt}
+                if request.slide_id:
+                    slide = next(s for s in project["slides"] if s["id"] == request.slide_id)
+                    search_options["automatic_brief"].update(
+                        argomento_progetto=project["prompt"], titolo_slide=slide["content"]["title"])
         if not request.slide_id:
             project.update(prompt=request.prompt, count=request.count)
         self.store.save_project(project)
@@ -214,10 +220,24 @@ class Worker:
     async def run(self, jid, pid, request, search_options=None):
         try:
             research = None
+            client = None
             if search_options:
-                self.store.event(jid, "Ricerca web prima del caricamento LLM", status="running", progress=.02)
-                research = await self.researcher.collect(pid, **search_options,
+                options = dict(search_options)
+                brief = options.pop("automatic_brief", None)
+                if brief is not None:
+                    self.store.event(jid, "Preparazione LLM " + request.provider.mode +
+                                     " · query di ricerca automatica", status="running", progress=.01)
+                    await self.checkpoint(jid)
+                    client = self.clients(request.provider, self.manager)
+                    await client.prepare()
+                    self.store.event(jid, "Ricavo la query dall'argomento e dalle istruzioni")
+                    options["query"] = await automatic_query(client, brief, lambda: self.checkpoint(jid))
+                    self.store.event(jid, "Query automatica: " + options["query"], progress=.02)
+                else:
+                    self.store.event(jid, "Ricerca web prima del caricamento LLM", status="running", progress=.02)
+                research = await self.researcher.collect(pid, **options,
                     event=lambda message: self.store.event(jid, message), checkpoint=lambda: self.checkpoint(jid))
+                research = {**research, "query_mode": "automatic" if brief is not None else "manual"}
                 await self.checkpoint(jid)
                 p = self.store.project(pid)
                 p["web_research"] = {**public_research(research), "job_id":jid}
@@ -225,9 +245,12 @@ class Worker:
                 job = self.store.job(jid)
                 job["web_research"] = p["web_research"]
                 self.store.save_job(job)
-            self.store.event(jid, "Preparazione LLM " + request.provider.mode, status="running")
-            client = self.clients(request.provider, self.manager)
-            await client.prepare()
+            if client is None:
+                self.store.event(jid, "Preparazione LLM " + request.provider.mode, status="running")
+                client = self.clients(request.provider, self.manager)
+                await client.prepare()
+            else:
+                self.store.event(jid, "Fonti acquisite; continuo con il modello già pronto")
             await self.checkpoint(jid)
             project = self.store.project(pid)
             context, assets = ("", []) if research and not project["sources"] else await self.sources_context(client, project, jid)

@@ -283,6 +283,143 @@ class FakeResponse:
         pass
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["local", "remote"])
+async def test_automatic_query_uses_new_brief_one_client_and_keeps_input_empty(store, mode):
+    p = store.create(ProjectInput(title="Progetto", prompt="Vecchio argomento", count=1,
+        text_density="brief", web_enabled=True, web_query="  ").model_dump())
+    calls, prepared, instances = [], [], []
+    class LLM:
+        def __init__(self, provider, *_):
+            instances.append(self)
+            assert provider.mode == mode
+        async def prepare(self):
+            prepared.append(1)
+        async def json(self, prompt, **kwargs):
+            if "RICAVA LA QUERY DI RICERCA" in prompt:
+                assert '"istruzioni_attuali": "Spiega Python con 6 slide colorate"' in prompt
+                assert "Vecchio argomento" not in prompt
+                assert kwargs["schema"]["required"] == ["query"]
+                return {"query": "Python"}
+            assert "FONTI WEB ACQUISITE" in prompt
+            if "Proponi esattamente" in prompt:
+                return {"slides": [{"title": "Python"}]}
+            return SlideContent(title="Python", bullets=["Un linguaggio di programmazione."],
+                                sources=["W1"]).model_dump()
+    class Research:
+        async def collect(self, pid, **kwargs):
+            assert len(prepared) == 1
+            assert kwargs["query"] == "Python"
+            assert "automatic_brief" not in kwargs
+            calls.append(kwargs)
+            return bundle()
+    worker = Worker(store, SimpleNamespace())
+    worker.clients, worker.researcher = LLM, Research()
+    req = Generation(provider={"mode": mode, "model": "fake", "remote_consent": True,
+                    "base_url": "https://provider.example/v1", "api_key": "NEVER-TO-SEARCH"},
+                    prompt="Spiega Python con 6 slide colorate", count=1, web_consent=True)
+    with pytest.raises(ValueError, match="Conferma"):
+        worker.submit(p["id"], req.model_copy(update={"web_consent": False}))
+    assert instances == []
+    for regeneration in (False, True):
+        job = worker.submit(p["id"], req.model_copy(update={"regenerate_all": regeneration}))
+        await worker.tasks[job["id"]]
+        assert store.job(job["id"])["status"] == "completed", store.job(job["id"])["events"]
+        saved = store.project(p["id"])
+        assert saved["web_query"].strip() == ""
+        assert saved["web_research"]["query"] == "Python"
+        assert saved["web_research"]["query_mode"] == "automatic"
+        assert any(e["message"] == "Query automatica: Python" for e in store.job(job["id"])["events"])
+        assert len(instances) == 1 and len(prepared) == 1 and len(calls) == 1
+        assert "NEVER-TO-SEARCH" not in str(calls) + str(store.job(job["id"]))
+        calls.clear(); prepared.clear(); instances.clear()
+
+
+@pytest.mark.asyncio
+async def test_automatic_query_snapshots_brief_and_excludes_document_bodies(store):
+    p = store.create(ProjectInput(prompt="Prima", web_enabled=True).model_dump())
+    p["sources"] = [{"name": "Documento", "text": "PRIVATE ATTACHMENT BODY", "images": []}]
+    store.save_project(p)
+    entered, release = asyncio.Event(), asyncio.Event()
+    class LLM:
+        def __init__(self, *_): pass
+        async def prepare(self):
+            entered.set()
+            await release.wait()
+        async def json(self, prompt, **kwargs):
+            assert "PRIVATE ATTACHMENT BODY" not in prompt
+            assert '"istruzioni_attuali": "Argomento originale"' in prompt
+            assert "Modifica successiva" not in prompt
+            return {"query": "Argomento originale"}
+    calls = []
+    class Research:
+        async def collect(self, pid, **kwargs):
+            calls.append(kwargs["query"])
+            raise ValueError("End of fixture")
+    worker = Worker(store, SimpleNamespace())
+    worker.clients, worker.researcher = LLM, Research()
+    job = worker.submit(p["id"], Generation(provider={"model": "fake"}, prompt="Argomento originale",
+                                           web_consent=True))
+    await entered.wait()
+    changed = store.project(p["id"])
+    changed.update(prompt="Modifica successiva", web_query="Altra ricerca")
+    store.save_project(changed)
+    release.set()
+    await worker.tasks[job["id"]]
+    assert calls == ["Argomento originale"]
+    assert store.project(p["id"])["web_query"] == "Altra ricerca"
+    assert "PRIVATE ATTACHMENT BODY" not in str(store.job(job["id"]))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("first", [
+    {"query": ""}, {"query": "x" * 201}, {"other": "wrong field"}, ["Python"], {"query": None},
+    {"query": "word " * 19}, {"query": "https://example.com/?token=secret"},
+    {"query": "person@example.com"}, {"query": "C:\\Users\\someone\\private.txt"},
+    {"query": "HTTPS://example.test/private-topic"}, {"query": "/home/alice/private/report.pdf"},
+    {"query": "F:/Private/report.pdf"}, {"query": "\\\\server\\private"}, {"query": "api_key=private"},
+])
+async def test_automatic_query_repairs_invalid_output_without_searching(first):
+    responses = [first, {"query": "  Python   programmazione  "}]
+    class LLM:
+        async def json(self, *_args, **_kwargs):
+            return responses.pop(0)
+    async def checkpoint(): pass
+    query = await wr.automatic_query(LLM(), {"istruzioni_attuali": "Spiega Python"}, checkpoint)
+    assert query == "Python programmazione" and not responses
+
+
+@pytest.mark.asyncio
+async def test_automatic_query_bad_json_retry_and_cancellation(store):
+    calls = []
+    class LLM:
+        async def json(self, *_args, **_kwargs):
+            calls.append(1)
+            if len(calls) == 1:
+                raise ValueError("Il modello non ha restituito JSON valido")
+            return {"query": "Python"}
+    async def checkpoint(): pass
+    assert await wr.automatic_query(LLM(), {}, checkpoint) == "Python"
+    entered = asyncio.Event()
+    class Waiting:
+        def __init__(self, *_): pass
+        async def prepare(self): pass
+        async def json(self, *_args, **_kwargs):
+            entered.set()
+            await asyncio.Event().wait()
+    p = store.create(ProjectInput(prompt="Python", web_enabled=True).model_dump())
+    worker = Worker(store, SimpleNamespace())
+    worker.clients = Waiting
+    class NeverSearch:
+        async def collect(self, *_, **__):
+            pytest.fail("An interrupted query must not launch a web search")
+    worker.researcher = NeverSearch()
+    job = worker.submit(p["id"], Generation(provider={"model": "fake"}, prompt="Python", web_consent=True))
+    await entered.wait()
+    await worker.close()
+    assert store.job(job["id"])["status"] == "interrupted"
+
+
 class FakeSession:
     def __init__(self, responses):
         self.responses, self.calls = list(responses), []

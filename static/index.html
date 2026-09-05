@@ -50,11 +50,11 @@
   <label class="check"><input id="web-enabled" type="checkbox">Integra fonti dal web</label>
   <div id="web-options" hidden>
   <label>Motore<select id="web-provider"><option value="wikipedia">Wikipedia diretta · nessun server o API key</option><option value="searxng">SearXNG locale</option><option value="duckduckgo">DuckDuckGo · sperimentale, senza installazioni</option></select></label>
-  <label>Query da inviare al motore<input id="web-query" maxlength="200" placeholder="Es. rivoluzione francese cause 1789"></label>
+  <label>Query di ricerca · facoltativa<input id="web-query" maxlength="200" placeholder="Vuota: il modello la ricava da argomento e istruzioni"></label>
   <label>Numero massimo di fonti<select id="web-max-sources"><option value="3">3 · più rapido</option><option value="4">4</option><option value="5">5 · più fonti</option></select></label>
   <small id="wikipedia-hint">Wikipedia diretta cerca e legge voci in italiano, con estensione all’inglese se necessario. Non cerca tutto il web: le voci appartengono alla stessa enciclopedia. Non richiede installazioni; serve Internet.</small>
-  <small>Al motore inviamo solo questa query, non il documento allegato. L'app legge pagine pubbliche, conserva gli estratti sul PC e li passa al modello scelto. SearXNG è locale ma consulta motori online. Nessuna API a pagamento; CAPTCHA e limiti vengono rispettati.</small>
-  <label class="check"><input id="web-consent" type="checkbox">Autorizzo questa query e la lettura delle pagine trovate.</label>
+  <small>Al motore di ricerca inviamo solo una query breve, scritta da te o ricavata dal modello: mai allegati o prompt completo. La query effettiva appare nei log. L'app legge pagine pubbliche, conserva gli estratti sul PC e li passa al modello scelto, che usa il prompt con il consenso previsto per il provider. SearXNG è locale ma consulta motori online. Nessuna API a pagamento; CAPTCHA e limiti vengono rispettati.</small>
+  <label class="check"><input id="web-consent" type="checkbox">Autorizzo l'invio della query, anche automatica, e la lettura delle pagine trovate.</label>
   <label class="check"><input id="web-refresh" type="checkbox">Aggiorna le fonti, senza riusare la cache di un’ora</label>
   </div>
   <details><summary>Configura SearXNG su questo computer</summary>

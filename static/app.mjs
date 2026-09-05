@@ -384,7 +384,7 @@ async function generate(slideId=null,diagramOnly=false,regenerateAll=false,repla
       navigatePage(true);$('consent').focus();
       throw new Error('In Admin autorizza l’invio al server scelto, poi torna a Crea e premi Genera.');
     }
-    if(!diagramOnly&&current.web_enabled&&!$('web-consent').checked)throw new Error('Conferma la query da inviare al motore di ricerca');
+    if(!diagramOnly&&current.web_enabled&&!$('web-consent').checked)throw new Error('Autorizza la ricerca: userò la query indicata oppure la ricaverò automaticamente dalle istruzioni');
     savePrefs();
     const instructions=providedInstructions??(slideId?prompt(diagramOnly?'Descrivi cosa deve spiegare il diagramma Manim:':'Istruzioni per rigenerare questa slide:',
       diagramOnly?(current.slides.find(s=>s.id===slideId)?.content.diagram?.brief||current.slides.find(s=>s.id===slideId)?.content.title||''):current.prompt):$('prompt').value);
@@ -535,7 +535,7 @@ function render(){
     current?.sources.length?'Con documenti allegati: il modello usa le fonti fornite. Le immagini richiedono vision.':'Nessun allegato: genera dalla conoscenza del modello. Nessuna ricerca web; verifica fatti e date importanti.';
   const research=current?.web_research;
   $('web-sources').innerHTML=research?'<details open><summary>Ultima ricerca completata · '+esc(research.provider)+'</summary>'+
-    '<p class="hint">'+esc(research.query)+' · '+esc(new Date(research.created_at*1000).toLocaleString())+
+    '<p class="hint">'+(research.query_mode==='automatic'?'Query automatica · ':'')+esc(research.query)+' · '+esc(new Date(research.created_at*1000).toLocaleString())+
     (research.cache_used?' · cache locale':'')+'</p>'+
     research.sources.map(s=>'<p class="hint"><a href="'+esc(/^https?:\/\//.test(s.url)?s.url:'#')+
       '" target="_blank" rel="noopener noreferrer">'+esc(s.id+' · '+s.title)+'</a></p>').join('')+

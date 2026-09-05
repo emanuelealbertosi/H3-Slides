@@ -118,6 +118,10 @@ try{
   await page.locator('#prompt').fill('Nuovo argomento e nuovi parametri');
   await page.locator('#count').fill('3');
   await page.locator('#text-density').selectOption('brief');
+  await page.locator('#web-enabled').check();
+  assert.equal(await page.locator('#web-query').inputValue(),'');
+  assert.match(await page.locator('#web-query').getAttribute('placeholder'),/Vuota/);
+  await page.locator('#web-consent').check();
   const regenerated=new Promise(resolve=>resolveGeneration=resolve);
   page.once('dialog',dialog=>dialog.accept());
   await page.locator('#generate-top').click();
@@ -126,9 +130,13 @@ try{
   assert.equal(regeneratedPayload.rebuild_outline,true);
   assert.equal(regeneratedPayload.prompt,'Nuovo argomento e nuovi parametri');
   assert.equal(regeneratedPayload.count,3);
+  assert.equal(regeneratedPayload.web_consent,true);
   const savedBrief=await (await page.request.get(url+'api/projects/'+generatedProjectId)).json();
   assert.equal(savedBrief.text_density,'brief');
   assert.equal(savedBrief.count,3);
+  assert.equal(savedBrief.web_enabled,true);
+  assert.equal(savedBrief.web_query,'');
+  await page.locator('#web-enabled').uncheck();
   const again=new Promise(resolve=>resolveGeneration=resolve);
   page.once('dialog',dialog=>dialog.accept());
   await page.locator('#generate').click();

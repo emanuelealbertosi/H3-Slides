@@ -155,10 +155,14 @@ rigenerazione ed export restano disponibili con modello locale o API remota.
 
 ### Ricerca web facoltativa e gratuita
 
-Attivare **Ricerca web**, scrivere una query dedicata, scegliere 3–5 fonti e
-confermare esplicitamente l'invio. Al motore viene inviata solo la query:
-non il documento, il prompt completo o le credenziali del modello.
-Questa conferma è distinta da quella per inviare fonti a un LLM remoto.
+Attivare **Ricerca web**, scegliere 3–5 fonti e confermare esplicitamente l'invio.
+La **query è facoltativa**: lasciandola vuota, il modello scelto ricava una breve
+ricerca dall'argomento e dalle istruzioni del progetto, senza usare il testo
+degli allegati. Se la scrivi, viene usata la tua query. Quella effettivamente
+inviata appare nei log. Al motore di ricerca viene inviata solo questa query:
+mai allegati, prompt completo o credenziali del modello.
+Il consenso comprende la query manuale o automatica ed è distinto da quello
+per inviare prompt e fonti a un LLM remoto.
 La ricerca funziona anche con il modello locale, senza API di ricerca a pagamento.
 
 - **Wikipedia diretta** (predefinita per i nuovi progetti): cerca voci e legge
@@ -183,8 +187,11 @@ La cache vale un'ora per progetto e query; **Aggiorna ricerca** la esclude.
 Se il motore fallisce o non si leggono pagine utilizzabili il job si ferma:
 non presenta conoscenza interna del modello come ricerca effettuata.
 
-La ricerca precede il caricamento del LLM e appare nei log del job. Non aggiorna
-da sola slide già pronte: usare Rigenera per una slide oppure Rigenera tutte.
+Con una query manuale, la ricerca precede il caricamento del LLM. Con il campo
+vuoto, una breve chiamata iniziale al modello prepara la query; lo stesso
+modello viene poi riusato per la presentazione. Entrambi i passaggi appaiono
+nei log del job. La ricerca non aggiorna da sola slide già pronte: usare
+Rigenera per una slide oppure Rigenera per l'intera presentazione.
 I risultati vanno verificati dall'utente; il recupero di fonti non elimina
 allucinazioni, errori o incompletezza. Questa ricerca riguarda le fonti testuali;
 la ricerca di immagini ha una spunta indipendente, descritta sotto.
