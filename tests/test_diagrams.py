@@ -78,6 +78,34 @@ def test_connection_label_rescue_keeps_shapes_arrows_and_decision_meaning():
     assert len(rescued.connections[1].label) <= 8
 
 
+@pytest.mark.asyncio
+async def test_label_placement_is_repaired_before_calling_the_model_again():
+    from h3_slides.diagrams import design_diagram
+    calls, renders, events = [], [], []
+
+    class Client:
+        async def json(self, prompt, schema=None):
+            calls.append(prompt)
+            return sample_scene()
+
+    class Renderer:
+        async def render(self, pid, diagram, project):
+            renders.append(diagram)
+            if len(renders) == 1:
+                raise ValueError("Non c'è spazio per l'etichetta di una freccia")
+            return {"engine": "manim", "report": {"ok": True}}
+
+    async def checkpoint():
+        pass
+
+    _, rendered = await design_diagram(
+        Client(), Renderer(), "test", {}, SlideContent(title="Processo"), "", "",
+        events.append, checkpoint)
+    assert rendered["report"]["ok"] and len(calls) == 1 and len(renders) == 2
+    assert renders[0]["scene"]["elements"] == renders[1]["scene"]["elements"]
+    assert any("verifica non superata" in event for event in events)
+
+
 def test_small_canvas_drift_is_repaired_without_changing_scene_meaning():
     value = sample_scene()
     value["elements"][0].update(x=.4, width=2.6)

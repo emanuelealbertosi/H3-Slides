@@ -13,7 +13,7 @@ import sys
 import tempfile
 from .diagram_spec import ManimSceneSpec, SCENE_PROMPT, legacy_scene
 
-RENDER_VERSION = 1
+RENDER_VERSION = 2
 STYLE_KEYS = ("theme", "font", "background_color", "accent_color")
 
 
@@ -53,7 +53,8 @@ def normalize_scene_geometry(value):
     scene_keys = {"title", "takeaway", "elements", "connections"}
     element_keys = {"id", "type", "x", "y", "width", "height", "text", "caption",
                     "tone", "stage", "values", "labels", "columns", "expression",
-                    "x_min", "x_max", "y_min", "y_max", "asymptotes"}
+                    "x_min", "x_max", "y_min", "y_max", "asymptotes",
+                    "series", "tangent_at", "secant_x"}
     connection_keys = {"source", "target", "label", "tone"}
     if any(key not in scene_keys for key in result):
         result = {key: item for key, item in result.items() if key in scene_keys}
@@ -123,6 +124,9 @@ def normalize_scene_geometry(value):
             if repaired != element["labels"]:
                 element["labels"], changed = repaired, True
         kind = element.get("type")
+        # Preserve a supplied formula instead of fabricating signal samples.
+        if kind == "plot" and not element.get("values") and element.get("expression"):
+            element["type"], kind, changed = "function_plot", "function_plot", True
         if kind not in ("grid", "bars", "plot", "function_plot", "venn", "gantt", "timeline", "tree", "network"):
             minimum_width = 2.0
             minimum_height = 1.6 if kind in ("decision", "circle") and element.get("caption") else (
@@ -223,6 +227,26 @@ def normalize_scene_geometry(value):
                 caption=_shorten(element.get("caption") or "", 16),
             )
         changed = True
+    elif (unplaced and 2 <= len(visual_elements) <= 4 and
+          len(visual_elements)+len(atomic_elements) == len(result["elements"])):
+        # Reflow full charts together: translation alone cannot fit two
+        # full-canvas plots. Preserve data, identities and connections.
+        if len(visual_elements) == 2 and len(atomic_elements) <= 4:
+            chart_height = 4.4 if atomic_elements else 5.8
+            for element, x in zip(visual_elements, (3, 9)):
+                element.update(x=x, y=3.3 if atomic_elements else 4.15,
+                               width=5.5, height=chart_height)
+            count = len(atomic_elements)
+            for index, element in enumerate(atomic_elements):
+                element.update(x=.3+(index+.5)*11.4/count, y=6.6,
+                               width=min(3.6, 11.4/count-.2), height=1.2)
+            changed = True
+        elif (len(result["elements"]) <= 4 and
+              all(element.get("type") not in ("gantt", "tree") for element in visual_elements)):
+            for index, element in enumerate(visual_elements+atomic_elements):
+                element.update(x=3+6*(index % 2), y=2.56+3.18*(index//2),
+                               width=5.5, height=3.0 if element in visual_elements else 1.2)
+            changed = True
     elif unplaced and 2 <= len(result["elements"]) <= 8 and all(
             isinstance(element, dict) and element.get("type") in atomic
             for element in result["elements"]):
@@ -388,6 +412,7 @@ async def design_diagram(client, renderer, pid, project, content, context, instr
     correction = ""
     required = requested_family(content.title + " " + content.diagram.brief + " " + instructions)
     for attempt in range(3):
+        scene = None
         await checkpoint()
         event("Progettazione scena Manim" if not attempt else "Correzione della scena Manim prima del rendering")
         result = await client.json(prompt + correction, schema=ManimSceneSpec.model_json_schema())
@@ -410,23 +435,23 @@ async def design_diagram(client, renderer, pid, project, content, context, instr
                     for error in exc.errors(include_input=False)[:3])
             else:
                 reason = str(exc)
+            event("Manim · verifica non superata: " + reason[:500])
+            if "etichetta di una freccia" in reason and scene is not None:
+                # Recover decorative labels immediately, avoiding repeated LLM
+                # calls for a scene whose data and geometry are already valid.
+                for keep_decisions in (True, False):
+                    rescued = simplify_connection_labels(scene, keep_decisions)
+                    try:
+                        event("Manim · etichette delle frecce adattate automaticamente")
+                        diagram = {"kind": "manim", "labels": [], "brief": content.diagram.brief,
+                                   "scene": rescued.model_dump()}
+                        await checkpoint()
+                        rendered = await renderer.render(pid, diagram, project)
+                        await checkpoint()
+                        return diagram, rendered
+                    except ValueError:
+                        continue
             if attempt == 2:
-                if "etichetta di una freccia" in reason and "scene" in locals():
-                    # Geometry and semantics are already valid.  Do not throw
-                    # away the entire AI-designed diagram for a decorative
-                    # relation label: first retain only short decision labels,
-                    # then omit labels while keeping every shape and arrow.
-                    for keep_decisions in (True, False):
-                        rescued = simplify_connection_labels(scene, keep_decisions)
-                        try:
-                            event("Manim · etichette delle frecce adattate automaticamente")
-                            diagram = {"kind": "manim", "labels": [], "brief": content.diagram.brief,
-                                       "scene": rescued.model_dump()}
-                            rendered = await renderer.render(pid, diagram, project)
-                            await checkpoint()
-                            return diagram, rendered
-                        except ValueError:
-                            continue
                 raise ValueError("Diagramma Manim non completato: " + reason[:400]) from None
             correction = ("\nCORREGGI GEOMETRIA/TESTI: " + reason[:700] +
                           "\nSCENA PRECEDENTE (dati):\n" + json.dumps(candidate, ensure_ascii=False)[:12000])

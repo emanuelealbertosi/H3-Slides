@@ -6,7 +6,7 @@ from manim import (VGroup, Text, RoundedRectangle, Rectangle, Ellipse, Polygon,
                    Line, DashedLine, Arrow, VMobject, Dot, Axes, ManimColor, interpolate_color)
 from .diagram_spec import ManimSceneSpec
 from .diagram_layout import bounds, route_connection
-from .math_expression import sample_expression
+from .math_expression import sample_expression, function_line, compile_expression
 
 
 def point(x, y):
@@ -38,6 +38,7 @@ def build_scene(value, project):
     if font not in ("Arial", "Calibri", "Segoe UI", "Georgia", "Verdana", "Consolas"):
         font = "Arial"
     texts, shortened_texts = [], 0
+    plotted_curves = 0
 
     def copy(value, width, height, size=30, minimum=22, bold=False):
         nonlocal shortened_texts
@@ -132,27 +133,61 @@ def build_scene(value, project):
                     number = copy(f"{value:g}", .65, .3, size=20, minimum=20).next_to(axes.c2p(0, value), [-1, 0, 0], buff=.05)
                     group.add(number)
             elif e.type == "function_plot":
+                curves = [(e.expression, e.expression, tone, e.asymptotes)]
+                curves.extend((curve.expression, curve.label or curve.expression,
+                               colors[curve.tone], curve.asymptotes) for curve in e.series)
+                markers = []
+                if e.tangent_at is not None:
+                    slope, intercept = function_line(e.expression, e.tangent_at)
+                    curves.append((f"({slope:.12g})*x+({intercept:.12g})",
+                                   "Tangente", colors["amber"], []))
+                    markers.append((e.tangent_at, colors["amber"]))
+                if e.secant_x:
+                    slope, intercept = function_line(e.expression, *e.secant_x)
+                    curves.append((f"({slope:.12g})*x+({intercept:.12g})",
+                                   "Secante", colors["red"], []))
+                    markers.extend((x, colors["red"]) for x in e.secant_x)
+                legend_rows = math.ceil(len(curves)/2) if len(curves) > 1 else 0
+                legend_h = legend_rows*.34
+                chart_h = inner_h-legend_h-.25
+                if chart_h < .8:
+                    raise ValueError(f"Grafico {e.id}: aumenta height per curve e legenda almeno a 4")
                 x_step = max((e.x_max-e.x_min)/5, 1e-8)
                 y_step = max((e.y_max-e.y_min)/5, 1e-8)
                 axes = Axes(x_range=[e.x_min, e.x_max, x_step],
                             y_range=[e.y_min, e.y_max, y_step],
-                            x_length=inner_w-.35, y_length=inner_h-.2,
+                            x_length=inner_w-.7, y_length=chart_h,
                             axis_config={"include_tip": False, "color": colors["muted"],
                                          "stroke_width": 2, "include_ticks": True,
-                                         "tick_size": .045}).move_to([0, -.08, 0])
+                                         "tick_size": .045}).move_to([.1, legend_h/2, 0])
                 group.add(axes)
-                segments = sample_expression(e.expression, e.x_min, e.x_max, e.y_min, e.y_max,
-                                             e.asymptotes)
-                if not segments:
-                    raise ValueError(f"Funzione {e.id}: nessun tratto visibile nell'intervallo scelto")
-                for segment in segments:
-                    curve = VMobject(color=tone, stroke_width=4)
-                    curve.set_points_as_corners([axes.c2p(x, y) for x, y in segment])
-                    group.add(curve)
-                for asymptote in e.asymptotes:
-                    group.add(DashedLine(axes.c2p(asymptote, e.y_min),
-                                         axes.c2p(asymptote, e.y_max),
-                                         color=colors["red"], stroke_width=2, dash_length=.09))
+                for index, (expression, name, curve_tone, cuts) in enumerate(curves):
+                    segments = sample_expression(expression, e.x_min, e.x_max, e.y_min, e.y_max, cuts)
+                    if not segments:
+                        raise ValueError(f"Funzione {e.id} ({name}): nessun tratto visibile nell'intervallo scelto")
+                    plotted_curves += 1
+                    for segment in segments:
+                        curve = VMobject(color=curve_tone, stroke_width=4)
+                        curve.set_points_as_corners([axes.c2p(x, y) for x, y in segment])
+                        group.add(curve)
+                    for asymptote in cuts:
+                        group.add(DashedLine(axes.c2p(asymptote, e.y_min),
+                                             axes.c2p(asymptote, e.y_max),
+                                             color=curve_tone, stroke_width=2, dash_length=.09))
+                    if legend_rows:
+                        slot_w = inner_w/2
+                        lx = -inner_w/2+(index % 2)*slot_w
+                        ly = -inner_h/2+.08+(legend_rows-1-index//2)*.34
+                        swatch = Line([lx, ly, 0], [lx+.23, ly, 0], color=curve_tone, stroke_width=4)
+                        label = copy(name, slot_w-.45, .29, size=20, minimum=20)
+                        label.move_to([lx+.32+label.width/2, ly, 0])
+                        group.add(swatch, label)
+                function = compile_expression(e.expression)
+                for x, marker_tone in markers:
+                    y = function(x)
+                    if not e.y_min <= y <= e.y_max:
+                        raise ValueError(f"Grafico {e.id}: amplia l'asse y per mostrare i punti di secante e tangente")
+                    group.add(Dot(axes.c2p(x, y), radius=.05, color=marker_tone))
                 for value, axis in ((e.x_min, "x"), (e.x_max, "x"), (e.y_min, "y"), (e.y_max, "y")):
                     label = copy(f"{value:g}", .65, .3, size=20, minimum=20)
                     if axis == "x":
@@ -340,6 +375,7 @@ def build_scene(value, project):
     report = {"engine": "manim", "elements": len(objects), "connections": len(links),
               "min_font_size": min(size for _, size in texts), "text_count": len(texts),
               "shortened_texts": shortened_texts, "bounds_checked": True,
+              "plotted_curves": plotted_curves,
               "types": sorted({e.type for e in spec.elements})}
     return root, header, footer, stages, report
 

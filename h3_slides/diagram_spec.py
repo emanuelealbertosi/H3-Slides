@@ -1,10 +1,23 @@
 """A bounded scene language compiled into real Manim objects, never Python eval."""
 from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from .math_expression import validate_expression
+from .math_expression import validate_expression, function_line
 
 Number = Annotated[float, Field(ge=-1e9, le=1e9, allow_inf_nan=False)]
 Tone = Literal["accent", "blue", "amber", "red", "violet", "neutral"]
+
+
+class FunctionCurve(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expression: str = Field(min_length=1, max_length=120)
+    label: str = Field(default="", max_length=36)
+    tone: Tone = "blue"
+    asymptotes: list[Number] = Field(default_factory=list, max_length=8)
+
+    @model_validator(mode="after")
+    def safe_curve(self):
+        self.expression = validate_expression(self.expression)
+        return self
 
 
 class Element(BaseModel):
@@ -29,6 +42,9 @@ class Element(BaseModel):
     y_min: Number = -5
     y_max: Number = 5
     asymptotes: list[Number] = Field(default_factory=list, max_length=8)
+    series: list[FunctionCurve] = Field(default_factory=list, max_length=3)
+    tangent_at: Number | None = None
+    secant_x: list[Number] = Field(default_factory=list, max_length=2)
 
     @model_validator(mode="after")
     def geometry_and_data(self):
@@ -49,6 +65,19 @@ class Element(BaseModel):
             self.asymptotes = sorted(set(self.asymptotes))
             if any(not self.x_min < value < self.x_max for value in self.asymptotes):
                 raise ValueError(f"Funzione {self.id}: gli asintoti verticali devono essere interni al dominio")
+            for curve in self.series:
+                if any(not self.x_min < value < self.x_max for value in curve.asymptotes):
+                    raise ValueError(f"Funzione {self.id}: asintoti della serie fuori dal dominio")
+            if self.tangent_at is not None:
+                if not self.x_min < self.tangent_at < self.x_max:
+                    raise ValueError("Tangente: il punto deve essere interno al dominio")
+                function_line(self.expression, self.tangent_at)
+            if self.secant_x:
+                if len(self.secant_x) != 2 or any(not self.x_min <= x <= self.x_max for x in self.secant_x):
+                    raise ValueError("Secante: servono due ascisse nel dominio")
+                function_line(self.expression, *self.secant_x)
+        elif self.series or self.tangent_at is not None or self.secant_x:
+            raise ValueError("series, tangent_at e secant_x appartengono a function_plot, non ai grafici a campioni")
         if self.type == "bars" and len(self.labels) != len(self.values):
             raise ValueError(f"Barre {self.id}: ogni valore richiede un'etichetta")
         if self.type == "venn" and not 2 <= len(self.labels) <= 4:
@@ -165,7 +194,15 @@ Per function_plot usa expression con la sola variabile x, numeri, + - * / ^ e le
 sin, cos, tan, sqrt, log, ln, exp, abs; imposta x_min,x_max,y_min,y_max e gli eventuali
 asintoti verticali in asymptotes. Per y=1/x usa expression "1/x" e asymptotes [0]:
 il motore traccia deterministicamente due rami separati. Non scrivere codice Python.
-Usa un solo elemento composto function_plot/venn/gantt/timeline/tree/network grande almeno width=5,height=3
+Per confrontare funzioni sugli STESSI ASSI, usa UN function_plot: expression per la funzione principale,
+series per fino a 3 curve aggiuntive, ciascuna con expression, label, tone e asymptotes.
+Per secante e tangente NON usare plot senza values: imposta tangent_at con l'ascissa di tangenza
+e secant_x con le due ascisse della secante sullo stesso function_plot. Il motore calcola le rette.
+Esempio illustrativo: expression "x^2", tangent_at 1, secant_x [1,2],
+x_min -1,x_max 3,y_min -3,y_max 9,width 10,height 5.8. Non inventare campioni delle rette.
+Per confrontare grafici con assi DIVERSI, usa due function_plot affiancati con width=5.4,
+height=5.5,x=3 e x=9,y=4.15. Non sovrapporre pannelli distinti.
+Usa un elemento composto function_plot/venn/gantt/timeline/tree/network grande almeno width=5,height=3
 (Gantt height>=4), anziché approssimarlo con riquadri. Non forzare grafici numerici su argomenti senza dati.
 Tu progetti elementi e relazioni, Manim costruisce e renderizza la scena.
 Canvas 12 × 8, x cresce verso destra e y verso il basso. x,y sono il CENTRO, width,height l'ingombro totale.

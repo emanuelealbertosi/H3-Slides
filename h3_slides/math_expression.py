@@ -82,7 +82,7 @@ def compile_expression(value: str):
     def function(x: float) -> float:
         try:
             result = float(calculate(tree, float(x)))
-        except (ArithmeticError, OverflowError, ValueError):
+        except (ArithmeticError, OverflowError, ValueError, TypeError):
             return math.nan
         return result if math.isfinite(result) else math.nan
 
@@ -92,6 +92,27 @@ def compile_expression(value: str):
 def validate_expression(value: str) -> str:
     compile_expression(value)
     return _source(value)
+
+
+def function_line(value: str, at: float, other: float | None = None):
+    """Compute a secant or a numerically checked tangent from the actual curve."""
+    function = compile_expression(value)
+    y = function(at)
+    if other is not None:
+        if other == at:
+            raise ValueError("Secante: scegli due ascisse distinte")
+        slope = (function(other)-y)/(other-at)
+    else:
+        step = 1e-4*max(1, abs(at))
+        left = (y-function(at-step))/step
+        right = (function(at+step)-y)/step
+        slope = (function(at+step/2)-function(at-step/2))/step
+        if not all(math.isfinite(v) for v in (left, right, slope)) or abs(left-right) > .01*max(1, abs(slope)):
+            raise ValueError("Tangente: derivata non finita o non regolare nel punto; scegli un punto derivabile")
+    intercept = y-slope*at
+    if not all(math.isfinite(v) and abs(v) <= 1e9 for v in (y, slope, intercept)):
+        raise ValueError("Retta: la funzione deve essere definita nei punti scelti")
+    return slope, intercept
 
 
 def sample_expression(value: str, x_min: float, x_max: float, y_min: float, y_max: float,
