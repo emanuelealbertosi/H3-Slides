@@ -189,6 +189,18 @@ export const composerCSS=`
 .slide-frame.has-multiple-visuals:is(.tpl-visual-top,.tpl-visual-bottom):not(.tpl-freeform) [data-visual-kind="diagram"]{grid-column:1}
 .slide-frame.has-multiple-visuals:is(.tpl-visual-top,.tpl-visual-bottom):not(.tpl-freeform) [data-visual-kind="image"]{grid-column:2}
 .slide-frame.has-multiple-visuals:is(.tpl-visual-top,.tpl-visual-bottom):not(.tpl-freeform) .prose-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+/* Dense dual-media rows keep the citation beside the paragraph, not in an
+   extra row below it. This preserves font sizes and leaves manual frames alone. */
+.slide-frame.has-multiple-visuals.tpl-stack.compact-spacing:not(.tpl-freeform) .slide-columns{grid-template-columns:minmax(0,1.8fr) minmax(0,1fr)}
+.slide-frame.has-multiple-visuals.tpl-stack.compact-spacing:not(.tpl-freeform) .prose-box{padding:8px;gap:4px 12px;grid-template-columns:minmax(160px,25%) minmax(0,1fr)}
+.slide-frame.has-multiple-visuals.tpl-stack.compact-spacing:not(.tpl-freeform) .prose-box h2{overflow-wrap:anywhere;align-self:start;grid-column:1;grid-row:1}
+.slide-frame.has-multiple-visuals.tpl-stack.compact-spacing:not(.tpl-freeform) .prose-source{grid-column:1;grid-row:2;padding-top:0;margin-top:0;align-self:end}
+.slide-frame.has-multiple-visuals.tpl-stack.compact-spacing:not(.tpl-freeform) .prose-box p{grid-column:2;grid-row:1 / span 2}
+/* Four longer headings can use two rows of cards instead of narrow stack labels. */
+.slide-frame.has-multiple-visuals.tpl-cards.compact-spacing:not(.tpl-freeform):has(.prose-grid.count-4) .slide-columns{grid-template-columns:minmax(0,2.1fr) minmax(0,1fr)}
+.slide-frame.has-multiple-visuals.tpl-cards.compact-spacing:not(.tpl-freeform):has(.prose-grid.count-4) .prose-grid.count-4{grid-template-columns:repeat(2,minmax(0,1fr))}
+.slide-frame.has-multiple-visuals.tpl-cards.compact-spacing:not(.tpl-freeform):has(.prose-grid.count-4) .prose-box{padding:8px;gap:4px}
+.slide-frame.has-multiple-visuals.tpl-cards.compact-spacing:not(.tpl-freeform):has(.prose-grid.count-4) .prose-box h2{overflow-wrap:anywhere}
 .slide-frame [contenteditable="plaintext-only"]{outline:2px solid var(--accent);outline-offset:4px;min-width:40px;cursor:text}
 .slide-frame.tpl-freeform{display:block;padding:0!important}
 .slide-frame.tpl-freeform .kicker{position:absolute;left:48px;top:24px;margin:0}
