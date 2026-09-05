@@ -49,10 +49,12 @@
   <details class="model-panel" open><summary>Ricerca web · gratuita e facoltativa</summary>
   <label class="check"><input id="web-enabled" type="checkbox">Integra fonti dal web</label>
   <div id="web-options" hidden>
+  <label id="source-priority-option" hidden>Priorità delle fonti<select id="source-priority"><option value="documents">Documenti allegati (predefinito)</option><option value="web">Web (scelta esplicita)</option></select><small>I documenti sono la fonte principale; il web li integra. Cambia priorità solo se vuoi partire dal web. Scelta salvata in questo progetto.</small></label>
   <label>Motore<select id="web-provider"><option value="wikipedia">Wikipedia diretta · nessun server o API key</option><option value="searxng">SearXNG locale</option><option value="duckduckgo">DuckDuckGo · sperimentale, senza installazioni</option></select></label>
   <label>Query di ricerca · facoltativa<input id="web-query" maxlength="200" placeholder="Vuota: il modello la ricava da argomento e istruzioni"></label>
   <label>Numero massimo di fonti<select id="web-max-sources"><option value="3">3 · più rapido</option><option value="4">4</option><option value="5">5 · più fonti</option></select></label>
   <small id="wikipedia-hint">Wikipedia diretta cerca e legge voci in italiano, con estensione all’inglese se necessario. Non cerca tutto il web: le voci appartengono alla stessa enciclopedia. Non richiede installazioni; serve Internet.</small>
+  <small>Con zero risultati prova una query più semplice; non ritenta CAPTCHA o rifiuti del servizio. Se non acquisisce fonti web, usa solo i documenti allegati e lo segnala. Senza allegati si ferma.</small>
   <small>Al motore di ricerca inviamo solo una query breve, scritta da te o ricavata dal modello: mai allegati o prompt completo. La query effettiva appare nei log. L'app legge pagine pubbliche, conserva gli estratti sul PC e li passa al modello scelto, che usa il prompt con il consenso previsto per il provider. SearXNG è locale ma consulta motori online. Nessuna API a pagamento; CAPTCHA e limiti vengono rispettati.</small>
   <label class="check"><input id="web-consent" type="checkbox">Autorizzo l'invio della query, anche automatica, e la lettura delle pagine trovate.</label>
   <label class="check"><input id="web-refresh" type="checkbox">Aggiorna le fonti, senza riusare la cache di un’ora</label>

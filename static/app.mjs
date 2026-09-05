@@ -60,8 +60,10 @@ async function finishInlineEdits(){
   if($('slides').querySelector('[contenteditable]'))throw new Error('Salva o annulla il testo ancora in modifica.');
 }
 const designFields={'template':'template','font':'font','text-density':'text_density','background-color':'background_color','accent-color':'accent_color','source-images':'use_source_images','web-images':'use_web_images','manim-diagrams':'use_manim_diagrams','pdf-scope':'pdf_scope',
-  'web-enabled':'web_enabled','web-provider':'web_provider','web-query':'web_query','web-max-sources':'web_max_sources'};
-const preferenceIds=['provider','model','api-url','api-model','vision',...Object.keys(designFields).filter(id=>!['web-query','web-enabled'].includes(id))];
+  'web-enabled':'web_enabled','web-provider':'web_provider','web-query':'web_query','web-max-sources':'web_max_sources','source-priority':'source_priority'};
+// Source priority belongs to the project: a previous web-first choice must not
+// silently make new projects web-first as well.
+const preferenceIds=['provider','model','api-url','api-model','vision',...Object.keys(designFields).filter(id=>!['web-query','web-enabled','source-priority'].includes(id))];
 const pref=JSON.parse(localStorage.getItem('h3slides-settings')||'{}');
 const remoteConsents={...(pref.remote_consents||{})};
 const remoteConsentKey=()=>String($('api-url').value||'').trim().replace(/\/+$/,'');
@@ -220,7 +222,7 @@ async function selectProject(id){
   $('project-list').value=id;
   for(const key of ['title','prompt','count','theme'])$(key).value=current[key];
   const defaults={template:'auto',font:'Arial',text_density:'detailed',background_color:themes[current.theme].bg,accent_color:themes[current.theme].accent,use_source_images:true,use_web_images:false,use_manim_diagrams:false,pdf_scope:'auto',
-    web_enabled:false,web_provider:'wikipedia',web_query:'',web_max_sources:3};
+    web_enabled:false,web_provider:'wikipedia',web_query:'',web_max_sources:3,source_priority:'documents'};
   for(const [id,key] of Object.entries(designFields)){const value=current[key]??defaults[key];if($(id).type==='checkbox')$(id).checked=value;else $(id).value=value||defaults[key]}
   $('web-consent').checked=false;$('web-refresh').checked=false;
   fillThemeDesign(current.theme_design);$('theme-presets').value='';
@@ -237,7 +239,7 @@ async function newProject(){
   try{await finishInlineEdits()}catch(error){toast(error.message);return}
   if(drafts.size&&!confirm('Lasciare le modifiche non salvate?'))return;
   current=null;drafts.clear();$('title').value='Nuova presentazione';$('prompt').value='';$('project-list').value='';
-  $('web-enabled').checked=false;$('web-query').value='';$('web-consent').checked=false;$('web-refresh').checked=false;render();
+  $('web-enabled').checked=false;$('web-query').value='';$('source-priority').value='documents';$('web-consent').checked=false;$('web-refresh').checked=false;render();
   navigatePage('create');
 }
 $('new').onclick=$('library-new').onclick=newProject;
@@ -530,17 +532,34 @@ function render(){
   $('sources').innerHTML=current?current.sources.map(sourceHTML).join(''):'';
   renderDocumentLibrary();
   $('web-options').hidden=!$('web-enabled').checked;
+  $('source-priority-option').hidden=!current?.sources.length;
   $('wikipedia-hint').hidden=$('web-provider').value!=='wikipedia';
-  $('source-mode').textContent=$('web-enabled').checked?'Ricerca web attiva: estratti delle pagine lette ed eventuali allegati. Verifica le fonti prima dell’uso.':
-    current?.sources.length?'Con documenti allegati: il modello usa le fonti fornite. Le immagini richiedono vision.':'Nessun allegato: genera dalla conoscenza del modello. Nessuna ricerca web; verifica fatti e date importanti.';
   const research=current?.web_research;
-  $('web-sources').innerHTML=research?'<details open><summary>Ultima ricerca completata · '+esc(research.provider)+'</summary>'+
-    '<p class="hint">'+(research.query_mode==='automatic'?'Query automatica · ':'')+esc(research.query)+' · '+esc(new Date(research.created_at*1000).toLocaleString())+
+  const documentFallback=research?.status==='document_fallback',researchFailed=research?.status==='failed';
+  $('source-mode').textContent=$('web-enabled').checked?(documentFallback?
+    'Documenti allegati · nessuna integrazione web nell’ultima generazione. La ricerca verrà ritentata alla prossima generazione.':
+    researchFailed?'Ultima ricerca non completata: nessuna fonte web usata. Senza allegati la generazione si è fermata.':
+    current?.sources.length?($('source-priority').value==='web'?
+      'Priorità al web, scelta esplicita per questo progetto. I documenti allegati integrano le fonti trovate.':
+      'Prima i documenti allegati. La ricerca web aggiunge informazioni senza sostituire la fonte principale.'):
+    'Ricerca web attiva: uso gli estratti delle pagine lette. Verifica le fonti prima dell’uso.'):
+    current?.sources.length?'Con documenti allegati: il modello usa le fonti fornite. Le immagini richiedono vision.':'Nessun allegato: genera dalla conoscenza del modello. Nessuna ricerca web; verifica fatti e date importanti.';
+  const attemptedQueries=research?(Array.isArray(research.attempted_queries)&&research.attempted_queries.length?
+    research.attempted_queries:[research.query].filter(Boolean)):[];
+  $('web-sources').innerHTML=research?'<details open data-research-status="'+(documentFallback?'document_fallback':researchFailed?'failed':'completed')+
+    '"><summary>'+(documentFallback?'Documenti allegati · nessuna integrazione web':researchFailed?'Ultima ricerca non completata':'Ultima ricerca completata')+
+    ' · '+esc(research.provider)+'</summary>'+
+    (documentFallback?'<p class="hint" role="status"><strong>Solo documenti allegati, nessuna fonte web usata.</strong></p>':
+      researchFailed?'<p class="hint" role="status"><strong>Nessuna fonte web usata. Senza allegati la generazione si è fermata.</strong></p>':'')+
+    '<p class="hint">'+(research.query_mode==='automatic'?'Query automatica · ':'')+esc(new Date(research.created_at*1000).toLocaleString())+
     (research.cache_used?' · cache locale':'')+'</p>'+
-    research.sources.map(s=>'<p class="hint"><a href="'+esc(/^https?:\/\//.test(s.url)?s.url:'#')+
+    (attemptedQueries.length?'<p class="hint">'+(attemptedQueries.length>1?'Query tentate:':'Query tentata:')+'</p><ol>'+
+      attemptedQueries.map(query=>'<li class="hint">'+esc(query)+'</li>').join('')+'</ol>':'')+
+    (documentFallback||researchFailed?[]:research.sources||[]).map(s=>'<p class="hint"><a href="'+esc(/^https?:\/\//.test(s.url)?s.url:'#')+
       '" target="_blank" rel="noopener noreferrer">'+esc(s.id+' · '+s.title)+'</a></p>').join('')+
     (research.warnings||[]).map(w=>'<p class="hint">'+esc(w)+'</p>').join('')+
-    '<small>Fonti lette in quella generazione: modificare la query non aggiorna le slide già pronte.</small></details>':'';
+    '<small>'+(documentFallback||researchFailed?'Esito dell’ultimo tentativo. Rigenera per riprovare la ricerca.':
+      'Fonti lette in quella generazione: modificare la query non aggiorna le slide già pronte.')+'</small></details>':'';
   $('empty').hidden=Boolean(current?.slides.length);$('slide-count').textContent=(current?.slides.length||0)+' slide';
   const container=$('slides'),ids=new Set();
   for(const [index,slide] of (current?.slides||[]).entries()){

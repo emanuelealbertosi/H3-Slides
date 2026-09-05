@@ -337,7 +337,7 @@ async def test_automatic_query_uses_new_brief_one_client_and_keeps_input_empty(s
 
 @pytest.mark.asyncio
 async def test_automatic_query_snapshots_brief_and_excludes_document_bodies(store):
-    p = store.create(ProjectInput(prompt="Prima", web_enabled=True).model_dump())
+    p = store.create(ProjectInput(prompt="Prima", web_enabled=True, source_priority="web").model_dump())
     p["sources"] = [{"name": "Documento", "text": "PRIVATE ATTACHMENT BODY", "images": []}]
     store.save_project(p)
     entered, release = asyncio.Event(), asyncio.Event()
@@ -358,6 +358,10 @@ async def test_automatic_query_snapshots_brief_and_excludes_document_bodies(stor
             raise ValueError("End of fixture")
     worker = Worker(store, SimpleNamespace())
     worker.clients, worker.researcher = LLM, Research()
+    async def stop_after_search(*_):
+        # This fixture checks query privacy only; document reading is a later, consented stage.
+        raise ValueError("End of fixture")
+    worker.sources_context = stop_after_search
     job = worker.submit(p["id"], Generation(provider={"model": "fake"}, prompt="Argomento originale",
                                            web_consent=True))
     await entered.wait()
@@ -369,6 +373,345 @@ async def test_automatic_query_snapshots_brief_and_excludes_document_bodies(stor
     assert calls == ["Argomento originale"]
     assert store.project(p["id"])["web_query"] == "Altra ricerca"
     assert "PRIVATE ATTACHMENT BODY" not in str(store.job(job["id"]))
+
+
+def document_project(store, **overrides):
+    project = store.create(ProjectInput(prompt="Spiega Python e le funzioni", count=1,
+        text_density="brief", web_enabled=True, **overrides).model_dump())
+    project["sources"] = [{"id": "doc", "name": "Manuale.md", "kind": "md",
+        "text": "Python permette di definire funzioni riutilizzabili usando def.",
+        "images": [], "warnings": []}]
+    project["web_research"] = {**wr.public_research(bundle()), "job_id": "old-job"}
+    store.save_project(project)
+    return project
+
+
+def test_web_priority_requires_actual_web_sources_and_document_default_is_validated():
+    from h3_slides.worker import source_priority_rule
+    from h3_slides.models import SYSTEM
+    assert ProjectInput().source_priority == "documents"
+    with pytest.raises(ValueError):
+        ProjectInput(source_priority="implicit")
+    project = {"sources": [{"name": "Manuale.md"}], "web_enabled": True}
+    # In diagram-only jobs web is enabled in the project but no research is performed.
+    assert "DOCUMENTI ALLEGATI" in source_priority_rule(project, "web")
+    assert "WEB (scelta esplicita)" in source_priority_rule(project, "web", web_available=True)
+    assert "PRIORITÀ FONTI" in SYSTEM
+    assert "per gli allegati cita nome e pagina" in wr.web_context(bundle())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["local", "remote"])
+@pytest.mark.parametrize("manual", [False, True])
+async def test_simpler_query_success_reuses_client_and_preserves_choice(store, mode, manual):
+    original = "Python programmazione funzioni"
+    p = store.create(ProjectInput(prompt="Spiega Python", count=1, text_density="brief",
+        web_enabled=True, web_query=original if manual else "").model_dump())
+    prepared, instances, queries = [], [], []
+    class LLM:
+        def __init__(self, provider, *_):
+            instances.append(self)
+            assert provider.mode == mode
+        async def prepare(self):
+            prepared.append(1)
+        async def json(self, prompt, **kwargs):
+            if "SECONDO TENTATIVO" in prompt:
+                assert '"query_originale": "' + original + '"' in prompt
+                return {"query": "Python"}
+            if "RICAVA LA QUERY" in prompt:
+                assert not manual
+                return {"query": original}
+            assert "FONTI WEB ACQUISITE" in prompt
+            if "Proponi esattamente" in prompt:
+                return {"slides": [{"title": "Python"}]}
+            return SlideContent(title="Python", bullets=["Le funzioni organizzano istruzioni."],
+                                sources=["W1"]).model_dump()
+    class Research:
+        async def collect(self, pid, **kwargs):
+            queries.append(kwargs["query"])
+            assert kwargs["provider"] == "wikipedia"
+            if len(queries) == 1:
+                raise wr.NoSearchResults("Zero risultati")
+            return bundle()
+    w = Worker(store, SimpleNamespace())
+    w.clients, w.researcher = LLM, Research()
+    req = Generation(provider={"mode": mode, "model": "fake", "remote_consent": True,
+        "base_url": "https://provider.example/v1"}, prompt="Spiega Python", count=1, web_consent=True)
+    job = w.submit(p["id"], req)
+    await w.tasks[job["id"]]
+    saved, result = store.project(p["id"]), store.job(job["id"])
+    assert result["status"] == "completed", result["events"]
+    assert len(instances) == len(prepared) == 1
+    assert queries == [original, "Python"]
+    assert saved["web_query"] == (original if manual else "")
+    assert saved["web_research"]["status"] == "completed"
+    assert saved["web_research"]["attempted_queries"] == queries
+    assert saved["web_research"]["query_mode"] == ("manual" if manual else "automatic")
+    assert "docs.python.org" in saved["slides"][0]["content"]["sources"][0]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["local", "remote"])
+@pytest.mark.parametrize("provider", ["wikipedia", "duckduckgo", "searxng"])
+async def test_empty_web_results_continue_from_documents_without_stale_web_sources(store, mode, provider):
+    p = document_project(store, web_provider=provider)
+    old_note = "Origine: fonti web lette dall'app; ricerca «vecchia». Verificare le affermazioni prima dell'uso."
+    p["text_density"] = "detailed"
+    p["slides"] = [{"id": "existing", "revision": 2, "status": "ready",
+        "content": SlideContent(title="Python", notes=old_note+"\n\nNota utile del relatore.",
+                                sources=["W1", "https://old.example"]).model_dump(),
+        "web_research": wr.public_research(bundle())}]
+    store.save_project(p)
+    queries, prepares = [], []
+    class LLM:
+        def __init__(self, *_): pass
+        async def prepare(self):
+            prepares.append(1)
+        async def json(self, prompt, **kwargs):
+            if "SECONDO TENTATIVO" in prompt:
+                return {"query": "Python"}
+            if "RICAVA LA QUERY" in prompt:
+                return {"query": "Python programmazione funzioni"}
+            if "Estrai fatti" in prompt:
+                return {"summary": "Manuale.md: Python usa def per definire funzioni."}
+            assert "RICERCA WEB SENZA FONTI" in prompt
+            assert "FONTI WEB ACQUISITE" not in prompt
+            assert "MODALITÀ CONOSCENZA DEL MODELLO" not in prompt
+            if "Proponi esattamente" in prompt:
+                return {"slides": [{"title": "Python"}]}
+            assert old_note not in prompt and "https://old.example" not in prompt
+            # Simulate legacy web citations being echoed during a regeneration.
+            return SlideContent(title="Python", notes=old_note+"\n\nNota utile del relatore.",
+                sources=["W1", "https://old.example", "Manuale.md"],
+                blocks=[{"text": "Una funzione permette di riutilizzare una sequenza di istruzioni. "
+                    "In Python la parola def introduce la definizione e rende riconoscibile il blocco di codice.",
+                    "source": "W1"}]).model_dump()
+    class Research:
+        async def collect(self, pid, **kwargs):
+            assert kwargs["provider"] == provider
+            queries.append(kwargs["query"])
+            raise wr.NoSearchResults("Zero risultati")
+    w = Worker(store, SimpleNamespace())
+    w.clients, w.researcher = LLM, Research()
+    job = w.submit(p["id"], Generation(provider={"mode": mode, "model": "fake",
+        "remote_consent": True, "base_url": "https://provider.example/v1"},
+        prompt="Spiega Python", count=1, web_consent=True, regenerate_all=True))
+    await w.tasks[job["id"]]
+    saved, result = store.project(p["id"]), store.job(job["id"])
+    assert result["status"] == "completed", result["events"]
+    assert result["source_mode"] == "documents"
+    assert queries == ["Python programmazione funzioni", "Python"] and prepares == [1]
+    assert saved["web_query"] == "" and saved["web_enabled"]
+    assert saved["sources"] == p["sources"]
+    metadata = saved["web_research"]
+    assert metadata["status"] == "document_fallback" and metadata["sources"] == []
+    assert metadata["job_id"] == job["id"] and metadata["attempted_queries"] == queries
+    assert result["web_research"] == metadata
+    slide = saved["slides"][0]
+    assert slide["status"] == "ready" and slide["content"]["sources"] == ["Manuale.md"]
+    assert slide["content"]["blocks"][0]["source"] == ""
+    assert "nessuna verifica sul web" in slide["content"]["notes"].lower()
+    assert old_note not in slide["content"]["notes"] and "Nota utile del relatore." in slide["content"]["notes"]
+    assert slide["id"] == "existing" and slide["revision"] == 3
+    assert slide["web_research"]["status"] == "document_fallback"
+    assert any("uso i documenti" in e["message"] for e in result["events"])
+    assert "docs.python.org" not in str(metadata)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", [
+    ValueError("DuckDuckGo richiede un CAPTCHA"), ValueError("Wikipedia HTTP 429"),
+    ValueError("Nessuna pagina ha permesso la lettura"), OSError("Rete non disponibile")])
+async def test_unavailable_or_denied_web_does_not_retry_and_only_uses_attached_documents(store, failure):
+    p = document_project(store, web_query="Python")
+    calls = []
+    class Research:
+        async def collect(self, pid, **kwargs):
+            calls.append(kwargs["query"])
+            raise failure
+    class LLM:
+        def __init__(self, *_): pass
+        async def prepare(self): pass
+        async def json(self, prompt, **kwargs):
+            assert "RICAVA LA QUERY" not in prompt
+            if "Estrai fatti" in prompt:
+                return {"summary": "Manuale.md: le funzioni riutilizzano istruzioni."}
+            if "Proponi esattamente" in prompt:
+                return {"slides": [{"title": "Python"}]}
+            return SlideContent(title="Python", bullets=["Una funzione riutilizza istruzioni."],
+                                sources=["Manuale.md"]).model_dump()
+    w = Worker(store, SimpleNamespace())
+    w.clients, w.researcher = LLM, Research()
+    job = w.submit(p["id"], Generation(provider={"model": "fake"}, prompt="Spiega Python",
+                                      count=1, web_consent=True))
+    await w.tasks[job["id"]]
+    result = store.job(job["id"])
+    assert result["status"] == "completed", result["events"]
+    assert calls == ["Python"] and result["web_research"]["status"] == "document_fallback"
+    assert str(failure) in result["web_research"]["warnings"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("simplified", ["Python", "Python funzioni", "Python argomento ancora più lungo"])
+async def test_no_document_means_no_knowledge_fallback_or_duplicate_search(store, simplified):
+    p = store.create(ProjectInput(prompt="Python", web_enabled=True, web_query="Python funzioni").model_dump())
+    p["web_research"] = wr.public_research(bundle())
+    store.save_project(p)
+    queries = []
+    class Research:
+        async def collect(self, pid, **kwargs):
+            queries.append(kwargs["query"])
+            raise wr.NoSearchResults("Zero risultati")
+    class LLM:
+        def __init__(self, *_): pass
+        async def prepare(self): pass
+        async def json(self, prompt, **kwargs):
+            assert "SECONDO TENTATIVO" in prompt
+            return {"query": simplified}
+    w = Worker(store, SimpleNamespace())
+    w.clients, w.researcher = LLM, Research()
+    job = w.submit(p["id"], Generation(provider={"model": "fake"}, prompt="Python", web_consent=True))
+    await w.tasks[job["id"]]
+    result, saved = store.job(job["id"]), store.project(p["id"])
+    assert result["status"] == "failed" and "nessun documento" in result["error"]
+    assert not saved["slides"]
+    assert queries == (["Python funzioni", "Python"] if simplified == "Python" else ["Python funzioni"])
+    assert saved["web_research"]["status"] == "failed" and saved["web_research"]["sources"] == []
+    assert saved["web_query"] == "Python funzioni"
+
+
+@pytest.mark.asyncio
+async def test_cancellation_while_simplifying_never_starts_document_fallback(store):
+    p = document_project(store, web_query="Python funzioni", source_priority="web")
+    entered = asyncio.Event()
+    queries = []
+    class Research:
+        async def collect(self, pid, **kwargs):
+            queries.append(kwargs["query"])
+            raise wr.NoSearchResults("Zero risultati")
+    class LLM:
+        def __init__(self, *_): pass
+        async def prepare(self): pass
+        async def json(self, prompt, **kwargs):
+            entered.set()
+            await asyncio.Event().wait()
+    w = Worker(store, SimpleNamespace())
+    w.clients, w.researcher = LLM, Research()
+    job = w.submit(p["id"], Generation(provider={"model": "fake"}, prompt="Python", web_consent=True))
+    await entered.wait()
+    await w.close()
+    result = store.job(job["id"])
+    assert result["status"] == "interrupted" and queries == ["Python funzioni"]
+    assert not store.project(p["id"])["slides"]
+    assert not any("uso i documenti" in e["message"] for e in result["events"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("priority", ["documents", "web", "legacy"])
+@pytest.mark.parametrize("mode", ["local", "remote"])
+async def test_documents_are_read_and_cited_first_unless_web_priority_is_explicit(store, priority, mode):
+    p = document_project(store, web_query="Python")
+    if priority == "legacy":
+        p.pop("source_priority")
+    else:
+        p["source_priority"] = priority
+    store.save_project(p)
+    calls = []
+    class Research:
+        async def collect(self, *_args, **kwargs):
+            assert "source_priority" not in kwargs
+            calls.append("web")
+            return bundle()
+    class LLM:
+        def __init__(self, *_): pass
+        async def prepare(self):
+            calls.append("prepare")
+        async def json(self, prompt, **kwargs):
+            if "Estrai fatti" in prompt:
+                calls.append("document")
+                return {"summary": "Manuale.md: Python usa def per definire funzioni."}
+            assert ("PRIORITÀ FONTI — WEB (scelta esplicita)" if priority == "web" else
+                    "PRIORITÀ FONTI — DOCUMENTI ALLEGATI") in prompt
+            if "Proponi esattamente" in prompt:
+                return {"slides": [{"title": "Python"}]}
+            return SlideContent(title="Python", bullets=["Le funzioni riutilizzano istruzioni."],
+                                sources=["Manuale.md", "W1"]).model_dump()
+    w = Worker(store, SimpleNamespace())
+    w.clients, w.researcher = LLM, Research()
+    job = w.submit(p["id"], Generation(provider={"model": "fake", "mode": mode,
+        "remote_consent": True, "base_url": "https://provider.example/v1"},
+        prompt="Spiega Python", count=1, web_consent=True))
+    await w.tasks[job["id"]]
+    saved, result = store.project(p["id"]), store.job(job["id"])
+    assert result["status"] == "completed", result["error"]
+    assert calls == (["web", "prepare", "document"] if priority == "web" else ["prepare", "document", "web"])
+    assert saved["slides"][0]["content"]["sources"][0] == "Manuale.md"
+    assert ("documenti allegati (fonti principali)" in saved["slides"][0]["content"]["notes"]) == (priority != "web")
+
+
+@pytest.mark.asyncio
+async def test_unreadable_primary_document_is_not_silently_replaced_by_web(store):
+    p = document_project(store, web_query="Python")
+    class LLM:
+        def __init__(self, *_): pass
+        async def prepare(self): pass
+        async def json(self, *_args, **_kwargs): return {"summary": ""}
+    class Research:
+        async def collect(self, *_, **__):
+            pytest.fail("Do not silently replace an unreadable primary document with the web")
+    w = Worker(store, SimpleNamespace())
+    w.clients, w.researcher = LLM, Research()
+    job = w.submit(p["id"], Generation(provider={"model": "fake"}, prompt="Python", web_consent=True))
+    await w.tasks[job["id"]]
+    result = store.job(job["id"])
+    assert result["status"] == "failed" and "Sintesi documento" in result["error"]
+    assert not store.project(p["id"])["slides"]
+
+
+@pytest.mark.asyncio
+async def test_invalid_optional_query_does_not_block_primary_document_generation(store):
+    p = document_project(store)
+    calls = []
+    class LLM:
+        def __init__(self, *_): pass
+        async def prepare(self): pass
+        async def json(self, prompt, **kwargs):
+            if "Estrai fatti" in prompt:
+                calls.append("document")
+                return {"summary": "Manuale.md: Python definisce funzioni riutilizzabili."}
+            if "RICAVA LA QUERY" in prompt:
+                calls.append("query")
+                assert "Python definisce funzioni riutilizzabili" not in prompt
+                return {"query": ""}
+            if "Proponi esattamente" in prompt:
+                return {"slides": [{"title": "Python"}]}
+            return SlideContent(title="Python", bullets=["Le funzioni riutilizzano istruzioni."],
+                                sources=["Manuale.md"]).model_dump()
+    class Research:
+        async def collect(self, *_, **__):
+            pytest.fail("An invalid query must never be sent to a search provider")
+    w = Worker(store, SimpleNamespace())
+    w.clients, w.researcher = LLM, Research()
+    job = w.submit(p["id"], Generation(provider={"model": "fake"}, prompt="Spiega Python", count=1,
+                                      web_consent=True))
+    await w.tasks[job["id"]]
+    result = store.job(job["id"])
+    assert result["status"] == "completed", result["error"]
+    assert calls == ["document", "query", "query"]
+    assert result["source_mode"] == "documents"
+    assert result["web_research"]["attempted_queries"] == []
+    assert result["web_research"]["sources"] == []
+
+
+@pytest.mark.asyncio
+async def test_search_empty_is_distinct_from_access_failure(store, monkeypatch):
+    p = store.create(ProjectInput().model_dump())
+    r = wr.WebResearch(store)
+    async def empty(*_): return []
+    async def checkpoint(): pass
+    monkeypatch.setattr(r, "search", empty)
+    with pytest.raises(wr.NoSearchResults):
+        await r.collect(p["id"], "Python", 3, False, lambda _: None, checkpoint)
 
 
 @pytest.mark.asyncio

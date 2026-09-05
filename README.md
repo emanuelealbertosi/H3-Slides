@@ -165,6 +165,13 @@ Il consenso comprende la query manuale o automatica ed è distinto da quello
 per inviare prompt e fonti a un LLM remoto.
 La ricerca funziona anche con il modello locale, senza API di ricerca a pagamento.
 
+**I documenti allegati hanno la priorità**, anche nei progetti già esistenti.
+Quando sono presenti, la tendina **Priorità delle fonti** propone **Documenti
+allegati (predefinito)**: l'app legge e usa prima il materiale fornito, poi il
+web aggiunge informazioni senza sostituirlo come fonte principale. Solo
+scegliendo esplicitamente **Web** si parte dalle fonti online. La scelta resta
+salvata nel progetto; ogni nuovo progetto riparte dalla priorità ai documenti.
+
 - **Wikipedia diretta** (predefinita per i nuovi progetti): cerca voci e legge
   estratti testuali tramite le API pubbliche, senza server di ricerca,
   installazioni aggiuntive o chiavi API. Prima italiano, poi inglese se i
@@ -184,13 +191,21 @@ non come istruzioni. Limiti di tempo, redirect e dimensione proteggono il recupe
 Le fonti effettivamente lette, gli URL e la data di consultazione restano nel
 progetto e nelle note delle slide; il testo integrale della cache resta locale.
 La cache vale un'ora per progetto e query; **Aggiorna ricerca** la esclude.
-Se il motore fallisce o non si leggono pagine utilizzabili il job si ferma:
-non presenta conoscenza interna del modello come ricerca effettuata.
+Solo se una ricerca restituisce **zero risultati**, l'app tenta una seconda
+query più semplice. CAPTCHA, rifiuti del servizio ed errori di connessione non
+vengono aggirati con altri tentativi. Se non acquisisce fonti web, usa **solo
+i documenti allegati**, quando presenti, e mostra **Documenti allegati · nessuna
+integrazione web**. Non li tratta come una fonte secondaria: sono già la scelta
+predefinita. Senza allegati il job si ferma: non presenta la conoscenza interna
+del modello come una ricerca effettuata. Le query tentate e l'esito restano
+visibili nel pannello Ricerca web, anche dopo un ricaricamento; le fonti di una
+ricerca precedente non vengono presentate come risultato del tentativo fallito.
 
-Con una query manuale, la ricerca precede il caricamento del LLM. Con il campo
-vuoto, una breve chiamata iniziale al modello prepara la query; lo stesso
-modello viene poi riusato per la presentazione. Entrambi i passaggi appaiono
-nei log del job. La ricerca non aggiorna da sola slide già pronte: usare
+Con priorità ai documenti, la loro lettura precede l'integrazione web. Senza
+allegati o con priorità esplicita al web, una query manuale può essere cercata
+prima del caricamento del LLM. Con il campo vuoto, una breve chiamata al modello
+prepara la query; lo stesso modello viene riusato per la presentazione.
+I passaggi appaiono nei log del job. La ricerca non aggiorna da sola slide già pronte: usare
 Rigenera per una slide oppure Rigenera per l'intera presentazione.
 I risultati vanno verificati dall'utente; il recupero di fonti non elimina
 allucinazioni, errori o incompletezza. Questa ricerca riguarda le fonti testuali;
