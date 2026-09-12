@@ -14,6 +14,8 @@ class LoadingSettings(BaseModel):
     cache_type_v: Literal["f16", "q8_0", "q4_0"] = "f16"
     load_mode: Literal["auto", "mmap", "none"] = "auto"
     cpu_moe_layers: int = Field(default=0, ge=0, le=999)
+    mtp_enabled: bool = Field(default=False, strict=True)
+    mtp_predictions: int = Field(default=1, ge=1, le=16, strict=True)
     @model_validator(mode="after")
     def consistent_batches(self):
         if self.ubatch_size > self.batch_size:

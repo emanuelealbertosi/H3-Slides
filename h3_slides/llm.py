@@ -9,11 +9,14 @@ import re
 import socket
 import subprocess
 import time
+import uuid
 import aiohttp
 from .models import SYSTEM
 from .runtime_settings import LoadingSettings, InferenceSettings, ModelProfile
 from .local_models import LocalModelFiles, validate_model
 from .remote_models import remote_api_url
+from .llm_metrics import completion_metrics
+from .mtp import MtpSupport
 
 
 _LATEX_ESCAPE = re.compile(
@@ -109,6 +112,8 @@ class LlamaManager:
         self.profile_path = Path(profile_root or root / "data") / "llm_profiles.json"
         self.local_files = LocalModelFiles(profile_root or root / "data")
         self.loaded_settings = None
+        self.loaded_mtp = None
+        self.mtp_support = MtpSupport()
 
     def profiles(self):
         if not self.profile_path.exists():
@@ -170,7 +175,13 @@ class LlamaManager:
         running = self.process is not None and self.process.poll() is None
         return {"running": running, "model": self.model if running else None,
                 "port": self.config["llama_port"], "managed": True,
-                "loading": self.loaded_settings if running else None}
+                "loading": self.loaded_settings if running else None,
+                "mtp": self.loaded_mtp if running else None}
+
+    async def mtp_capability(self, model_id):
+        if not any(model["id"] == model_id for model in self.catalog()):
+            raise ValueError("Seleziona un modello GGUF presente nel catalogo locale")
+        return await asyncio.to_thread(self.mtp_support.probe, self.executable_path(), model_id)
 
     async def start(self, model_id):
         async with self.lock:
@@ -182,6 +193,14 @@ class LlamaManager:
             if not found:
                 raise ValueError("Seleziona un modello GGUF presente nel catalogo locale")
             validate_model(found["id"])
+            support = await self.mtp_capability(model_id) if loading["mtp_enabled"] else None
+            use_mtp = bool(support and support["supported"])
+            mtp = {"requested": loading["mtp_enabled"], "active": False,
+                   "predictions": loading["mtp_predictions"],
+                   "reason_code": "loading" if use_mtp else support["reason_code"] if support else "disabled",
+                   "reason": "MTP in caricamento." if use_mtp else support["reason"] if support else "MTP disattivato nel profilo."}
+            if support and not use_mtp:
+                logging.warning("MTP non attivato: %s; avvio normale del modello", mtp["reason"])
             await self.stop()
             executable = self.executable_path()
             if not executable.is_file():
@@ -199,21 +218,31 @@ class LlamaManager:
                     "--alias", "h3-slides-local", "--jinja", "--no-webui"]
             if found["mmproj"]:
                 args += ["--mmproj", found["mmproj"]]
+            if use_mtp:
+                args += ["--spec-type", support["spec_type"], support["predictions_flag"], str(loading["mtp_predictions"])]
             self.log = (self.root / "logs" / "llama.log").open("ab", buffering=0)
             self.process = subprocess.Popen(args, cwd=executable.parent, stdout=self.log,
                                             stderr=subprocess.STDOUT,
                                             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0)
-            self.guard.assign(self.process)
             self.model = model_id
             self.loaded_settings = loading
+            self.loaded_mtp = mtp
             try:
+                self.guard.assign(self.process)
                 async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=3)) as session:
                     for _ in range(240):
                         if self.process.poll() is not None:
+                            if use_mtp:
+                                raise RuntimeError("llama.cpp non si è avviato con MTP. Dettagli in logs/llama.log: "
+                                                   "verifica GGUF e VRAM, oppure disattiva MTP nel profilo. Nessun MTP attivo.")
                             raise RuntimeError("llama.cpp non si è avviato. Dettagli in logs/llama.log (controlla VRAM e GGUF)")
                         try:
                             async with session.get(f"http://127.0.0.1:{self.config['llama_port']}/health") as response:
                                 if response.status == 200:
+                                    if use_mtp:
+                                        mtp.update(active=True, reason_code="active",
+                                                   reason=f"MTP attivo: massimo {loading['mtp_predictions']} predizioni speculative.")
+                                    logging.info("MTP interno: %s", mtp["reason"])
                                     self.last_used = time.time()
                                     return
                         except (aiohttp.ClientError, TimeoutError):
@@ -239,11 +268,14 @@ class LlamaManager:
             self.log = None
         self.model = None
         self.loaded_settings = None
+        self.loaded_mtp = None
 
 
 class LLM:
     def __init__(self, provider, manager):
         self.provider, self.manager = provider, manager
+        self.metrics_callback = None
+        self.runtime_callback = None
 
     async def prepare(self):
         if self.provider.mode == "local":
@@ -251,6 +283,11 @@ class LLM:
             self.url = f"http://127.0.0.1:{self.manager.config['llama_port']}/v1"
             self.model = "h3-slides-local"
             self.sampling = self.manager.profile(self.provider.model)["inference"]
+            if self.runtime_callback is not None:
+                try:
+                    self.runtime_callback(dict(self.manager.status().get("mtp") or {}))
+                except Exception:
+                    logging.warning("Impossibile aggiornare lo stato MTP nel job")
         else:
             if not self.provider.remote_consent:
                 raise ValueError("Conferma l'invio del prompt e degli eventuali allegati al provider remoto")
@@ -290,13 +327,28 @@ class LLM:
             body["response_format"] = {"type": "json_object"}
             if schema:
                 body["response_format"]["schema"] = schema
+        else:
+            # Standard OpenAI-compatible JSON mode also helps smaller remote models.
+            # Unsupported providers get one explicit compatibility retry, not a loop.
+            body["response_format"] = {"type": "json_object"}
         headers = {"Authorization": "Bearer " + self.provider.api_key} if self.provider.mode == "remote" and self.provider.api_key else {}
         timeout = sampling.get("timeout_seconds", 360)
+        request_id = uuid.uuid4().hex[:12]
+        started = time.perf_counter()
+        result, status, outcome, attempts = None, None, "error", 0
+        self.last_metrics = None
         try:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
-                for attempt in range(2):
+                for attempt in range(3):
+                    attempts, status = attempt + 1, None
+                    logging.info("LLM richiesta: id=%s tentativo=%s mode=%s prompt_chars=%s immagini=%s json=%s max_tokens=%s timeout=%s",
+                                 request_id, attempt + 1, self.provider.mode,
+                                 len(SYSTEM) + sum(len(item["text"]) for item in content if item["type"] == "text"),
+                                 sum(item["type"] == "image_url" for item in content),
+                                 "response_format" in body, body.get("max_tokens"), timeout)
                     async with session.post(self.url + "/chat/completions", json=body, headers=headers,
                                             allow_redirects=False) as response:
+                        status = response.status
                         if 300 <= response.status < 400:
                             raise ValueError("Il server API reindirizza la richiesta: configura il suo indirizzo finale. "
                                              "Prompt, documenti e chiave non vengono inoltrati altrove.")
@@ -305,23 +357,54 @@ class LLM:
                             # log a body that could echo documents or secrets.
                             payload = await response.content.read(65536)
                             message, context_error = _remote_http_problem(response.status, payload)
+                            if (self.provider.mode == "remote" and "response_format" in body and response.status == 400
+                                    and any(term in payload.lower() for term in (b"response_format", b"json_object", b"json schema"))):
+                                logging.info("LLM retry: id=%s motivo=json_mode_non_supportato", request_id)
+                                body.pop("response_format")
+                                continue
                             if (attempt == 0 and context_error and body.get("max_tokens", 0) > 1600):
+                                logging.info("LLM retry: id=%s motivo=limite_contesto", request_id)
                                 body["max_tokens"] = 1600
                                 continue
                             raise RuntimeError(message)
                         result = await response.json()
+                        outcome = "response_received"
                         break
         except TimeoutError:
+            outcome = "timeout"
             raise ValueError(f"Il server LLM non ha risposto entro {timeout} secondi. "
                              "Il job è terminato: controlla il server e riprova.") from None
         except aiohttp.ClientError:
+            outcome = "connection_error"
             raise ValueError("Connessione al server LLM interrotta; controlla indirizzo e stato del server.") from None
+        except asyncio.CancelledError:
+            outcome = "cancelled"
+            raise
+        finally:
+            self.last_metrics = completion_metrics(result, time.perf_counter() - started)
+            self.last_metrics.update(request_id=request_id, attempts=attempts,
+                                     http_status=status, outcome=outcome)
+            logging.info("LLM prestazioni: %s", json.dumps(self.last_metrics, ensure_ascii=True, allow_nan=False))
+            if self.provider.mode == "local" and self.metrics_callback is not None:
+                try:
+                    self.metrics_callback(dict(self.last_metrics))
+                except Exception:
+                    # Observability must not discard a valid response or mask an
+                    # inference error. Never log arbitrary callback/provider data.
+                    logging.warning("Impossibile aggiornare il contatore prestazioni LLM nel job")
         self.manager.last_used = time.time()
-        usage = result.get("usage", {})
         logging.info("LLM completato: input=%s output=%s finish=%s",
-                     usage.get("prompt_tokens"), usage.get("completion_tokens"),
-                     result.get("choices", [{}])[0].get("finish_reason"))
+                     self.last_metrics["input_tokens"], self.last_metrics["output_tokens"],
+                     self.last_metrics["finish"])
         if result.get("choices", [{}])[0].get("finish_reason") == "length":
+            # Some servers flag the budget boundary even after a complete JSON object.
+            # Accept only the entire valid payload, never an inner fragment of truncated JSON.
+            try:
+                complete = json.loads(result["choices"][0]["message"]["content"])
+                if isinstance(complete, (dict, list)):
+                    return complete
+            except (KeyError, TypeError, ValueError):
+                pass
             limit = sampling["max_tokens"]
             detail = f"limite richiesto: {limit} token" if limit is not None else "limite deciso dal server"
             raise ValueError(f"Risposta LLM troncata ({detail}). Controlla il massimo token di output in "

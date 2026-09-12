@@ -6,8 +6,8 @@ import {chromium} from 'playwright-chromium';
 import {slideHTML,slideCSS,themeFor,visualFor,fitSlide} from '../static/deck.mjs';
 
 // Measure every layout, including bullets, illustrations, borders and footers.
-export async function measureLayouts(page){
-  for(const frame of await page.locator('.slide-frame').all())await frame.evaluate(fitSlide);
+export async function measureLayouts(page,options={}){
+  for(const frame of await page.locator('.slide-frame').all())await frame.evaluate(fitSlide,options);
   return page.locator('.slide-frame').evaluateAll(nodes=>nodes.map(node=>{
     const origin=node.getBoundingClientRect();
     const rect=e=>{const r=e.getBoundingClientRect();return {x:(r.x-origin.x)/96,y:(r.y-origin.y)/96,w:r.width/96,h:r.height/96}};
@@ -28,10 +28,28 @@ export async function measureLayouts(page){
       return {kind:visual.dataset.visualKind||'image',frame:img?rect(img):rect(visual),
         image:img?{width:img.naturalWidth,height:img.naturalHeight}:null};
     });
-    return {layout:node.dataset.layout,overflow:node.dataset.overflow==='true',texts,boxes,
+    return {height:origin.height,layout:node.dataset.layout,overflow:node.dataset.overflow==='true',texts,boxes,
       visuals,visual:visuals[0]?.frame||null,image:visuals[0]?.image||null,
       footer:rect(node.querySelector('.footer'))};
   }));
+}
+
+let mathStyles;
+export async function loadMathStyles(){
+  if(!mathStyles)mathStyles=(async()=>{
+    const root=new URL('../static/vendor/katex/',import.meta.url);
+    let css=await fs.readFile(new URL('katex.min.css',root),'utf8');
+    // About:blank documents cannot reliably load file:// fonts. Embedded WOFF2
+    // works identically in the measuring browser, PDF, and portable Slidev CSS.
+    for(const declaration of new Set(css.match(/src:[^;}]+(?=[;}])/g)||[])){
+      const file=declaration.match(/url\(fonts\/([A-Za-z0-9_.-]+\.woff2)\)/)?.[1];
+      if(!file)continue;
+      const data=(await fs.readFile(new URL('fonts/'+file,root))).toString('base64');
+      css=css.replaceAll(declaration,'src:url(data:font/woff2;base64,'+data+') format("woff2")');
+    }
+    return css;
+  })();
+  try{return await mathStyles}catch(error){mathStyles=null;throw error}
 }
 
 const hex=value=>value.startsWith('#')?value.slice(1):value.match(/[\d.]+/g).slice(0,3).map(v=>Math.round(Number(v)).toString(16).padStart(2,'0')).join('');
@@ -55,18 +73,22 @@ export async function buildExports(project,assetsDir,outDir,format){
   const browser=await chromium.launch({headless:true});
   try{
     const page=await browser.newPage({viewport:{width:1280,height:720}});
-    const katexRoot=fileURLToPath(new URL('../static/vendor/katex/',import.meta.url)).replaceAll('\\','/');
-    const katexCSS=(await fs.readFile(new URL('../static/vendor/katex/katex.min.css',import.meta.url),'utf8'))
-      .replaceAll('url(fonts/','url(file:///'+katexRoot+'/fonts/');
+    const katexCSS=await loadMathStyles();
     await page.setContent('<!doctype html><meta charset="utf-8"><style>'+katexCSS+slideCSS+
       'html,body{margin:0}@page{size:1280px 720px;margin:0}.slide-frame{break-after:page;print-color-adjust:exact}</style>'+
       articles.join(''),{waitUntil:'load'});
     await page.evaluate(()=>document.fonts.ready);
     await page.evaluate(()=>Promise.all([...document.images].map(i=>i.decode())));
-    const measured=await measureLayouts(page);
+    let measured=await measureLayouts(page);
+    const deckHeight=Math.max(720,...measured.map(m=>m.height));
+    if(format==='pptx')measured=await measureLayouts(page,{targetHeight:deckHeight});
+    await fs.writeFile(path.join(outDir,'layout-report.json'),JSON.stringify(measured.map((m,i)=>({
+      slide:i+1,layout:m.layout,overflow:m.overflow,width:1280,height:m.height,footer:m.footer})),null,2));
+    const bad=measured.flatMap((m,i)=>m.overflow?[i+1]:[]);
+    if(bad.length)throw new Error('Testo fuori dallo spazio nelle slide '+bad.join(', ')+': il composer ha provato altre disposizioni. Dividi il contenuto in più slide o modifica il testo; nessuna parte viene nascosta nell’export.');
     const textSelector='.kicker,h1,.subtitle,.prose-box h2,.prose-box p,.prose-source,.block-number,.bullet-mark,.bullet-text,.footer span,.image-credit,.placeholder-title,.placeholder-query';
     const formulaImages=[];
-    for(const [slideIndex,layout] of measured.entries()){
+    for(const [slideIndex,layout] of (format==='pptx'?measured:[]).entries()){
       const items=[];
       for(const text of layout.texts){
         items.push(text.formula?'data:image/png;base64,'+(await page.locator('.slide-frame').nth(slideIndex)
@@ -74,16 +96,16 @@ export async function buildExports(project,assetsDir,outDir,format){
       }
       formulaImages.push(items);
     }
-    await fs.writeFile(path.join(outDir,'layout-report.json'),JSON.stringify(measured.map((m,i)=>({slide:i+1,layout:m.layout,overflow:m.overflow})),null,2));
-    const bad=measured.flatMap((m,i)=>m.overflow?[i+1]:[]);
-    if(bad.length)throw new Error('Testo fuori dallo spazio nelle slide '+bad.join(', ')+': il composer ha provato altre disposizioni. Dividi il contenuto in più slide o modifica il testo; nessuna parte viene nascosta nell’export.');
     if(format==='pdf'){
+      // CSS named pages preserve each adaptive card's measured height.
+      await page.addStyleTag({content:measured.map((m,i)=>'@page slide'+i+'{size:1280px '+m.height+'px;margin:0}.slide-frame:nth-of-type('+(i+1)+'){page:slide'+i+'}').join('')});
       const output=path.join(outDir,'presentazione.pdf');
       await page.pdf({path:output,preferCSSPageSize:true,printBackground:true});
       return output;
     }
     const pptx=new pptxgen();
     pptx.layout='LAYOUT_WIDE';pptx.author='H3-slides';pptx.subject=project.prompt;
+    if(deckHeight>720){pptx.defineLayout({name:'H3_ADAPTIVE',width:1280/96,height:deckHeight/96});pptx.layout='H3_ADAPTIVE'}
     pptx.title=project.title;pptx.lang='it-IT';
     for(const [index,item] of project.slides.entries()){
       const c=item.content,t=themeFor(project),s=pptx.addSlide(),layout=measured[index],visual=visualFor(project,c,item);

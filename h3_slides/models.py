@@ -24,8 +24,15 @@ class TextBlock(BaseModel):
     model_config = ConfigDict(extra="forbid")
     heading: str = Field(default="", max_length=70)
     text: str = Field(min_length=1, max_length=1600)
-    kind: Literal["explanation", "example", "key", "quote"] = "explanation"
+    kind: Literal["explanation", "example", "key", "quote", "code"] = "explanation"
+    language: Literal["python", "c", "cpp", "javascript", "java", "sql", "text"] = "text"
     source: str = Field(default="", max_length=220)
+
+    @model_validator(mode="before")
+    @classmethod
+    def code_fences(cls, value):
+        from .code_blocks import normalize_code_block
+        return normalize_code_block(value)
 
     @model_validator(mode="after")
     def quote_source(self):
@@ -37,13 +44,13 @@ class TextBlock(BaseModel):
 class FreePlacement(BaseModel):
     model_config = ConfigDict(extra="forbid")
     x: int = Field(ge=0, le=1279)
-    y: int = Field(ge=0, le=679)
+    y: int = Field(ge=0, le=967)
     w: int = Field(ge=80, le=1280)
-    h: int = Field(ge=44, le=680)
+    h: int = Field(ge=44, le=968)
 
     @model_validator(mode="after")
     def inside_canvas(self):
-        if self.x + self.w > 1280 or self.y + self.h > 680:
+        if self.x + self.w > 1280 or self.y + self.h > 968:
             raise ValueError("La posizione libera deve restare dentro il canvas della slide")
         return self
 
@@ -51,6 +58,7 @@ class FreePlacement(BaseModel):
 class SlideContent(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str = Field(min_length=1, max_length=110)
+    canvas_height: int = Field(default=720, ge=720, le=1008)
     subtitle: str = Field(default="", max_length=220)
     bullets: list[str] = Field(default_factory=list, max_length=5)
     blocks: list[TextBlock] = Field(default_factory=list, max_length=4)
@@ -76,6 +84,25 @@ class SlideContent(BaseModel):
     sources: list[str] = Field(default_factory=list, max_length=12)
     animation: Literal["none", "reveal"] = "none"
     diagram: DiagramSpec = Field(default_factory=DiagramSpec)
+
+    def validate_canvas_geometry(self):
+        """Validate edited positions without rejecting legacy content on read.
+
+        FreePlacement supplies the absolute safety bounds. Active placements
+        also have to respect this slide's height and the 40 px footer reserve.
+        Positions retained from a former free layout are dormant in an automatic
+        layout, so they must not prevent the user from saving unrelated edits.
+        """
+        if self.layout == "freeform":
+            bottom = self.canvas_height - 40
+            for key, placement in self.freeform.items():
+                if placement.y + placement.h > bottom:
+                    raise ValueError(
+                        f"Elemento {key}: la posizione libera supera il canvas utile "
+                        f"della slide ({bottom} px; altezza {self.canvas_height} px). "
+                        "Sposta o ridimensiona l'elemento, oppure adatta l'altezza della slide."
+                    )
+        return self
 
 
 class Provider(BaseModel):
@@ -142,6 +169,9 @@ class ProjectInput(BaseModel):
     background_color: str = Field(default="", pattern=r"^(#[0-9a-fA-F]{6})?$")
     accent_color: str = Field(default="", pattern=r"^(#[0-9a-fA-F]{6})?$")
     theme_design: ThemeDesign = Field(default_factory=ThemeDesign)
+    canvas_mode: Literal["fixed", "adaptive"] = "fixed"
+    graphic_style: Literal["classic", "studio", "editorial", "vivid"] = "classic"
+    theme_preset: str = Field(default="", max_length=60)
 
 
 class ReuseSource(BaseModel):
@@ -167,6 +197,11 @@ class SlideEdit(BaseModel):
     revision: int
     content: SlideContent
 
+    @model_validator(mode="after")
+    def geometry_matches_canvas(self):
+        self.content.validate_canvas_geometry()
+        return self
+
 
 SYSTEM = """Sei il progettista di presentazioni H3-slides. Rispondi esclusivamente
 con JSON valido secondo lo schema richiesto. Segui le istruzioni dell'utente,
@@ -187,7 +222,12 @@ Ogni slide ha un messaggio concreto, una progressione logica e testo conciso,
 destinato al pubblico, senza istruzioni di produzione.
 Accenni usa bullets brevi. Approfondito e Completo usano blocks: paragrafi
 interi in prosa, non elenchi mascherati e non semplici frasi isolate.
-Ogni box ha heading, text, kind (explanation, example, key o quote), source.
+Ogni box ha heading, text, kind (explanation, example, key, quote o code), source.
+Quando servono esempi di programmazione MOSTRA il codice, non sostituirlo con descrizioni.
+Usa kind=code e language=python/c/cpp/javascript/java/sql/text: conserva indentazione,
+newline, parentesi, operatori e commenti. text contiene codice puro, senza recinti Markdown.
+Il codice può provenire dal documento, dalle fonti web o essere un esempio originale:
+attribuisci gli estratti e distingui nelle note il codice generato, mai eseguito o verificato automaticamente.
 Le spiegazioni importanti devono essere visibili nei box, NON solo nelle note.
 Titoli preferibilmente sotto 65 caratteri, nessun Markdown nei testi.
 Per formule matematiche usa LaTeX: \\(...\\) in linea e \\[...\\] per una formula isolata.

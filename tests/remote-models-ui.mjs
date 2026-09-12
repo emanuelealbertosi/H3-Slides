@@ -117,6 +117,7 @@ try{
   assert.match(await page.locator('#generate').textContent(),/Rigenera presentazione/);
   await page.locator('#prompt').fill('Nuovo argomento e nuovi parametri');
   await page.locator('#count').fill('3');
+  await page.getByText('Personalizzazione avanzata · layout, font e colori',{exact:true}).click();
   await page.locator('#text-density').selectOption('brief');
   await page.locator('#web-enabled').check();
   assert.equal(await page.locator('#web-query').inputValue(),'');
@@ -132,10 +133,14 @@ try{
   assert.equal(regeneratedPayload.count,3);
   assert.equal(regeneratedPayload.web_consent,true);
   const savedBrief=await (await page.request.get(url+'api/projects/'+generatedProjectId)).json();
-  assert.equal(savedBrief.text_density,'brief');
-  assert.equal(savedBrief.count,3);
-  assert.equal(savedBrief.web_enabled,true);
-  assert.equal(savedBrief.web_query,'');
+  assert.equal(savedBrief.text_density,'detailed','Original settings stay intact when making a new version');
+  assert.equal(regeneratedPayload.new_version,true);
+  assert.equal(regeneratedPayload.project_settings.text_density,'brief');
+  assert.equal(regeneratedPayload.project_settings.count,3);
+  assert.equal(regeneratedPayload.project_settings.web_enabled,true);
+  assert.equal(regeneratedPayload.project_settings.web_query,'');
+  await page.waitForFunction(()=>document.body.dataset.view==='editor');
+  await page.locator('#editor-menu>summary').click();await page.locator('#editor-settings').click();
   await page.locator('#web-enabled').uncheck();
   const again=new Promise(resolve=>resolveGeneration=resolve);
   page.once('dialog',dialog=>dialog.accept());
@@ -185,8 +190,12 @@ try{
     return {top:top.bottom<=settings.top,bottom:bottom.top>=workspace.bottom,
       fits:document.documentElement.scrollWidth<=innerWidth};
   });
-  assert.deepEqual(positions,{top:true,bottom:true,fits:true});
-  await page.locator('#new').click();
+  assert.equal(positions.fits,true,'Editor fits a mobile viewport');
+  await page.locator('#editor-menu>summary').click();await page.locator('#editor-settings').click();
+  assert.equal(await page.locator('#generate-top').isVisible(),true);
+  assert.equal(await page.locator('#generate').isVisible(),true);
+  assert.equal(await page.locator('#generate').evaluate(e=>e.getBoundingClientRect().top>=document.querySelector('.settings').getBoundingClientRect().bottom),true);
+  await page.locator('#open-create').click();
   assert.match(await page.locator('#generate-top').textContent(),/Genera presentazione/);
   assert.match(await page.locator('#generate').textContent(),/Genera presentazione/);
   assert.deepEqual(errors,[]);

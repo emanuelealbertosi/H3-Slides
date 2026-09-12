@@ -11,7 +11,10 @@ def split_content(raw):
         for block in content["blocks"]:
             text = block["text"]
             while text:
-                if len(text) <= 600:
+                if block["kind"] == "code":
+                    # Split only at line boundaries, retaining all spaces and newlines.
+                    cut = len("".join(text.splitlines(keepends=True)[:18]))
+                elif len(text) <= 600:
                     cut = len(text)
                 else:
                     ends = [m.end() for m in re.finditer(r'[.!?][\"»”)]*\s+', text[:601]) if m.end() >= 200]

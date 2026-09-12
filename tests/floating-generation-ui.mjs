@@ -91,7 +91,7 @@ async function testViewport(viewport){
           assert.ok(Object.hasOwn(responses,url.pathname),'Unexpected API '+url.pathname);
           return route.fulfill({json:responses[url.pathname]});
         }
-        const file=resolve(staticRoot,url.pathname==='/'?'index.html':url.pathname.replace(/^\/static\//,''));
+        const file=resolve(staticRoot,['/','/create','/editor'].includes(url.pathname)?'index.html':url.pathname.replace(/^\/static\//,''));
         assert.ok(file.startsWith(staticRoot.endsWith(sep)?staticRoot:staticRoot+sep));
         const contentType={'.html':'text/html','.mjs':'text/javascript','.js':'text/javascript',
           '.css':'text/css','.json':'application/json','.woff2':'font/woff2','.ttf':'font/ttf'}[extname(file)]||'application/octet-stream';
@@ -129,7 +129,8 @@ async function testViewport(viewport){
       await page.waitForFunction(id=>!document.getElementById(id).hidden,destination);
       await waitFloating(false);
       assert.equal(await floating.isVisible(),false,'Floating action is hidden on '+destination);
-      await page.locator('#open-create').click();
+      await page.goto(origin+'/create?project=floating-ui');
+      await page.waitForFunction(()=>document.querySelector('#sources').textContent.includes('Testo mock.md'));
       await scrollMiddle();
       await assertAccessibleFloating();
     }
@@ -174,9 +175,11 @@ async function testViewport(viewport){
     await floating.click();await cancelDialog;
     await assertButtons(false,'Rigenera ↻');
     assert.equal(generated.length,beforeCancel,'Cancelling regeneration sends no generation request');
-    assert.match(confirmations.at(-1),/Rigenerare la presentazione con prompt e parametri attuali/);
+    assert.match(confirmations.at(-1),/Creare una nuova versione/);
 
     const regeneratePrompt='Riorganizza il ciclo dell’acqua in quattro passaggi';
+    await page.goto(origin+'/create?project=floating-ui');
+    await page.waitForFunction(()=>document.querySelector('#sources').textContent.includes('Testo mock.md'));
     await page.locator('#prompt').fill(regeneratePrompt);
     await page.locator('#count').fill('4');
     await scrollMiddle();

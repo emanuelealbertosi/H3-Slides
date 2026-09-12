@@ -4,6 +4,7 @@ import sqlite3
 import subprocess
 import time
 import uuid
+import shutil
 from pathlib import Path
 
 
@@ -60,6 +61,31 @@ class Store:
     def create(self, values):
         return self.save_project(dict(id=uid(), created_at=now(), revision=1,
                                       slides=[], sources=[], **values))
+
+    def fork_project(self, pid, settings):
+        """Independent version with its own assets; deleting either version is safe."""
+        original = self.project(pid)
+        root_id = original.get("version_root", pid)
+        version = max((p.get("version_number", 1) for p in self.projects()
+                       if p.get("version_root", p["id"]) == root_id), default=1)+1
+        clone = copy.deepcopy(original)
+        base_title = settings["title"]
+        if base_title == original["title"]:
+            base_title = original.get("version_title", base_title)
+        clone.update(settings)
+        clone.update(id=uid(), created_at=now(), revision=1, version_root=root_id,
+                     version_number=version, parent_project_id=pid, version_title=base_title,
+                     title=base_title[:125]+f" (v{version})")
+        assets_root = (self.root / "assets").resolve()
+        source, target = (assets_root / pid).resolve(), (assets_root / clone["id"]).resolve()
+        if not source.is_relative_to(assets_root) or not target.is_relative_to(assets_root):
+            raise ValueError("Percorso risorse non valido")
+        if source.exists():
+            if any(p.is_symlink() for p in source.rglob("*")):
+                raise ValueError("Le risorse contengono collegamenti simbolici: impossibile duplicarle in sicurezza")
+            shutil.copytree(source, target)
+        clone.pop("web_research", None)
+        return self.save_project(clone)
 
     def state(self, key, default):
         row = self.db.execute("SELECT body FROM app_state WHERE id=?", (key,)).fetchone()

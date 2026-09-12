@@ -44,7 +44,7 @@ try{
       assert.ok(Object.hasOwn(responses,url.pathname),'Unexpected API '+url.pathname);
       return route.fulfill({json:responses[url.pathname]});
     }
-    const file=resolve(staticRoot,url.pathname==='/'?'index.html':url.pathname.replace(/^\/static\//,''));
+    const file=resolve(staticRoot,['/','/create','/editor'].includes(url.pathname)?'index.html':url.pathname.replace(/^\/static\//,''));
     assert.ok(file.startsWith(staticRoot.endsWith(sep)?staticRoot:staticRoot+sep));
     const contentType={'.html':'text/html','.mjs':'text/javascript','.js':'text/javascript',
       '.css':'text/css','.json':'application/json','.woff2':'font/woff2'}[extname(file)]||'application/octet-stream';
@@ -62,7 +62,7 @@ try{
   };
   const consent=page.locator('#web-consent'),engine=page.locator('#web-provider');
   const reload=async()=>{await page.reload();await ready()};
-  await page.goto('http://127.0.0.1:9876/');await ready();
+  await page.goto('http://127.0.0.1:9876/create');await ready();
   assert.equal(await consent.isChecked(),false,'First use needs explicit consent');
   assert.equal(await page.locator('#web-always-search').isChecked(),false,'Legacy projects do not force web search');
   await consent.check();
@@ -88,7 +88,7 @@ try{
   await page.waitForFunction(()=>!document.querySelector('#generate-top').disabled);
   assert.equal(generated.length,1);assert.equal(generated[0].web_consent,true);
   assert.equal(await consent.isChecked(),true,'Successful generation does not reset consent');
-  await page.locator('#new').click();
+  await page.locator('#open-create').click();
   assert.equal(await page.locator('#web-enabled').isChecked(),false,'Consent never enables web for a new project');
   assert.equal(await page.locator('#web-always-search').isChecked(),true,'New projects remember the option without enabling web');
   assert.equal(await consent.isChecked(),true);

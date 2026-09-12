@@ -205,7 +205,8 @@ def test_slidev_copies_photo_and_diagram_independently(
                            "diagram_render": {"engine": "manim", "asset": "manim-existing.png"}}]}
     # Exercise Python packaging in isolation; browser HTML has separate integration coverage.
     monkeypatch.setattr("h3_slides.slidev.subprocess.run", lambda *_, **__: SimpleNamespace(
-        check_returncode=lambda: None, stdout=json.dumps({"markdown": "# Due visuali", "css": ""})))
+        returncode=0, stderr="", check_returncode=lambda: None,
+        stdout=json.dumps({"markdown": "# Due visuali", "css": ""})))
     write_slidev(project, assets, output)
     copied = {path.name for path in (output / "assets").glob("*")}
     assert copied == expected

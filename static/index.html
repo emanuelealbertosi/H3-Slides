@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>H3-slides · Studio</title><link rel="stylesheet" href="/static/vendor/katex/katex.min.css"><link rel="stylesheet" href="/static/style.css"></head>
+<title>H3-slides · Studio</title><link rel="stylesheet" href="/static/vendor/katex/katex.min.css"><link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/studio.css"></head>
 <body>
 <header class="studio-sidebar"><a class="brand" href="/">H3<span>slides</span><small>STUDIO</small></a>
 <button id="toggle-sidebar" class="sidebar-toggle" type="button" aria-label="Comprimi menu" aria-expanded="true" title="Comprimi menu">‹</button>
@@ -40,7 +40,7 @@
   <button type="button" id="save-theme" class="quiet">Salva tema riutilizzabile</button>
   <p id="theme-status" class="hint"></p></details>
   <button id="save-project" class="secondary">Salva brief</button>
-  <label class="dropzone">＋ Aggiungi documenti · facoltativo<input id="files" type="file" accept=".pdf,.md,.txt,.png,.jpg,.jpeg,.webp" multiple><small>PDF, Markdown, immagini: report, appunti, libri, schermate.<br>Puoi anche non allegare nulla e scrivere solo un argomento.</small></label>
+  <label class="dropzone">＋ Aggiungi documenti o codice · facoltativo<input id="files" type="file" accept=".pdf,.md,.txt,.png,.jpg,.jpeg,.webp,.py,.c,.cpp,.h,.hpp,.js,.java,.sql" multiple><small>PDF, testi, immagini e sorgenti Python, C, C++: i file vengono letti, mai eseguiti.<br>Puoi anche non allegare nulla e scrivere solo un argomento.</small></label>
   <label>Uso dei PDF allegati<select id="pdf-scope"><option value="auto">Cerca le pagine pertinenti dal prompt</option><option value="whole">Documento intero · anche senza indice</option></select><small>Per una sezione indica capitolo, argomento o lezione. Documento intero legge tutte le pagine; i PDF lunghi richiedono più tempo. Scansioni: serve vision o OCR.</small></label>
   <div id="sources"></div>
   <details class="model-panel document-library-panel"><summary>Documenti già caricati <span id="document-library-count"></span></summary>
@@ -187,6 +187,8 @@
 <p class="muted hint">Profili locali per GGUF. Nessun modello viene scaricato. I file in models/ e nel catalogo configurato vengono rilevati automaticamente.</p>
 <label>Modello da configurare<select id="admin-model"></select></label>
 <h3>Caricamento</h3><p class="muted hint">GPU layers: -1 = massimo offload, 0 = CPU. Contesto e cache consumano memoria. MoE su CPU vale solo per modelli MoE.</p><div id="admin-loading" class="admin-grid"></div>
+<p id="admin-mtp-status" class="hint" role="status" hidden></p>
+<p class="hint muted">MTP è opzionale: predizioni iniziali 1, modificabili da 1 a 16. Richiede una testa MTP integrata nel GGUF e un runtime compatibile. Più predizioni non garantiscono più velocità e possono richiedere più memoria. Per le API remote, MTP si configura sul server del provider.</p>
 <h3>Inferenza</h3><p class="muted hint">Per velocità e JSON strutturato, thinking disattivato è il default. Output troppo breve può interrompere una generazione.</p><div id="admin-inference" class="admin-grid"></div>
 <div class="row"><button class="secondary" type="submit">Salva profilo</button><button id="admin-load" class="primary" type="button">Carica / riavvia</button><button id="admin-stop" class="quiet" type="button">Scarica</button></div>
 <p id="admin-status" role="status"></p></form>

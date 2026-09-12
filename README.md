@@ -3,6 +3,68 @@
 Studio locale per trasformare PDF, Markdown e immagini in presentazioni modificabili.
 Progetto indipendente da H3-Comics: non ne modifica file, processi o configurazioni.
 
+## Studio, versioni e codice
+
+- **Crea** apre una pagina di impostazioni; la generazione passa all'editor live.
+  I progetti esistenti si aprono direttamente nell'editor. Il menu superiore
+  **Presentazione** raccoglie download e ritorno alle impostazioni.
+- I temi hanno anteprime compatte e combinazioni pronte di colori, font e riquadri.
+  Le schede **Adattive** possono crescere fino al 40%; quelle **Fisse** restano 16:9.
+  Il PDF conserva l'altezza di ogni scheda; PowerPoint e Slidev usano il formato
+  comune necessario a contenerle tutte. Contenuti ancora troppo grandi vengono
+  segnalati, non tagliati silenziosamente.
+- Testi, titolo, immagini e diagrammi hanno otto maniglie di ridimensionamento:
+  quattro angoli e quattro bordi interamente trascinabili. Le piccole maniglie
+  compaiono solo sul blocco selezionato; clic fuori o Esc le nasconde.
+  Passare alla modalità libera conserva una disposizione già valida. Durante
+  spostamenti, ridimensionamenti e scrittura il renderer espande i box secondo
+  il testo e riposiziona gli elementi coinvolti, senza ridurre i font o riscrivere
+  i contenuti. Le schede adattive crescono anche in modalità libera fino a 1008 px
+  (+40% rispetto ai 720 px del 16:9). La griglia fine è configurabile nel menu,
+  Alt disattiva l'aggancio. Esc annulla l'editing e ripristina la disposizione.
+  Riducendo un box si elimina lo spazio vuoto fino al minimo reale del contenuto.
+  Se il resize supera lo spazio disponibile, si ferma alla misura valida più
+  vicina lungo il gesto invece di tornare alla dimensione iniziale. Il limite
+  viene indicato nell'anteprima; il rilascio salva anche fuori dal bordo della
+  scheda. Un nuovo spostamento impossibile può invece essere annullato; per
+  contenuti che non entrano neppure prima della modifica usare **Dividi in più slide**.
+  Anteprima e salvataggio usano le stesse geometrie.
+- Nel menu **Presentazione → Formato della presentazione** puoi applicare Adattivo
+  o Fisso alle slide esistenti, senza chiamare il modello. Il cambio formato salva
+  insieme metadati e posizioni: se una slide non entra, non applica modifiche parziali.
+- La rigenerazione completa dall'interfaccia crea una copia **(v2), (v3), ...**,
+  con allegati indipendenti e parametri salvati nei metadati, senza chiavi API.
+  Rigenerare una singola slide o un diagramma aggiorna invece la slide corrente.
+- In **Crea → Progetti da recuperare** e nell'archivio **Progetti** puoi riaprire
+  tentativi falliti, interrotti o annullati. Errori e log rimangono visibili anche
+  quando non e stata creata alcuna slide. **Riprendi generazione** completa solo
+  le slide mancanti nello stesso progetto, conservando quelle gia pronte;
+  **Ricrea da zero in una nuova versione** serve invece a cambiare la scaletta.
+  Se il tentativo fallito contiene solo slide pronte ereditate da una vecchia
+  versione, **Riprova** chiede conferma prima di ricrearle nello stesso progetto.
+- La home **Crea** mostra anche **Generazione in corso**, con avanzamento e
+  collegamento diretto a progetto e log, anche prima della prima slide.
+  Tornare alla home o ricaricare la pagina non interrompe il lavoro.
+- Il modello puo mostrare blocchi di **Python, C, C++, JavaScript, Java e SQL**
+  provenienti dalle fonti o generati come esempi. Si possono caricare anche file
+  sorgente. Nel pannello Modifica scegliere **Codice** e il linguaggio: indentazione,
+  righe e colori della sintassi restano leggibili nel PDF. Il codice non viene eseguito.
+- Ogni box immagine offre **Cerca immagine** al passaggio del mouse: puoi scegliere
+  **Documenti del progetto** oppure **Internet**, con risultati a gruppi di 10 e **Altro**.
+  In presenza di allegati illustrati/PDF, la ricerca si apre sui documenti senza
+  chiamate web o al modello. Mostra solo le pagine dell'ultima elaborazione (tutte
+  se è stato lavorato l'intero documento), escludendo immagini di vecchie sezioni.
+  La query locale è facoltativa: ordina i risultati dal testo della pagina e dalle
+  descrizioni, non tramite riconoscimento visivo. Vuota, permette di sfogliarli tutti.
+  **Includi pagine intere** aggiunge scansioni e pagine con grafici vettoriali.
+  Nome del documento e pagina sono indicati; l'inserimento riusa il file originale.
+  Se cambi brief o ambito senza rigenerare, viene segnalato che le pagine sono
+  quelle dell'ultima elaborazione; una fonte non ancora elaborata non viene estesa
+  silenziosamente all'intero PDF. Su Internet la query automatica resta modificabile.
+  Openverse e un'aggiunta facoltativa a Wikimedia, non lo sostituisce. Quando una
+  miniatura Openverse manca, l'app prova l'originale pubblico entro limiti di
+  dimensione e sicurezza; alcune fonti possono comunque non essere disponibili.
+
 ## Avvio
 
 1. Scaricare lo ZIP **H3-Slides-windows-x64** dalle [release GitHub](https://github.com/emanuelealbertosi/H3-Slides/releases) e **estrarlo tutto**
@@ -51,13 +113,13 @@ Se il catalogo locale e vuoto, l'app apre **Configura il modello locale**:
 3. Se si preferisce un provider remoto, scegliere **Uso un'API remota**.
    **Configura dopo** permette di usare l'editor senza caricare alcun modello.
 
-La barra laterale separa **Crea**, **Progetti** e **Admin**. Progetti mostra
+Il menu superiore separa **Crea**, **Progetti** e **Admin**. Progetti mostra
 l'archivio locale e riapre una presentazione senza confondere il brief corrente.
 Tutta la configurazione LLM e nella pagina **Admin**, accessibile dal menu o
 dal percorso **/admin**: provider, modello, Vision, connessione e inferenza.
 Passare da Crea ad Admin non ricarica la pagina e conserva il brief non salvato
-e la chiave in memoria. Un vero ricaricamento richiede di reinserire la chiave
-e confermare nuovamente il consenso. Admin e una pagina di impostazioni,
+e la chiave in memoria. Un vero ricaricamento richiede di reinserire la chiave;
+il consenso viene ricordato per il server autorizzato. Admin e una pagina di impostazioni,
 non un'area con autenticazione separata: non esporre l'app su reti non fidate.
 
 Per un **Server API (LM Studio o provider remoto)**, in Admin inserire la **Base URL API**
@@ -560,7 +622,9 @@ Gli export PPTX/PDF/Slidev bloccano lo sforamento dopo il tentativo di ricomposi
 PDF e Slidev usano lo stesso HTML misurato; PPTX usa quelle posizioni per testi,
 riquadri e immagini. I diagrammi Manim rimangono modificabili nella struttura
 dentro H3-Slides e vengono inseriti negli export statici come render PNG.
-Il formato rimane 16:9: non sono pagine PDF di altezza variabile come le schede Gamma.
+Il formato Fisso rimane 16:9. In Adattivo il PDF conserva l'altezza di ogni scheda;
+PPTX e Slidev ricompongono tutte le schede sul canvas comune più alto, con footer
+allineati al bordo. Le formule vengono misurate con gli stessi font usati nell'export.
 Le metriche tipografiche e le ombre di PowerPoint possono differire leggermente.
 Manim video usa gli stessi oggetti della scena e li presenta secondo le fasi
 definite, invece di ricostruire un diagramma semplificato separato.
@@ -576,7 +640,8 @@ conservata e il job prosegue con le successive. Il log indica campo e motivo
 della mancata validazione, senza salvare il prompt o la risposta completa.
 Le slide precedenti restano intatte: per ottenere paragrafi nuovi scegliere
 Approfondito/Completo, salvare il brief e rigenerare la singola slide.
-Editor a campi e riordino, non ancora un canvas PowerPoint libero.
+Editor a campi, riordino e canvas libero con adattamento deterministico. Il renderer
+segnala geometrie impossibili senza nascondere l'errore; non è un editor PowerPoint completo.
 Un job interrotto da un riavvio mantiene le slide pronte, ma non riparte da solo:
 Genera rilegge le fonti e completa quelle mancanti. Le API key remote non sono
 salvate né nei progetti né nelle preferenze del browser: reinserirle dopo il refresh.
@@ -592,6 +657,55 @@ In modalità remota è richiesta la conferma esplicita dell'invio delle fonti.
 - data/model_files.json: collegamenti ai GGUF scelti sul disco e ultima scelta.
 - outputs: esportazioni versionate e snapshot del progetto.
 - logs/app.log: servizio; logs/llama.log: motore locale; logs/slidev.log: vista live.
+
+### Prestazioni del modello
+
+In **Admin → Profilo llama.cpp integrato → Caricamento** puoi abilitare MTP
+e scegliere il massimo di predizioni speculative per passo: **1** iniziale,
+da 1 a 16, salvato separatamente per ogni modello. È un'opzione disattivata
+inizialmente: salva il profilo e premi **Carica / riavvia**, oppure avvia una
+nuova generazione, per applicarla. Il salvataggio da solo non riavvia processi.
+L'app verifica le opzioni effettive del runtime e la testa MTP integrata nel
+GGUF leggendo soltanto metadati e directory dei tensori, non i pesi. Non basta
+il nome del modello. Se il controllo non trova supporto, il modello parte
+senza MTP e il motivo viene mostrato; se il caricamento con MTP fallisce,
+l'errore resta esplicito e MTP non viene indicato come attivo.
+Lo stato effettivo compare in Admin e nei log del job. Le API remote non
+ricevono parametri MTP: vanno configurati nel loro server. Più predizioni non
+garantiscono più velocità; la disponibilità della testa non garantisce VRAM
+sufficiente. I flag vengono rilevati dal runtime, secondo il
+[contratto llama.cpp](https://github.com/ggml-org/llama.cpp/blob/9731ad3f2/tools/server/README.md).
+
+Il log `logs/app.log` registra un identificativo per ogni richiesta LLM, tentativi,
+dimensione testuale del prompt, numero di immagini, durata totale e token di
+input/output. Queste misure non contengono prompt, risposte, nomi degli allegati,
+endpoint o chiavi API.
+Le righe `LLM prestazioni` separano il throughput complessivo
+(`end_to_end_output_tokens_per_second`, inclusi attesa e retry) dalla velocità
+di generazione comunicata dal server (`server_decode_tokens_per_second`).
+Prefill, tempo al primo token, durata di generazione e token di ragionamento sono
+riportati solo se presenti nella risposta del provider: `null` significa dato non
+disponibile, non velocità zero. Le API compatibili OpenAI non espongono tutte le
+stesse statistiche; la sola durata totale non dimostra un rallentamento del decode.
+
+Con il modello interno, al termine di ogni richiesta il log visibile del job
+mostra anche `LLM interno #N`: token elaborati, durata e token/s del **prefill**
+separati da quelli della **generazione**, token di input riusati dalla cache e
+tempo totale della richiesta. Il contatore e le misure restano nel job dopo un
+ricaricamento o una ripresa. Non è un contatore aggiornato a ogni token: una
+richiesta ancora in corso non ha ancora le statistiche finali del motore.
+`n.d.` indica una misura non fornita, non uno zero. Il prefill conta solo i token
+effettivamente elaborati, non tutto il contesto già presente nella cache; il
+tempo totale comprende anche attese e retry. Un errore nel salvataggio delle
+statistiche non interrompe la generazione.
+
+La lettura dei documenti conserva una cache locale per ogni blocco riuscito,
+anche se un blocco successivo fallisce o il job viene interrotto. Riprendi può
+riusare queste sintesi senza inviarle nuovamente al modello. Il log del job
+indica il riuso; cambi di contenuto, contratto di estrazione, modello, endpoint
+o parametri di inferenza rilevanti invalidano la relativa cache. Cambiare il
+solo timeout non obbliga a rielaborare le sintesi. Questo riduce il lavoro
+ripetuto, ma non modifica la velocità di generazione del server.
 
 Le modifiche vanno fatte nell'editor H3-slides. Le copie Slidev live sono derivate
 e possono essere sovrascritte alla sincronizzazione; gli ZIP esportati sono indipendenti.

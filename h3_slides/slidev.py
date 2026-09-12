@@ -1,7 +1,12 @@
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
+
+
+class SlidevLayoutError(ValueError, subprocess.SubprocessError):
+    """Public layout error; background synchronization must not abort a save."""
 
 
 def write_slidev(project, assets, output, strict=False):
@@ -27,10 +32,20 @@ def write_slidev(project, assets, output, strict=False):
     result = subprocess.run([str(root / "runtime/node/node.exe"), str(root / "scripts/slidev_source.mjs")],
                             input=json.dumps(project), capture_output=True, text=True, encoding="utf-8",
                             timeout=20, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+    if result.returncode:
+        # Parse only our fixed diagnostic line. Never expose stderr, source
+        # snippets, local paths or a provider's text through the public API.
+        message = re.search(r"(?m)^Error: Testo fuori dallo spazio nelle slide ([1-9]\d*(?:,\s*[1-9]\d*)*)\.",
+                            (result.stderr or "")[:65536])
+        if message and len(message[1]) <= 200:
+            indices = list(dict.fromkeys(int(value.strip()) for value in message[1].split(",")))
+            if all(1 <= index <= len(project["slides"]) for index in indices):
+                raise SlidevLayoutError("Testo fuori dallo spazio nelle slide " + ", ".join(map(str, indices)) +
+                                        ". Dividi o modifica il contenuto prima di esportare.") from None
     result.check_returncode()
     rendered = json.loads(result.stdout)
     if strict and rendered.get("overflow"):
-        raise ValueError("Testo fuori dallo spazio nelle slide " + ", ".join(map(str, rendered["overflow"])) +
+        raise SlidevLayoutError("Testo fuori dallo spazio nelle slide " + ", ".join(map(str, rendered["overflow"])) +
                          ". Dividi o modifica il contenuto prima di esportare.")
     text = rendered["markdown"]
     css_target = output / "style.css"

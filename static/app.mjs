@@ -1,11 +1,73 @@
 import {esc,slideHTML,slideCSS,themes,themeFor,blockColors,contrast,layouts,fitSlide,visualAnchorAt,visualFor} from './deck.mjs';
 import {createRemoteModelSelector} from './remote-models.mjs';
 import {createApiSettings} from './api-settings.mjs';
+import {createImageSearch} from './image-search.mjs';
+import {installStudioShell} from './studio-shell.mjs';
+import {fitEditedContent,layoutUpdatesFor} from './layout-editing.mjs';
+import {createMtpSettings} from './mtp-settings.mjs';
+installStudioShell();
 const $=id=>document.getElementById(id);
+const mtpSettings=createMtpSettings({root:$('admin-loading'),status:$('admin-mtp-status'),model:$('admin-model'),
+  load:id=>api('/api/admin/llm/mtp?model='+encodeURIComponent(id))});
 const layoutOptions=value=>'<option value="content">Automatico adattivo</option>'+Object.entries(layouts).map(([key,label])=>'<option value="'+key+'" '+(key===value?'selected':'')+'>'+label+'</option>').join('');
 $('edit-layout').innerHTML=layoutOptions('content');
 const style=document.createElement('style');style.textContent=slideCSS;document.head.append(style);
 let current=null,projects=[],documents=[],jobs=[],editing=null,job=null,busy=false,dragged=null;
+let selectedSlideElement=null;
+let projectSelectionRevision=0;
+let libraryJobSignature='',recoverySignature='',activeGenerationSignature='';
+const recoverableStatus=status=>['failed','interrupted','cancelled'].includes(status);
+const latestProjectJob=id=>jobs.find(item=>item.project_id===id)||null;
+function recoveryMode(){
+  if(!current)return '';
+  if(current.slides.some(slide=>slide.status!=='ready'))return 'resume';
+  if(recoverableStatus(latestProjectJob(current.id)?.status))return current.slides.length?'retry-all':'retry';
+  return '';
+}
+function renderActiveGeneration(){
+  const active=jobs.filter(item=>['queued','running','paused'].includes(item.status)&&projects.some(p=>p.id===item.project_id));
+  $('active-generation-home').hidden=!active.length;
+  const signature=JSON.stringify(active.map(item=>item.id));
+  if(signature!==activeGenerationSignature){
+    activeGenerationSignature=signature;
+    $('active-generation-list').innerHTML=active.map(item=>'<article class="active-generation-card" data-active-job="'+esc(item.id)+'"><div><strong data-active-title></strong><span data-active-status></span><p data-active-event></p><progress max="1" value="0" aria-label="Avanzamento generazione"></progress></div><a class="secondary button-link" data-open-active-project="'+esc(item.project_id)+'" href="/editor?project='+encodeURIComponent(item.project_id)+'">Apri generazione e log →</a></article>').join('');
+  }
+  for(const card of $('active-generation-list').children){
+    const item=active.find(j=>j.id===card.dataset.activeJob);if(!item)continue;
+    const project=projects.find(p=>p.id===item.project_id);
+    card.querySelector('[data-active-title]').textContent=project.title;
+    card.querySelector('[data-active-status]').textContent=({running:'In corso',queued:'In coda',paused:'In pausa'})[item.status]+' · '+Math.round((item.progress||0)*100)+'%';
+    card.querySelector('[data-active-event]').textContent=item.events?.at(-1)?.message||'Preparazione della generazione';
+    card.querySelector('progress').value=item.progress||0;
+  }
+}
+function renderRecovery(){
+  renderActiveGeneration();
+  const candidates=projects.map(p=>({p,job:latestProjectJob(p.id)})).filter(item=>recoverableStatus(item.job?.status));
+  const signature=JSON.stringify(candidates.map(({p,job})=>[p.id,p.title,job.status]));
+  $('recovery-projects').hidden=!candidates.length;$('recovery-count').textContent='· '+candidates.length;
+  if(signature===recoverySignature)return;recoverySignature=signature;
+  const names={failed:'Fallito',interrupted:'Interrotto',cancelled:'Annullato'};
+  $('recovery-list').innerHTML=candidates.map(({p,job})=>'<div class="recovery-project"><div><strong>'+esc(p.title)+'</strong><span>'+names[job.status]+' · '+p.slide_count+' slide salvate</span></div><button type="button" class="secondary" data-recover-project="'+esc(p.id)+'">Apri e recupera →</button></div>').join('');
+}
+function renderJobPanel(){
+  job=current?latestProjectJob(current.id):null;
+  const recovery=recoveryMode();
+  $('job-panel').hidden=!job&&!recovery;
+  $('recovery-help').hidden=!recovery;
+  $('recovery-description').textContent=recovery==='resume'?'Riprendi completa le slide mancanti nello stesso progetto: le slide già pronte rimangono invariate. Per cambiare anche la scaletta o il numero di slide, ricrea da zero in una nuova versione.':
+    recovery==='retry-all'?'Il tentativo è fallito con slide già presenti. Riprova chiederà conferma prima di ricrearle nello stesso progetto; puoi anche conservarle e creare una nuova versione.':
+    'Riprova usa le istruzioni e gli allegati salvati, senza creare un altro progetto.';
+  $('recovery-restart').disabled=busy||jobs.some(item=>['queued','running','paused'].includes(item.status));
+  const active=job&&['queued','running','paused'].includes(job.status);
+  $('pause').hidden=!active;$('cancel').hidden=!active;
+  $('pause').textContent=job?.status==='paused'?'Riprendi':'Pausa';
+  $('job-status').textContent=job?(job.error||job.events?.at(-1)?.message||job.status):(recovery?'Generazione da completare':'');
+  $('job-percent').textContent=job?Math.round(job.progress*100)+'% · '+job.status:'';
+  $('progress').value=job?.progress||0;
+  $('events').textContent=(job?.events||[]).map(e=>new Date(e.at*1000).toLocaleTimeString()+'  '+e.message).join('\n');
+  renderRecovery();
+}
 let componentDrag=null,itemPointer=null;
 let imageUploadTarget=null;
 const projectImages=()=>[...(current?.sources||[]).flatMap(source=>source.images),...(current?.visual_assets||[])];
@@ -114,7 +176,8 @@ async function api(url,method='GET',data,signal){
   if(!response.ok)throw new Error(result.error||'Errore HTTP '+response.status);
   return result;
 }
-const design=()=>({...Object.fromEntries(Object.entries(designFields).map(([id,key])=>[key,$(id).type==='checkbox'?$(id).checked:$(id).value])),theme_design:readThemeDesign()});
+const design=()=>({...Object.fromEntries(Object.entries(designFields).map(([id,key])=>[key,$(id).type==='checkbox'?$(id).checked:$(id).value])),theme_design:readThemeDesign(),
+  canvas_mode:$('canvas-mode').value,graphic_style:$('graphic-style').value,theme_preset:$('theme-preset-name').value});
 const brief=()=>({title:$('title').value,prompt:$('prompt').value,count:Number($('count').value),theme:$('theme').value,...design()});
 const provider=()=>({mode:$('provider').value,model:$('provider').value==='local'?$('model').value:remoteModels.value(),
   base_url:$('api-url').value.trim(),api_key:$('api-key').value.trim(),remote_consent:$('consent').checked,vision:$('vision').checked,
@@ -211,16 +274,18 @@ function renderDocumentLibrary(){
   }).join(''):'<p class="muted hint">La libreria è vuota. Il primo documento aggiunto comparirà qui.</p>';
 }
 function renderLibrary(){
+  renderRecovery();
   $('restore-delete-confirmation').hidden=localStorage.getItem('h3slides-skip-delete-confirmation')!=='1';
   const byId=new Map(projects.map(project=>[project.id,project]));
   const ordered=[...libraryState.order,...projects.map(project=>project.id)]
     .filter((id,index,all)=>byId.has(id)&&all.indexOf(id)===index).map(id=>byId.get(id));
   const card=p=>{
+    const last=latestProjectJob(p.id),recover=last&&recoverableStatus(last.status);
     const when=new Date(p.updated_at),date=Number.isNaN(when.getTime())?'':when.toLocaleString('it-IT',{dateStyle:'medium',timeStyle:'short'});
     return '<article class="project-card" data-project="'+esc(p.id)+'" draggable="true"><div class="project-card-tools"><div class="project-card-mark">H3 / '+p.slide_count+'</div>'+
       '<button class="project-delete" type="button" data-delete-project="'+esc(p.id)+'" title="Elimina progetto" aria-label="Elimina '+esc(p.title)+'">🗑</button></div>'+
-      '<h2>'+esc(p.title)+'</h2><p>'+p.slide_count+' slide</p><small>Aggiornato '+esc(date)+'</small>'+
-      '<button class="secondary" type="button" data-open-project="'+esc(p.id)+'">Apri progetto →</button></article>';
+      '<h2>'+esc(p.title)+'</h2><p>'+p.slide_count+' slide'+(recover?' · <strong class="project-recovery-status">'+({failed:'Fallito',interrupted:'Interrotto',cancelled:'Annullato'})[last.status]+'</strong>':'')+'</p><small>Aggiornato '+esc(date)+'</small>'+
+      '<button class="secondary" type="button" data-open-project="'+esc(p.id)+'">'+(recover?'Recupera progetto':'Apri progetto')+' →</button></article>';
   };
   const groups=[...libraryState.folders,{id:'',name:'Senza cartella'}];
   $('library-grid').innerHTML=(projects.length||libraryState.folders.length)?groups.map(folder=>{
@@ -251,8 +316,11 @@ $('restore-delete-confirmation').onclick=()=>{
 };
 async function selectProject(id){
   await finishInlineEdits();
-  if(drafts.has('brief')&&!confirm('Ci sono modifiche al brief non salvate. Cambiare progetto?'))return;
-  current=await api('/api/projects/'+id);drafts.clear();
+  if(drafts.has('brief')&&!confirm('Ci sono modifiche al brief non salvate. Cambiare progetto?'))return false;
+  const selection=++projectSelectionRevision;
+  const selected=await api('/api/projects/'+id);
+  if(selection!==projectSelectionRevision)return false;
+  current=selected;drafts.clear();
   $('project-list').value=id;
   for(const key of ['title','prompt','count','theme'])$(key).value=current[key];
   const defaults={template:'auto',font:'Arial',text_density:'detailed',background_color:themes[current.theme].bg,accent_color:themes[current.theme].accent,use_source_images:true,use_web_images:false,use_openverse_images:false,use_manim_diagrams:false,pdf_scope:'auto',
@@ -260,24 +328,60 @@ async function selectProject(id){
   for(const [id,key] of Object.entries(designFields)){const value=current[key]??defaults[key];if($(id).type==='checkbox')$(id).checked=value;else $(id).value=value||defaults[key]}
   restoreWebConsent();$('web-refresh').checked=false;
   fillThemeDesign(current.theme_design);$('theme-presets').value='';
+  $('canvas-mode').value=current.canvas_mode||'fixed';$('graphic-style').value=current.graphic_style||'classic';
+  $('theme-preset-name').value=current.theme_preset||'';
   localStorage.setItem('h3slides-project',id);$('save-status').textContent='Salvato sul PC';render();
+  if(!['/admin','/library','/create'].includes(location.pathname))navigatePage(location.pathname==='/editor'||current.slides.length?'editor':'create');
+  return true;
 }
 async function saveProject(){
-  if(!current) current=await api('/api/projects','POST',brief());
-  else current=await api('/api/projects/'+current.id,'PATCH',brief());
-  drafts.delete('brief');$('save-status').textContent='Salvato sul PC';
-  localStorage.setItem('h3slides-project',current.id);await loadProjects();render();return current;
+  const selection=projectSelectionRevision;
+  await finishInlineEdits();
+  if(selection!==projectSelectionRevision)throw new Error('Il progetto aperto è cambiato; ripeti il salvataggio.');
+  const target=current,values=brief(),briefSignature=JSON.stringify(values);
+  if(target){
+    await document.fonts.ready;
+    if(selection!==projectSelectionRevision)throw new Error('Il progetto aperto è cambiato; ripeti il salvataggio.');
+    values.slide_layouts=layoutUpdatesFor({...target,...values});
+  }
+  const saved=await api(target?'/api/projects/'+target.id:'/api/projects',target?'PATCH':'POST',values);
+  if(selection!==projectSelectionRevision||(current?.id??null)!==(target?.id??null)){
+    await loadProjects();
+    // Stop chained uploads/exports too: their caller must not act on the new selection.
+    throw new Error('Impostazioni salvate nel progetto di origine; il progetto ora aperto non è stato modificato.');
+  }
+  current=saved;
+  if(JSON.stringify(brief())===briefSignature){drafts.delete('brief');$('save-status').textContent='Salvato sul PC'}
+  localStorage.setItem('h3slides-project',saved.id);await loadProjects();
+  if(selection!==projectSelectionRevision||current?.id!==saved.id)
+    throw new Error('Impostazioni salvate nel progetto di origine; il progetto ora aperto non è stato modificato.');
+  render();return saved;
 }
 $('save-project').onclick=()=>saveProject().catch(e=>toast(e.message));
 async function newProject(){
   try{await finishInlineEdits()}catch(error){toast(error.message);return}
   if(drafts.size&&!confirm('Lasciare le modifiche non salvate?'))return;
+  projectSelectionRevision++;
   current=null;drafts.clear();$('title').value='Nuova presentazione';$('prompt').value='';$('project-list').value='';
+  $('canvas-mode').value='adaptive';$('graphic-style').value='studio';localStorage.removeItem('h3slides-project');
   $('web-enabled').checked=false;$('web-query').value='';$('source-priority').value='documents';restoreWebConsent();$('web-refresh').checked=false;render();
   navigatePage('create');
 }
 $('new').onclick=$('library-new').onclick=newProject;
-$('project-list').onchange=e=>e.target.value&&selectProject(e.target.value).then(()=>navigatePage('create')).catch(e=>toast(e.message));
+$('project-list').onchange=e=>e.target.value&&selectProject(e.target.value).then(()=>navigatePage(current?.slides.length?'editor':'create')).catch(e=>toast(e.message));
+$('recovery-list').onclick=e=>{
+  const button=e.target.closest('[data-recover-project]');if(!button)return;
+  selectProject(button.dataset.recoverProject).then(()=>{navigatePage(current?.slides.length?'editor':'create');$('job-panel').scrollIntoView({block:'center'})}).catch(error=>toast(error.message));
+};
+$('active-generation-list').onclick=async e=>{
+  const link=e.target.closest('[data-open-active-project]');if(!link||e.ctrlKey||e.metaKey||e.shiftKey||e.altKey)return;
+  e.preventDefault();
+  try{
+    if(!await selectProject(link.dataset.openActiveProject))return;
+    navigatePage('editor');renderJobPanel();$('job-panel').querySelector('details').open=true;
+    $('job-panel').scrollIntoView({block:'start'});
+  }catch(error){toast(error.message)}
+};
 $('library-folder-new').onclick=()=>{
   const name=prompt('Nome della nuova cartella:','Nuova cartella')?.trim();if(!name)return;
   libraryState.folders.push({id:crypto.randomUUID(),name:name.slice(0,60)});
@@ -285,7 +389,7 @@ $('library-folder-new').onclick=()=>{
 };
 $('library-grid').onclick=async e=>{
   const open=e.target.closest('[data-open-project]');
-  if(open){selectProject(open.dataset.openProject).then(()=>navigatePage('create')).catch(error=>toast(error.message));return}
+  if(open){selectProject(open.dataset.openProject).then(()=>navigatePage(current?.slides.length?'editor':'create')).catch(error=>toast(error.message));return}
   const remove=e.target.closest('[data-delete-project]');
   if(remove){
     const project=projects.find(item=>item.id===remove.dataset.deleteProject);if(!project)return;
@@ -293,7 +397,7 @@ $('library-grid').onclick=async e=>{
     remove.disabled=true;
     try{
       await api('/api/projects/'+encodeURIComponent(project.id),'DELETE');
-      if(current?.id===project.id){current=null;localStorage.removeItem('h3slides-project')}
+      if(current?.id===project.id){projectSelectionRevision++;current=null;localStorage.removeItem('h3slides-project')}
       await Promise.all([loadProjects(),loadDocuments(),loadLibrary()]);
       toast('Progetto eliminato definitivamente');
     }catch(error){toast(error.message);if(remove.isConnected)remove.disabled=false}
@@ -414,30 +518,29 @@ for(const element of [$('create-page'),$('generate-top'),$('generate'),document.
 function updateGenerationButtons(){
   const active=jobs.some(item=>['queued','running','paused'].includes(item.status));
   const regenerate=Boolean(current?.slides.length);
+  const recovery=recoveryMode();
   for(const button of document.querySelectorAll('[data-generate-presentation]')){
     button.disabled=busy||active;
     const label=active?'Generazione in corso…':busy?'Preparazione…':
-      regenerate?'Rigenera presentazione ↻':'Genera presentazione →';
+      recovery==='resume'?'Riprendi generazione →':recovery?'Riprova generazione →':regenerate?'Rigenera presentazione ↻':'Genera presentazione →';
     button.textContent=button.id==='generate-floating'?
-      (active?'In corso…':busy?'Preparazione…':regenerate?'Rigenera ↻':'Genera →'):label;
+      (active?'In corso…':busy?'Preparazione…':recovery==='resume'?'Riprendi →':recovery?'Riprova →':regenerate?'Rigenera ↻':'Genera →'):label;
     button.setAttribute('aria-label',label);
     button.setAttribute('aria-busy',String(busy||active));
     button.title=label;
   }
   scheduleFloatingGeneration();
 }
-async function generate(slideId=null,diagramOnly=false,regenerateAll=false,replaceDiagrams=false,providedInstructions=null,rebuildOutline=false){
+async function generate(slideId=null,diagramOnly=false,regenerateAll=false,replaceDiagrams=false,providedInstructions=null,rebuildOutline=false,recoverExisting=false){
   if(busy)return;busy=true;updateGenerationButtons();
   try{
     await finishInlineEdits();
-    if(regenerateAll&&current?.slides.length&&!confirm(rebuildOutline?
-      'Rigenerare la presentazione con prompt e parametri attuali? La scaletta e le slide saranno ricreate; gli allegati resteranno nel progetto.':
-      'Rigenerare tutte le slide? I contenuti attuali saranno sostituiti; scaletta e ordine restano invariati.'))return;
+    if(regenerateAll&&current?.slides.length&&!confirm(recoverExisting?'Riprovo nello stesso progetto ricreando scaletta e slide: le modifiche manuali alle slide saranno sostituite. Per conservarle, annulla e scegli Ricrea da zero in una nuova versione. Continuare?':'Creare una nuova versione con le impostazioni attuali? Questa presentazione e i suoi allegati rimangono conservati.'))return;
     if(replaceDiagrams&&!slideId&&!confirm('Riprogettare tutti i diagrammi con il modello? I testi delle slide restano invariati.'))return;
     if($('provider').value==='local'&&adminDirty){
       navigatePage(true);throw new Error('Salva il profilo llama.cpp modificato in Admin prima di generare.');
     }
-    if(!current||drafts.has('brief'))await saveProject();
+    if(!current||drafts.has('brief')&&(!regenerateAll||recoverExisting))await saveProject();
     if($('provider').value==='local')await models();
     else try{remoteModels.requireSelection();apiSettings.value()}catch(error){navigatePage(true);throw error}
     const selected=provider();
@@ -450,22 +553,26 @@ async function generate(slideId=null,diagramOnly=false,regenerateAll=false,repla
       navigatePage(true);$('consent').focus();
       throw new Error('In Admin autorizza l’invio al server scelto, poi torna a Crea e premi Genera.');
     }
-    if(!diagramOnly&&current.web_enabled&&!$('web-consent').checked)throw new Error('Autorizza la ricerca: userò la query indicata oppure la ricaverò automaticamente dalle istruzioni');
+    if(!diagramOnly&&$('web-enabled').checked&&!$('web-consent').checked)throw new Error('Autorizza la ricerca: userò la query indicata oppure la ricaverò automaticamente dalle istruzioni');
     savePrefs();
     const instructions=providedInstructions??(slideId?prompt(diagramOnly?'Descrivi cosa deve spiegare il diagramma Manim:':'Istruzioni per rigenerare questa slide:',
       diagramOnly?(current.slides.find(s=>s.id===slideId)?.content.diagram?.brief||current.slides.find(s=>s.id===slideId)?.content.title||''):current.prompt):$('prompt').value);
     if(instructions===null)return;
     job=await api('/api/projects/'+current.id+'/generate','POST',{provider:selected,prompt:instructions,count:Number($('count').value),slide_id:slideId,
       diagram_only:diagramOnly,replace_diagrams:replaceDiagrams,regenerate_all:regenerateAll,rebuild_outline:rebuildOutline,
+      new_version:regenerateAll&&!recoverExisting,project_settings:regenerateAll&&!recoverExisting?brief():null,
       web_consent:diagramOnly?false:$('web-consent').checked,web_refresh:diagramOnly?false:$('web-refresh').checked});
     $('web-refresh').checked=false;
+    if(job.project_id&&job.project_id!==current.id){drafts.clear();await selectProject(job.project_id);await loadProjects()}
+    navigatePage('editor');
     toast('Generazione avviata');await poll();
   }catch(e){toast(e.message)}finally{busy=false;updateGenerationButtons()}
 }
 for(const button of document.querySelectorAll('[data-generate-presentation]'))button.onclick=()=>{
-  const regenerate=Boolean(current?.slides.length);
-  return generate(null,false,regenerate,false,null,regenerate);
+  const recovery=recoveryMode(),regenerate=recovery==='retry-all'||(!recovery&&Boolean(current?.slides.length));
+  return generate(null,false,regenerate,false,null,regenerate,recovery==='retry-all');
 };
+$('recovery-restart').onclick=()=>generate(null,false,true,false,null,true);
 $('generate-missing-diagrams').onclick=()=>generate(null,true);
 $('redesign-diagrams').onclick=()=>generate(null,true,false,true);
 const initialSearchAddress=$('searxng-url').value;
@@ -542,29 +649,68 @@ function positionVisualActions(card){
     const visual=frame.querySelector('.visual[data-visual-kind="'+actions.dataset.visualKind+'"]');
     if(!visual)continue;
     const box=visual.getBoundingClientRect();
+    actions.style.maxWidth=Math.max(60,box.width/Math.max(1,root.width)*frame.clientWidth-20)+'px';
     actions.style.left=((box.right-root.left)/Math.max(1,root.width)*100)+'%';
     actions.style.top=((box.top-root.top)/Math.max(1,root.height)*100)+'%';
   }
 }
 function positionFreeformHandles(card){
   const frame=card?.querySelector('.slide-frame');if(!frame)return;
+  const root=frame.getBoundingClientRect(),scale=root.width/1280||1,hit=20/scale;
+  frame.style.setProperty('--resize-mark',7/scale+'px');
+  frame.style.setProperty('--resize-stroke',1/scale+'px');
   for(const handle of frame.querySelectorAll('.free-resize-handle')){
+    if(handle.hidden)continue;
     const element=frame.querySelector('[data-free-key="'+handle.dataset.freeResize+'"]');
     if(!element)continue;
-    const x=Number(element.dataset.freeX),y=Number(element.dataset.freeY);
-    const w=Number(element.dataset.freeW),h=Number(element.dataset.freeH);
-    handle.style.left=(x+w-13)+'px';handle.style.top=(y+h-13)+'px';
+    const box=element.getBoundingClientRect(),edge=handle.dataset.resizeEdge;
+    const x=(box.left-root.left)/scale,y=(box.top-root.top)/scale,w=box.width/scale,h=box.height/scale;
+    const horizontal=edge==='n'||edge==='s',vertical=edge==='w'||edge==='e';
+    const width=horizontal?Math.max(hit,w-hit):hit,height=vertical?Math.max(hit,h-hit):hit;
+    const left=horizontal?x+hit/2:x+(edge.includes('w')?0:w)-hit/2;
+    const top=vertical?y+hit/2:y+(edge.includes('n')?0:h)-hit/2;
+    // Transparent side strips make the whole border draggable; the small mark
+    // stays discreet. Keep hit targets inside the preview at canvas boundaries.
+    handle.style.width=width+'px';handle.style.height=height+'px';
+    handle.style.left=Math.max(0,Math.min(1280-width,left))+'px';
+    handle.style.top=Math.max(0,Math.min(frame.offsetHeight-height,top))+'px';
   }
 }
-function installFreeformHandles(card,slide){
-  if(slide.content.layout!=='freeform')return;
-  const frame=card.querySelector('.slide-frame');
-  for(const element of frame.querySelectorAll('[data-free-key]')){
-    const handle=document.createElement('span');handle.className='free-resize-handle';
-    handle.dataset.freeResize=element.dataset.freeKey;handle.title='Trascina per ridimensionare';
-    handle.setAttribute('aria-hidden','true');frame.append(handle);
-  }
+function syncSlideElementSelection(card){
+  const frame=card?.querySelector('.slide-frame');if(!frame)return;
+  const key=selectedSlideElement?.pid===current?.id&&selectedSlideElement?.id===card.dataset.id?selectedSlideElement.key:null;
+  for(const element of frame.querySelectorAll('[data-free-key]'))element.classList.toggle('is-selected',element.dataset.freeKey===key);
+  for(const handle of frame.querySelectorAll('.free-resize-handle'))handle.hidden=handle.dataset.freeResize!==key;
   positionFreeformHandles(card);
+}
+function selectSlideElement(card,key){
+  selectedSlideElement=card&&key?{pid:current?.id,id:card.dataset.id,key}:null;
+  for(const item of $('slides').querySelectorAll('.slide-card'))syncSlideElementSelection(item);
+}
+document.addEventListener('pointerdown',event=>{
+  const handle=event.target.closest('[data-free-resize]'),card=event.target.closest('.slide-card.ready');
+  const element=handle?card?.querySelector('[data-free-key="'+handle.dataset.freeResize+'"]'):event.target.closest('[data-free-key]');
+  selectSlideElement(card,element?.dataset.freeKey);
+},true);
+document.addEventListener('keydown',event=>{
+  if(event.key==='Escape'&&!event.target.closest('[contenteditable],input,textarea')){
+    if(itemPointer?.active){event.preventDefault();clearComponentDrag(true);endItemPointer()}
+    selectSlideElement(null,null);
+  }
+});
+function installFreeformHandles(card,slide){
+  const frame=card.querySelector('.slide-frame');
+  const labels={n:'bordo superiore',ne:'angolo superiore destro',e:'bordo destro',se:'angolo inferiore destro',
+    s:'bordo inferiore',sw:'angolo inferiore sinistro',w:'bordo sinistro',nw:'angolo superiore sinistro'};
+  for(const element of frame.querySelectorAll('[data-free-key]')){
+    for(const [edge,label] of Object.entries(labels)){
+      const handle=document.createElement('span');handle.className='free-resize-handle';
+      handle.dataset.freeResize=element.dataset.freeKey;handle.dataset.resizeEdge=edge;
+      handle.title='Ridimensiona dal '+label;handle.hidden=true;
+      handle.setAttribute('aria-hidden','true');frame.append(handle);
+    }
+  }
+  syncSlideElementSelection(card);
 }
 function installElementControls(card,slide){
   const targets=[
@@ -591,12 +737,19 @@ function installElementControls(card,slide){
     upload.dataset.action='upload-image';upload.textContent='↑ '+(visual.classList.contains('image-placeholder')?'Carica immagine':'Sostituisci immagine');
     upload.title='Carica dal computer · JPG, PNG o WebP · massimo 20 MB';
     actions.append(upload);
+    const search=document.createElement('button');search.type='button';search.className='diagram-live-action image-search-action';
+    search.dataset.action='search-image';search.textContent='⌕ Cerca immagine';
+    search.title='Cerca nelle pagine lavorate dei documenti oppure in internet';actions.append(search);
   }
   actions.append(elementDeleteButton(visual.dataset.visualKind,undefined,visual.dataset.visualKind==='diagram'?'diagramma':'immagine'));
   frame.append(actions);requestAnimationFrame(()=>positionVisualActions(card));
   }
 }
 function render(){
+  renderJobPanel();
+  $('editor-canvas-mode').value=$('canvas-mode').value;
+  $('editor-canvas-mode').disabled=!current;
+  $('setup-back').hidden=!current;
   const display=current?{...current,...design(),theme:$('theme').value}:null;
   const preview=display||brief(),t=themeFor(preview),box=blockColors(preview,{kind:'explanation'});
   const low=contrast(t.bg,t.fg)<4.5||contrast(t.bg,t.heading)<4.5||
@@ -699,6 +852,7 @@ function render(){
         if(!card.isConnected)return;
         const result=fitSlide(card.querySelector('.slide-frame'));
         positionVisualActions(card);
+        positionFreeformHandles(card);
         card.querySelector('.composition-status').textContent=layouts[result.layout]+(result.adjusted?' · adattato allo spazio':'')+' · testi invariati';
         card.querySelector('.layout-warning')?.remove();
         if(result.overflow){
@@ -844,7 +998,8 @@ function addBlockEditor(block={heading:'',text:'',kind:'explanation',source:''})
   if($('edit-blocks').children.length>=4){toast('Massimo 4 box per slide');return}
   const row=document.createElement('fieldset');row.className='block-editor';
   row.innerHTML='<label>Titolo del box<input data-block="heading" maxlength="70"></label>'+
-    '<label>Tipo / colore<select data-block="kind"><option value="explanation">Spiegazione · accento del tema</option><option value="example">Esempio · azzurro</option><option value="key">Da ricordare · ambra</option><option value="quote">Citazione · viola</option></select></label>'+
+    '<label>Tipo / colore<select data-block="kind"><option value="explanation">Spiegazione · accento del tema</option><option value="example">Esempio · azzurro</option><option value="key">Da ricordare · ambra</option><option value="quote">Citazione · viola</option><option value="code">Codice sorgente</option></select></label>'+
+    '<label>Linguaggio del codice<select data-block="language"><option value="text">Testo</option><option value="python">Python</option><option value="c">C</option><option value="cpp">C++</option><option value="javascript">JavaScript</option><option value="java">Java</option><option value="sql">SQL</option></select></label>'+
     '<label>Paragrafo<textarea data-block="text" rows="7" maxlength="1600" required></textarea></label>'+
     '<label>Fonte e pagina<input data-block="source" maxlength="220"></label>'+
     '<button type="button" class="quiet danger" data-remove-block>Rimuovi box</button>';
@@ -861,13 +1016,15 @@ $('edit-form').onsubmit=async e=>{
   if(content.layout!==editing.content.layout)content.layout_variant=0;
   content.bullets=$('edit-bullets').value.split('\n').map(s=>s.trim()).filter(Boolean);
   content.blocks=[...$('edit-blocks').children].map(row=>Object.fromEntries(
-    [...row.querySelectorAll('[data-block]')].map(field=>[field.dataset.block,field.value.trim()])));
+    [...row.querySelectorAll('[data-block]')].map(field=>[field.dataset.block,field.dataset.block==='text'?field.value:field.value.trim()])));
   content.sources=$('edit-sources').value.split('\n').map(s=>s.trim()).filter(Boolean);content.image_id=$('edit-image').value;
   const kind=$('edit-diagram-kind').value;
   content.diagram={kind,labels:$('edit-diagram-labels').value.split('\n').map(s=>s.trim()).filter(Boolean),
     brief:$('edit-diagram-brief').value.trim(),scene:kind==='manim'?sceneFromEditor():null};
   if(kind==='none'){content.diagram.labels=[];content.diagram.brief=''}
   try{
+    if(content.layout==='freeform')Object.assign(content,fitEditedContent({...current,...design(),theme:$('theme').value},
+      {...editing,content},current.slides.findIndex(slide=>slide.id===editing.id)).content);
     const updated=await api('/api/projects/'+current.id+'/slides/'+editing.id,'PATCH',{revision:editing.revision,content});
     current.slides[current.slides.findIndex(s=>s.id===updated.id)]=updated;$('editor').close();render();toast('Slide salvata');
   }catch(error){$('edit-error').textContent=error.message}
@@ -876,16 +1033,21 @@ async function move(id,index){
   const ids=current.slides.map(s=>s.id),old=ids.indexOf(id);ids.splice(old,1);ids.splice(Math.max(0,Math.min(ids.length,index)),0,id);
   current=await api('/api/projects/'+current.id+'/reorder','POST',{ids});render();
 }
-async function saveContentChange(id,mutate,message){
+async function saveContentChange(id,mutate,message,layoutOptions={}){
   await finishInlineEdits();
-  const pid=current.id,slide=current.slides.find(item=>item.id===id),content=structuredClone(slide.content);
-  mutate(content);
-  const card=document.getElementById('slide-'+id);card.dataset.saving='1';
+  const pid=current.id,slide=current.slides.find(item=>item.id===id);let content=structuredClone(slide.content);
+  const project={...current,...design(),theme:$('theme').value},index=current.slides.indexOf(slide);
+  const card=document.getElementById('slide-'+id);if(card)card.dataset.saving='1';
   try{
+    mutate(content);
+    if(content.layout==='freeform'){
+      await document.fonts.ready;
+      content=fitEditedContent(project,{...slide,content},index,layoutOptions).content;
+    }
     const updated=await api('/api/projects/'+pid+'/slides/'+id,'PATCH',{revision:slide.revision,content});
     if(current?.id===pid)current.slides[current.slides.findIndex(item=>item.id===id)]=updated;
     toast(message);
-  }finally{delete card.dataset.saving;delete card.dataset.signature;render()}
+  }finally{if(card){delete card.dataset.saving;delete card.dataset.signature}render()}
 }
 function addTextBlock(id){
   return saveContentChange(id,content=>{
@@ -954,6 +1116,26 @@ async function chooseSlideImage(id){
   imageUploadTarget={pid:current.id,sid:id,revision:slide.revision};
   $('slide-image-file').value='';$('slide-image-file').click();
 }
+const imageSearch=createImageSearch({api,inserted(target,result){
+  if(current?.id===target.pid){
+    const index=current.slides.findIndex(item=>item.id===target.sid);
+    if(index>=0)current.slides[index]=result.slide;
+    if(result.visual_asset)current.visual_assets=[...(current.visual_assets||[]).filter(item=>item.id!==result.visual_asset.id),result.visual_asset];
+    if(result.use_source_images===true){current.use_source_images=true;$('source-images').checked=true}
+    const card=document.getElementById('slide-'+target.sid);if(card)delete card.dataset.signature;
+    render();
+  }
+  toast('Immagine inserita e salvata, disponibile anche nelle esportazioni.');
+}});
+async function searchSlideImage(id){
+  await finishInlineEdits();
+  const slide=current?.slides.find(item=>item.id===id);
+  if(!slide?.revision)throw new Error('Attendi che la slide sia pronta');
+  imageSearch.open({pid:current.id,sid:id,revision:slide.revision,
+    source:current.sources.some(source=>source.kind==='pdf'||source.images?.length)?'document':'web',
+    query:slide.content.image_query||slide.content.title||current.title,
+    openverse:$('openverse-images').checked});
+}
 $('slide-image-file').onchange=async()=>{
   const file=$('slide-image-file').files[0],target=imageUploadTarget;
   imageUploadTarget=null;if(!file||!target)return;
@@ -1006,6 +1188,7 @@ $('slides').onclick=e=>{
   if(button.dataset.action==='regenerate')generate(id);
   if(button.dataset.action==='add-text')addTextBlock(id).catch(error=>toast(error.message));
   if(button.dataset.action==='upload-image')chooseSlideImage(id).catch(error=>toast(error.message));
+  if(button.dataset.action==='search-image')searchSlideImage(id).catch(error=>toast(error.message));
   if(button.dataset.action==='add-diagram')addDiagramBlock(id).catch(error=>toast(error.message));
   if(button.dataset.action==='diagram')generate(id,true);
   if(button.dataset.action==='diagram-live')redesignLiveDiagram(id);
@@ -1025,8 +1208,9 @@ function measureFreeform(card){
     const box=element.getBoundingClientRect();
     let x=Math.round((box.left-root.left)/scale),y=Math.round((box.top-root.top)/scale);
     let w=Math.max(80,Math.round(box.width/scale)),h=Math.max(44,Math.round(box.height/scale));
-    w=Math.min(1280,w);h=Math.min(680,h);
-    x=Math.max(0,Math.min(1280-w,x));y=Math.max(0,Math.min(680-h,y));
+    const bottom=Math.min(968,frame.offsetHeight-40);
+    w=Math.min(1280,w);h=Math.min(bottom,h);
+    x=Math.max(0,Math.min(1280-w,x));y=Math.max(0,Math.min(bottom-h,y));
     placements[element.dataset.freeKey]={x,y,w,h};
   }
   return placements;
@@ -1040,9 +1224,12 @@ async function changeLayout(id,layout,recompose=false){
     content.freeform=measureFreeform(card);
     content.freeform_base=frame.dataset.layout==='freeform'?'editorial':frame.dataset.layout;
     content.freeform_compact=frame.classList.contains('compact-spacing');
+    content.canvas_height=frame.offsetHeight;
   }
   content.layout=layout;content.layout_locked=!recompose&&Object.hasOwn(layouts,layout);
   content.layout_variant=recompose?((content.layout_variant||0)+1)%10001:0;
+  if(layout==='freeform')Object.assign(content,fitEditedContent({...current,...design(),theme:$('theme').value},
+    {...slide,content},current.slides.indexOf(slide)).content);
   card.dataset.saving='1';
   try{
     const updated=await api('/api/projects/'+pid+'/slides/'+id,'PATCH',{revision:slide.revision,content});
@@ -1065,17 +1252,29 @@ async function reorderSlideItems(id,field,from,to){
   }
   const card=document.getElementById('slide-'+id);card.dataset.saving='1';
   try{
+    if(content.layout==='freeform')Object.assign(content,fitEditedContent({...current,...design(),theme:$('theme').value},
+      {...slide,content},current.slides.indexOf(slide)).content);
     const updated=await api('/api/projects/'+pid+'/slides/'+id,'PATCH',{revision:slide.revision,content});
     if(current?.id===pid)current.slides[current.slides.findIndex(s=>s.id===id)]=updated;
     toast('Ordine dei testi salvato; impaginazione ricalcolata.');
   }finally{delete card.dataset.saving;delete card.dataset.signature;render()}
 }
-async function saveFreePlacement(id,key,placement,adaptive=null,placements=null){
+function resizeMinimumLabel(resize){
+  return (resize?.constraints||[]).filter(axis=>axis==='width'||axis==='height').map(axis=>axis==='width'?
+    'larghezza '+resize.minWidth+' px':'altezza '+resize.minHeight+' px').join(' · ');
+}
+function resizeLimitLabel(resize){
+  return ['space-limit','canvas-limit'].includes(resize?.reason)?'limite dello spazio disponibile':'minimo per il contenuto: '+resizeMinimumLabel(resize);
+}
+async function saveFreePlacement(id,key,placement,adaptive=null,placements=null,resize=null){
   return saveContentChange(id,content=>{
     content.layout='freeform';content.layout_locked=true;
     content.freeform={...(content.freeform||{}),...(placements||adaptive?.placements||{}),[key]:placement};
-    if(adaptive){content.freeform_base=adaptive.base;content.freeform_compact=adaptive.compact}
-  },'Posizione libera salvata.');
+    if(adaptive){content.freeform_base=adaptive.base;content.freeform_compact=adaptive.compact;content.canvas_height=adaptive.height}
+  },resize?.constrained?(['space-limit','canvas-limit'].includes(resize.reason)?'Dimensioni salvate al limite dello spazio disponibile.':
+    'Dimensioni salvate al minimo necessario per il contenuto: '+resizeMinimumLabel(resize)+'.'):
+    'Disposizione salvata: tutti gli elementi adattati allo spazio.',
+    {anchorKey:key,resizeKey:resize?key:undefined,resizeHandle:resize?.handle});
 }
 async function splitSlide(id){
   await finishInlineEdits();
@@ -1095,18 +1294,41 @@ $('slides').ondblclick=e=>{
   const card=field.closest('.slide-card'),slide=current.slides.find(s=>s.id===card.dataset.id);
   if(slide.status!=='ready'){toast('Attendi che questa scheda sia pronta');return}
   const original=field.dataset.editRaw??field.textContent,content=structuredClone(slide.content),revision=slide.revision,pid=current.id;
+  const editFrame=card.querySelector('.slide-frame'),editHeight=editFrame.offsetHeight;
+  const editPlacements=content.layout==='freeform'?measureFreeform(card):null;
+  const editKey=field.closest('[data-free-key]')?.dataset.freeKey;
+  if(editPlacements){content.freeform={...content.freeform,...editPlacements};content.canvas_height=editHeight}
   field.textContent=original;
   field.contentEditable='plaintext-only';field.focus();card.draggable=false;
+  field.oninput=()=>{
+    if(editPlacements){
+      for(const element of editFrame.querySelectorAll('[data-free-key]')){
+        const saved=editPlacements[element.dataset.freeKey];if(saved)applyFreePlacement(element,saved);
+      }
+      editFrame.dataset.canvasHeight=String(editHeight);
+    }
+    const result=fitSlide(editFrame,{anchorKey:editKey});
+    positionVisualActions(card);positionFreeformHandles(card);
+    card.querySelector('.composition-status').textContent=result.overflow?
+      'Contenuto oltre lo spazio disponibile: allarga il box o dividi la slide.':
+      'Anteprima live · altezza '+result.height+' px · contenuti riposizionati';
+  };
   let cancelled=false;
   field.onkeydown=event=>{if(event.key==='Escape'){cancelled=true;field.textContent=original;field.blur()}else if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();field.blur()}};
   field.onblur=async()=>{
-    const value=field.textContent.trim();field.removeAttribute('contenteditable');card.draggable=true;
-    if(cancelled||value===original){render();return}
+    const value=field.closest('.kind-code')?field.innerText:field.textContent.trim();field.removeAttribute('contenteditable');card.draggable=true;
+    if(cancelled||value===original){delete card.dataset.signature;render();return}
     if(field.dataset.editField==='bullets')content.bullets[Number(field.dataset.index)]=value;
     else if(field.dataset.editField.startsWith('block-'))content.blocks[Number(field.dataset.index)][field.dataset.editField.slice(6)]=value;
     else content[field.dataset.editField]=value;
     card.dataset.saving='1';
-    const pending=api('/api/projects/'+pid+'/slides/'+slide.id,'PATCH',{revision,content});inlineSaves.add(pending);
+    const pending=(async()=>{
+      if(content.layout==='freeform'){
+        await document.fonts.ready;
+        Object.assign(content,fitEditedContent({...current,...design(),theme:$('theme').value},{...slide,content},current.slides.indexOf(slide),{anchorKey:editKey}).content);
+      }
+      return api('/api/projects/'+pid+'/slides/'+slide.id,'PATCH',{revision,content});
+    })();inlineSaves.add(pending);
     try{
       const updated=await pending;
       if(current?.id===pid)current.slides[current.slides.findIndex(s=>s.id===updated.id)]=updated;
@@ -1143,12 +1365,14 @@ function beginFreePointerDrag(pointer){
   const frame=card.querySelector('.slide-frame');
   let adaptive=null;
   if(frame.dataset.layout!=='freeform'){
-    adaptive={placements:measureFreeform(card),base:frame.dataset.layout,compact:frame.classList.contains('compact-spacing'),
+    adaptive={placements:measureFreeform(card),base:frame.dataset.layout,height:frame.offsetHeight,compact:frame.classList.contains('compact-spacing'),
       candidates:frame.dataset.candidates,freeBase:frame.dataset.freeBase};
     for(const element of frame.querySelectorAll('[data-free-key]'))applyFreePlacement(element,adaptive.placements[element.dataset.freeKey]);
     frame.dataset.freeBase=adaptive.base;frame.dataset.candidates='["freeform"]';
+    frame.dataset.canvasHeight=String(adaptive.height);
     frame.dataset.freeCompact=String(adaptive.compact);fitSlide(frame);
   }
+  const initialResult=fitSlide(frame);
   const placement={
     x:Number(item.dataset.freeX),y:Number(item.dataset.freeY),
     w:Number(item.dataset.freeW),h:Number(item.dataset.freeH)
@@ -1156,7 +1380,9 @@ function beginFreePointerDrag(pointer){
   const root=frame.getBoundingClientRect(),box=item.getBoundingClientRect();
   const scale=root.width/1280||1;
   componentDrag={type:'freeform',id:card.dataset.id,key:item.dataset.freeKey,source:item,
-    original:{...placement},placement:{...placement},adaptive,placements:measureFreeform(card)};
+    original:{...placement},placement:{...placement},adaptive,placements:measureFreeform(card),
+    originalPlacements:measureFreeform(card),originalHeight:frame.offsetHeight,
+    resizeFallback:initialResult.overflow?null:{placements:structuredClone(initialResult.placements),height:initialResult.height}};
   pointer.offsetX=(pointer.startX-box.left)/scale;pointer.offsetY=(pointer.startY-box.top)/scale;
   card.classList.add('component-dragging');item.classList.add('dragging','free-item-dragging');
   const indicator=card.querySelector('.anchor-indicator');
@@ -1166,25 +1392,46 @@ function beginFreePointerDrag(pointer){
 function previewFreePosition(card,x,y){
   const drag=componentDrag,frame=card.querySelector('.slide-frame'),root=frame.getBoundingClientRect();
   if(drag?.type!=='freeform'||!root.width)return;
-  const scale=root.width/1280,snap=8;
+  const scale=root.width/1280,snap=itemPointer.fine?1:Number($('editor-grid').value||2);
+  const bottom=frame.dataset.canvasMode==='adaptive'?968:680;
   let placement;
   if(itemPointer.mode==='resize'){
-    const w=Math.max(80,Math.min(1280-drag.original.x,
-      Math.round(((x-root.left)/scale-drag.original.x)/snap)*snap));
-    const h=Math.max(44,Math.min(680-drag.original.y,
-      Math.round(((y-root.top)/scale-drag.original.y)/snap)*snap));
-    placement={...drag.original,w,h};
+    const edge=itemPointer.edge||'se',start=drag.original;
+    const dx=(x-itemPointer.startX)/scale,dy=(y-itemPointer.startY)/scale;
+    const snapped=value=>Math.round(value/snap)*snap;
+    let left=start.x,top=start.y,right=start.x+start.w,lower=start.y+start.h;
+    if(edge.includes('w'))left=Math.max(0,Math.min(right-80,snapped(start.x+dx)));
+    if(edge.includes('e'))right=Math.max(left+80,Math.min(1280,snapped(start.x+start.w+dx)));
+    if(edge.includes('n'))top=Math.max(0,Math.min(lower-44,snapped(start.y+dy)));
+    if(edge.includes('s'))lower=Math.max(top+44,Math.min(bottom,snapped(start.y+start.h+dy)));
+    placement={x:left,y:top,w:right-left,h:lower-top};
   }else{
     const {w,h}=drag.original;
     const rawX=(x-root.left)/scale-itemPointer.offsetX,rawY=(y-root.top)/scale-itemPointer.offsetY;
     placement={x:Math.max(0,Math.min(1280-w,Math.round(rawX/snap)*snap)),
-      y:Math.max(0,Math.min(680-h,Math.round(rawY/snap)*snap)),w,h};
+      y:Math.max(0,Math.min(bottom-h,Math.round(rawY/snap)*snap)),w,h};
   }
-  drag.placement=placement;applyFreePlacement(drag.source,placement);positionVisualActions(card);
+  // Recompute from the gesture's original geometry on every move. Otherwise
+  // displaced neighbours would drift farther away with each pointer event.
+  for(const element of frame.querySelectorAll('[data-free-key]')){
+    const saved=drag.originalPlacements[element.dataset.freeKey];if(saved)applyFreePlacement(element,saved);
+  }
+  frame.dataset.canvasHeight=String(drag.originalHeight);
+  applyFreePlacement(drag.source,placement);
+  const result=fitSlide(frame,{anchorKey:drag.key,resizeKey:itemPointer.mode==='resize'?drag.key:undefined,
+    resizeHandle:itemPointer.edge,resizeFallback:drag.resizeFallback});
+  if(!result.overflow)drag.resizeFallback={placements:structuredClone(result.placements),height:result.height};
+  drag.layoutResult=result;drag.placement=result.placements?.[drag.key]||placement;
+  drag.placements=result.placements||measureFreeform(card);
+  drag.adaptive={...(drag.adaptive||{}),base:frame.dataset.freeBase,
+    compact:frame.classList.contains('compact-spacing'),height:result.height};
+  positionVisualActions(card);positionFreeformHandles(card);
   const indicator=card.querySelector('.anchor-indicator');
-  if(indicator)indicator.textContent=itemPointer.mode==='resize'?
-    placement.w+' × '+placement.h+' px · rilascio per salvare':
-    'x '+placement.x+' · y '+placement.y+' · rilascio per salvare';
+  if(indicator)indicator.textContent=result.overflow?
+    'Spazio insufficiente: il rilascio annulla questa disposizione':
+    itemPointer.mode==='resize'?drag.placement.w+' × '+drag.placement.h+' px · '+
+      (result.resize?.constrained?resizeLimitLabel(result.resize):'scheda '+result.height+' px')+' · rilascio per salvare':
+    'x '+drag.placement.x+' · y '+drag.placement.y+' · altri elementi adattati';
 }
 function beginItemPointerDrag(pointer){
   const {card,item,block}=pointer;
@@ -1245,10 +1492,14 @@ function endItemPointer(){
 function clearComponentDrag(restore=true){
   const drag=componentDrag;componentDrag=null;
   finishItemDragPreview(drag,restore);
-  if(restore&&drag?.type==='freeform'&&drag.source)applyFreePlacement(drag.source,drag.original);
-  if(restore&&drag?.adaptive){
+  if(restore&&drag?.type==='freeform'&&drag.source){
     const frame=drag.source.closest('.slide-frame');
-    frame.dataset.candidates=drag.adaptive.candidates;frame.dataset.freeBase=drag.adaptive.freeBase;fitSlide(frame);
+    for(const element of frame.querySelectorAll('[data-free-key]')){
+      const saved=drag.originalPlacements[element.dataset.freeKey];if(saved)applyFreePlacement(element,saved);
+    }
+    frame.dataset.canvasHeight=String(drag.originalHeight);
+    if(drag.adaptive?.candidates){frame.dataset.candidates=drag.adaptive.candidates;frame.dataset.freeBase=drag.adaptive.freeBase}
+    fitSlide(frame);positionVisualActions(frame.closest('.slide-card'));positionFreeformHandles(frame.closest('.slide-card'));
   }
   document.querySelectorAll('.slide-frame[data-drag-candidates]').forEach(frame=>{
     if(restore){frame.dataset.candidates=frame.dataset.dragCandidates;fitSlide(frame)}
@@ -1312,12 +1563,17 @@ function commitComponentDrag(event,pointedOnly=false){
   if(!componentDrag)return false;
   const drag={...componentDrag};
   const pointed=document.elementFromPoint(event.clientX||0,event.clientY||0);
-  const card=pointed?.closest('.slide-card')||(pointedOnly?null:event.target?.closest?.('.slide-card'));
+  // A resize is bound to its selected block, not to the mouse-up location.
+  // Releasing beyond the canvas commits its clamped size instead of cancelling.
+  const card=drag.type==='freeform'&&drag.layoutResult?.resize?document.getElementById('slide-'+drag.id):
+    pointed?.closest('.slide-card')||(pointedOnly?null:event.target?.closest?.('.slide-card'));
   const validCard=card?.dataset.id===drag.id;
-  clearComponentDrag(!validCard);
+  const impossible=drag.type==='freeform'&&drag.layoutResult?.overflow;
+  clearComponentDrag(!validCard||impossible);
   if(!validCard)return true;
+  if(impossible){toast('Disposizione annullata: non c’è spazio senza tagli o sovrapposizioni. Allarga il box, scegli Adattivo o dividi la slide.');return true}
   if(drag.type==='freeform'){
-    saveFreePlacement(drag.id,drag.key,drag.placement,drag.adaptive,drag.placements).catch(error=>toast(error.message));
+    saveFreePlacement(drag.id,drag.key,drag.placement,drag.adaptive,drag.placements,drag.layoutResult?.resize).catch(error=>toast(error.message));
   }else if(drag.type==='visual'){
     let layout=drag.layout;
     if(!layout){
@@ -1364,17 +1620,18 @@ $('slides').onpointerdown=e=>{
   const candidate=resizeHandle||e.target.closest('[data-free-key],[data-block-index],[data-bullet-index]');
   const frame=candidate?.closest('.slide-frame');
   const adaptiveVisual=frame?.classList.contains('has-multiple-visuals')?e.target.closest('.visual'):null;
-  const freeItem=frame?.dataset.layout==='freeform'?
+  const freeItem=frame&&(resizeHandle||frame.dataset.layout==='freeform')?
     (resizeHandle?frame.querySelector('[data-free-key="'+resizeHandle.dataset.freeResize+'"]'):e.target.closest('[data-free-key]')):null;
   const item=freeItem||adaptiveVisual||e.target.closest('[data-block-index],[data-bullet-index]');
   const card=item?.closest('.slide-card');
   if(!item||!card||!card.classList.contains('ready'))return;
   const originalCardDraggable=card.draggable;card.draggable=false;
   itemPointer={item,card,mode:resizeHandle?'resize':freeItem||adaptiveVisual?'freeform':'order',block:item.hasAttribute('data-block-index'),pointerId:e.pointerId,
-    startX:e.clientX,startY:e.clientY,active:false,originalCardDraggable};
+    edge:resizeHandle?.dataset.resizeEdge||'se',startX:e.clientX,startY:e.clientY,active:false,originalCardDraggable,fine:e.altKey};
 };
 $('slides').onpointermove=e=>{
   if(!itemPointer||e.pointerId!==itemPointer.pointerId)return;
+  itemPointer.fine=e.altKey;
   if(!itemPointer.active){
     if(Math.hypot(e.clientX-itemPointer.startX,e.clientY-itemPointer.startY)<7)return;
     itemPointer.active=true;
@@ -1418,23 +1675,16 @@ async function poll(){
   if(polling)return;polling=true;
   try{
     jobs=await api('/api/jobs');$('connection').textContent='● Locale · salvato sul PC';
+    const statusSignature=JSON.stringify(jobs.map(item=>[item.id,item.status]));
+    if(!libraryDragged&&statusSignature!==libraryJobSignature){libraryJobSignature=statusSignature;renderLibrary()}
     updateGenerationButtons();
     if(current){
       const requested=current.id;
       const fresh=await api('/api/projects/'+requested);
       if(current?.id!==requested)return;
       current=fresh;render();
-      job=jobs.find(j=>j.project_id===current.id)||null;
     }
-    $('job-panel').hidden=!job;
-    if(job){
-      const active=['queued','running','paused'].includes(job.status);
-      $('job-status').textContent=job.error||job.events.at(-1)?.message||job.status;
-      $('job-percent').textContent=Math.round(job.progress*100)+'% · '+job.status;
-      $('progress').value=job.progress;
-      $('events').textContent=job.events.map(e=>new Date(e.at*1000).toLocaleTimeString()+'  '+e.message).join('\n');
-      $('pause').hidden=!active;$('cancel').hidden=!active;$('pause').textContent=job.status==='paused'?'Riprendi':'Pausa';
-    }
+    renderJobPanel();
   }catch(error){$('connection').textContent='● App non raggiungibile'}finally{polling=false}
 }
 async function init(){
@@ -1458,10 +1708,13 @@ function fillAdmin(){
       else if(schema.type==='boolean')input='<input type="checkbox" data-setting="'+name+'" '+(value?'checked':'')+'>';
       else input='<input type="number" data-setting="'+name+'" step="'+(schema.type==='integer'?'1':'.01')+'" value="'+value+'"'+
         (schema.minimum!==undefined?' min="'+schema.minimum+'"':'')+(schema.exclusiveMinimum!==undefined?' min="0.01"':'')+(schema.maximum!==undefined?' max="'+schema.maximum+'"':'')+'>';
-      return '<label class="'+(schema.type==='boolean'?'check':'')+'">'+esc(adminLabels[key]||key)+input+'</label>';
+      const label=({mtp_enabled:'Abilita MTP se compatibile',mtp_predictions:'Predizioni MTP (massimo per passo)'})[key]||adminLabels[key]||key;
+      return '<label class="'+(schema.type==='boolean'?'check':'')+'">'+esc(label)+input+'</label>';
     }).join('');
   }
-  $('admin-status').textContent=adminData.status.running?'Modello attualmente caricato: '+adminData.status.model:'Nessun modello caricato.';
+  $('admin-status').textContent=adminData.status.running?'Modello attualmente caricato: '+adminData.status.model+
+    (adminData.status.mtp?' · '+adminData.status.mtp.reason:''):'Nessun modello caricato.';
+  mtpSettings.refresh();
 }
 async function loadAdmin(){
   if(adminDirty)return;
@@ -1476,22 +1729,44 @@ async function loadAdmin(){
   return adminLoading;
 }
 function navigatePage(page,push=true){
+  document.body.classList.remove('navigation-away');
   if(typeof page==='boolean')page=page?'admin':'create';
+  if(page==='create'&&current?.slides.length&&location.pathname!=='/create')page='editor';
   const admin=page==='admin',library=page==='library';
+  document.body.dataset.view=page;
   $('admin').hidden=!admin;$('library').hidden=!library;$('create-page').hidden=admin||library;
   updateFloatingGeneration();
   $('open-admin').setAttribute('aria-current',admin?'page':'false');
   $('open-library').setAttribute('aria-current',library?'page':'false');
   $('open-create').setAttribute('aria-current',!admin&&!library?'page':'false');
   document.title=admin?'Admin · H3-slides':library?'Progetti · H3-slides':'H3-slides · Studio';
-  const path=admin?'/admin':library?'/library':'/';
-  if(push&&location.pathname!==path)history.pushState({},'',path+location.search);
+  const path=admin?'/admin':library?'/library':page==='editor'?'/editor':'/create';
+  const query=current?'?project='+encodeURIComponent(current.id):'';
+  if(push&&location.pathname+location.search!==path+query)history.pushState({},'',path+query);
   if(admin)loadAdmin();else if(library){Promise.all([loadProjects(),loadLibrary()]).catch(error=>toast(error.message))}else{render();requestAnimationFrame(()=>window.dispatchEvent(new Event('resize')))}
 }
 $('open-admin').onclick=()=>navigatePage('admin');
 $('open-library').onclick=()=>navigatePage('library');
 $('configure-model').onclick=()=>navigatePage('admin');
 $('open-create').onclick=$('close-admin').onclick=()=>navigatePage('create');
+$('open-create').onclick=newProject;
+$('editor-settings').onclick=()=>{history.pushState({},'','/create?project='+current.id);navigatePage('create',false);$('editor-menu').open=false;window.scrollTo(0,0)};
+$('editor-back').onclick=()=>navigatePage('editor');
+$('setup-back').onclick=()=>navigatePage('editor');
+for(const id of ['canvas-mode','graphic-style'])$(id).onchange=()=>{drafts.add('brief');render()};
+$('editor-canvas-mode').onchange=async()=>{
+  if(!current)return;
+  const control=$('editor-canvas-mode'),mode=control.value,pid=current.id;
+  control.disabled=true;
+  try{
+    await finishInlineEdits();await document.fonts.ready;
+    const slide_layouts=layoutUpdatesFor({...current,canvas_mode:mode});
+    const updated=await api('/api/projects/'+pid,'PATCH',{canvas_mode:mode,slide_layouts});
+    if(current?.id===pid){current=updated;$('canvas-mode').value=mode;render()}
+    toast('Formato applicato e salvato. Nessun testo o immagine rigenerati.');
+  }catch(error){control.value=current?.canvas_mode||'fixed';toast(error.message)}
+  finally{control.disabled=!current}
+};
 document.querySelector('.brand').onclick=event=>{event.preventDefault();navigatePage('create')};
 window.addEventListener('popstate',()=>navigatePage(location.pathname.replace(/\/$/,'')==='/admin'?'admin':location.pathname.replace(/\/$/,'')==='/library'?'library':'create',false));
 $('admin-form').addEventListener('input',event=>{
@@ -1518,7 +1793,7 @@ async function saveAdmin(){
 $('admin-form').onsubmit=async e=>{e.preventDefault();try{await saveAdmin()}catch(error){$('admin-status').textContent=error.message}};
 $('admin-load').onclick=async()=>{
   $('admin-load').disabled=true;
-  try{const p=await saveAdmin();$('admin-status').textContent='Caricamento del modello…';await api('/api/llm/start','POST',{model:p.model});await models();$('admin-status').textContent='Modello caricato con il profilo scelto.'}
+  try{const p=await saveAdmin();$('admin-status').textContent='Caricamento del modello…';const state=await api('/api/llm/start','POST',{model:p.model});await models();$('admin-status').textContent='Modello caricato con il profilo scelto.'+(state.mtp?' '+state.mtp.reason:'')}
   catch(error){$('admin-status').textContent=error.message}finally{$('admin-load').disabled=false}
 };
 $('admin-stop').onclick=async()=>{try{await api('/api/llm/stop','POST',{});await models();$('admin-status').textContent='Modello di H3-slides scaricato.'}catch(error){$('admin-status').textContent=error.message}};
@@ -1531,6 +1806,12 @@ $('theme-editor').oninput=e=>{
 async function loadThemes(){
   const [builtins,personal]=await Promise.all([fetch('/static/theme-presets.json').then(r=>r.json()),api('/api/themes')]);
   themePresets=[...builtins,...personal];
+  $('theme-gallery').replaceChildren(...themePresets.map((preset,index)=>{
+    const button=document.createElement('button');button.type='button';button.className='theme-swatch';
+    const t=themeFor(preset.values);button.style.setProperty('--preview-bg',t.bg);button.style.setProperty('--preview-fg',t.fg);button.style.setProperty('--preview-accent',t.accent);
+    button.innerHTML='<span class="theme-mini theme-mini-'+index%3+'" aria-hidden="true"><i></i><b></b><em></em><strong></strong></span><span>'+esc(preset.name)+'</span>';
+    button.onclick=()=>{$('theme-presets').value=String(index);$('theme-presets').onchange();for(const other of $('theme-gallery').children)other.setAttribute('aria-pressed',String(other===button))};return button;
+  }));
   $('theme-presets').innerHTML='<option value="">Personalizzato / tema corrente</option>'+themePresets.map((p,i)=>
     '<option value="'+i+'">'+esc(p.name)+(i>=builtins.length?' · personale':'')+'</option>').join('');
 }
@@ -1539,11 +1820,13 @@ $('theme-presets').onchange=()=>{
   for(const key of ['theme','font','template'])$(key).value=preset.values[key];
   $('background-color').value=preset.values.background_color;$('accent-color').value=preset.values.accent_color;
   fillThemeDesign(preset.values.theme_design);$('theme-name').value=preset.name;
+  $('theme-preset-name').value=preset.name;$('graphic-style').value=preset.values.graphic_style||(preset.values.template==='editorial'?'editorial':preset.values.template==='cards'?'vivid':'studio');
   drafts.add('brief');$('save-status').textContent='Tema applicato in anteprima · salva il brief';render();
 };
 $('save-theme').onclick=async()=>{
   try{
     const values={theme:$('theme').value,font:$('font').value,template:$('template').value,
+      graphic_style:$('graphic-style').value,
       background_color:$('background-color').value,accent_color:$('accent-color').value,theme_design:readThemeDesign()};
     await api('/api/themes','POST',{name:$('theme-name').value,values});
     await loadThemes();$('theme-status').textContent='Tema salvato sul PC, riutilizzabile negli altri progetti. Salva il brief per applicarlo al progetto corrente.';

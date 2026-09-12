@@ -35,7 +35,7 @@ try{
       assert.ok(Object.hasOwn(responses,url.pathname),'Unexpected API '+url.pathname);
       return route.fulfill({json:responses[url.pathname]});
     }
-    const relative=url.pathname==='/'?'index.html':url.pathname.replace(/^\/static\//,'');
+    const relative=['/','/create','/editor'].includes(url.pathname)?'index.html':url.pathname.replace(/^\/static\//,'');
     const file=resolve(staticRoot,relative);
     assert.ok(file.startsWith(staticRoot.endsWith(sep)?staticRoot:staticRoot+sep));
     const contentType={'.html':'text/html','.mjs':'text/javascript','.js':'text/javascript',
@@ -48,7 +48,7 @@ try{
     await page.locator('#save-project').click();
     await page.waitForFunction(()=>document.querySelector('#save-status').textContent==='Salvato sul PC');
   };
-  await page.goto('http://127.0.0.1:9876/');
+  await page.goto('http://127.0.0.1:9876/create');
   await ready();
   const openverse=page.locator('#openverse-images'),web=page.locator('#web-images');
   assert.equal(await openverse.isChecked(),false,'Legacy project does not opt in');

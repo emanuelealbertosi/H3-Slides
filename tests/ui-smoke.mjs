@@ -16,12 +16,10 @@ try{
   assert.equal(await page.locator('.project-card[data-project="'+pid+'"]').count(),1);
   await page.locator('.project-card[data-project="'+pid+'"] [data-open-project]').click();
   await page.locator('.slide-card').waitFor();
-  assert.equal(new URL(page.url()).pathname,'/');
-  await page.locator('#toggle-sidebar').click();
-  assert.equal(await page.locator('body').evaluate(body=>body.classList.contains('sidebar-collapsed')),true);
+  assert.equal(new URL(page.url()).pathname,'/editor');
+  assert.equal(await page.locator('#toggle-sidebar').isVisible(),false,'No lateral menu in the new studio');
   await page.reload();
-  assert.equal(await page.locator('body').evaluate(body=>body.classList.contains('sidebar-collapsed')),true);
-  await page.locator('#toggle-sidebar').click();
+  await page.locator('.slide-card').waitFor();
   assert.equal(await page.locator('.slide-card').first().locator('.heading').getAttribute('draggable'),'true');
   const headingMoved=page.waitForResponse(r=>r.url().includes('/slides/')&&r.request().method()==='PATCH');
   const headingBox=await page.locator('.slide-card').first().locator('.heading').boundingBox();
@@ -31,6 +29,8 @@ try{
   await page.mouse.move(footerBox.x+footerBox.width/2,footerBox.y+footerBox.height/2,{steps:12});
   await page.mouse.up();
   assert.equal((await headingMoved).status(),200);
+  await page.waitForFunction(()=>!document.querySelector('.slide-card').dataset.saving);
+  await page.locator('.slide-preview').first().scrollIntoViewIfNeeded();
   const boxes=page.locator('.slide-card').first().locator('.prose-box');
   if(await boxes.count()>1){
     const source=page.locator('.slide-card').first().locator('[data-block-index="0"]');
@@ -94,7 +94,7 @@ try{
       ['x','y','w','h'].map(key=>Number(element.dataset['free'+key.toUpperCase()]))])));
   for(const [key,box] of Object.entries(measured))
     assert.ok(['x','y','w','h'].every((name,index)=>Math.abs(box[name]-converted[key][index])<=2),
-      'conversione libera non fedele per '+key);
+      'conversione libera non fedele per '+key+': prima='+JSON.stringify(box)+' dopo='+JSON.stringify(converted[key]));
   assert.deepEqual(await page.locator('.prose-box').first().evaluate(element=>{
     const style=getComputedStyle(element);
     return [style.padding,style.borderTopWidth,style.borderLeftWidth,style.borderRadius,style.boxShadow];
@@ -108,11 +108,19 @@ try{
   await page.mouse.up();assert.equal((await freeSaved).status(),200);
   await page.reload();await page.locator('.slide-frame.tpl-freeform').waitFor();
   assert.notEqual(Number(await page.locator('[data-block-index="0"]').first().getAttribute('data-free-x')),oldFreeX);
-  const resizedBlock=page.locator('[data-block-index="0"]').first();
+  const resizedBlock=page.locator('[data-free-key="block-0"]').first();
+  await resizedBlock.click({position:{x:16,y:40}});
+  assert.equal(await resizedBlock.evaluate(e=>e.classList.contains('is-selected')),true);
+  const resizeFrame=page.locator('.slide-frame.tpl-freeform').first();
+  assert.equal(await resizeFrame.locator('[data-free-resize="block-0"]:visible').count(),8);
   const oldFreeW=Number(await resizedBlock.getAttribute('data-free-w'));
-  const resizeHandle=page.locator('[data-free-resize="block-0"]').first(),resizeBox=await resizeHandle.boundingBox();
+  const resizeHandle=resizeFrame.locator('[data-free-resize="block-0"][data-resize-edge="se"]');
+  await resizeHandle.scrollIntoViewIfNeeded();
+  const resizeBox=await resizeHandle.boundingBox();
+  assert.ok(resizeBox,'The selected box exposes its southeast resize handle');
   await page.mouse.move(resizeBox.x+resizeBox.width/2,resizeBox.y+resizeBox.height/2);
-  await page.mouse.down();await page.mouse.move(resizeBox.x+resizeBox.width/2+80,resizeBox.y+resizeBox.height/2,{steps:10});
+  // Shrink: the wider studio canvas can put this box flush against the right edge.
+  await page.mouse.down();await page.mouse.move(resizeBox.x+resizeBox.width/2-80,resizeBox.y+resizeBox.height/2,{steps:10});
   assert.notEqual(Number(await resizedBlock.getAttribute('data-free-w')),oldFreeW);
   const resizeSaved=page.waitForResponse(r=>r.url().includes('/slides/')&&r.request().method()==='PATCH');
   await page.mouse.up();assert.equal((await resizeSaved).status(),200);
@@ -127,6 +135,7 @@ try{
   await page.reload();
   await page.locator('.prose-box p').first().waitFor();
   assert.deepEqual(await page.locator('.prose-box p').allTextContents(),paragraphs);
+  await page.locator('#editor-menu>summary').click();await page.locator('#editor-settings').click();
   await page.locator('#prompt').fill('Una modifica al brief ancora non salvata');
   await page.waitForTimeout(1800);
   assert.equal(await page.locator('#prompt').inputValue(),'Una modifica al brief ancora non salvata');
@@ -137,12 +146,15 @@ try{
   assert.ok(await page.locator('#local-fields').isVisible());
   await page.locator('#close-admin').click();
   assert.equal(await page.locator('.slide-card').count(),1);
+  await page.locator('#editor-menu>summary').click();await page.locator('#editor-settings').click();
+  await page.getByText('Personalizzazione avanzata · layout, font e colori',{exact:true}).click();
   await page.locator('#template').selectOption('steps');
   await page.locator('#font').selectOption('Georgia');
   await page.locator('#source-images').uncheck();
   const styleSaved=page.waitForResponse(r=>r.url().includes('/api/projects/'+pid)&&r.request().method()==='PATCH');
   await page.locator('#save-project').click();
   await styleSaved;
+  await page.locator('#setup-back').click();
   await page.reload();
   await page.locator('.slide-frame').waitFor();
   assert.equal(await page.locator('#template').inputValue(),'steps');
@@ -174,6 +186,8 @@ try{
   await page.locator('#close-admin').click();
   await page.reload();
   await page.getByRole('heading',{name:'Titolo inline verificato',exact:true}).waitFor();
+  await page.locator('#editor-menu>summary').click();await page.locator('#editor-settings').click();
+  await page.getByText('Personalizzazione avanzata · layout, font e colori',{exact:true}).click();
   await page.getByText('Creatore di temi',{exact:true}).click();
   await page.locator('#theme-presets option', {hasText:'Notte'}).waitFor({state:'attached'});
   await page.locator('#theme-presets').selectOption({label:'Notte · blu e corallo'});
@@ -192,18 +206,21 @@ try{
   const briefSaved=page.waitForResponse(r=>r.url().endsWith('/api/projects/'+pid)&&r.request().method()==='PATCH');
   await page.locator('#save-project').click();
   assert.equal((await briefSaved).status(),200);
+  await page.locator('#setup-back').click();
   await page.reload();
   await page.locator('.prose-box').first().waitFor();
   assert.equal(await page.locator('#background-color').inputValue(),'#111d35');
   assert.equal(await page.locator('[data-theme-number="body_size"]').inputValue(),'21');
   await page.locator('#theme-presets option').filter({hasText:'Tema test browser'}).waitFor({state:'attached'});
+  await page.locator('#editor-menu>summary').click();await page.locator('#editor-settings').click();
   await page.locator('#web-enabled').check();
   await page.locator('#web-query').fill('Query visibile prima del consenso');
   await page.locator('#web-consent').check();
   await page.locator('#web-query').fill('Query cambiata');
   assert.equal(await page.locator('#web-consent').isChecked(),true);
   await page.reload();
-  await page.locator('.slide-card').waitFor();
+  await page.locator('.slide-card').waitFor({state:'attached'});
+  assert.equal(await page.locator('.settings').isVisible(),true,'Reload preserves the settings page');
   assert.equal(await page.locator('#web-enabled').isChecked(),false);
   assert.equal(await page.locator('#web-consent').isChecked(),true);
   const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth);

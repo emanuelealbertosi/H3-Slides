@@ -31,6 +31,47 @@ test('old prose can change layout; recomposition is stable and preserves input',
   assert.deepEqual(layoutCandidates(visual,content,0,true),['visual-bottom']);
 });
 
+test('focus headings share a peer scale and emphasize only a single block',async()=>{
+  const browser=await chromium.launch({headless:true});
+  try{
+    const page=await browser.newPage({viewport:{width:1280,height:720}});
+    for(const visual of [false,true])for(const count of [1,2,3]){
+      const content={...make('focus',count),image_placeholder:visual};
+      await page.setContent('<style>'+slideCSS+'body{margin:0}</style>'+slideHTML({title:'Gerarchia',theme:'paper'},{content},0));
+      const sizes=await page.locator('.prose-box h2').evaluateAll(nodes=>nodes.map(e=>getComputedStyle(e).fontSize));
+      assert.deepEqual(sizes,Array(count).fill(count===1?'32px':visual?'23px':'25px'),
+        'Equal-level headings must not gain importance merely by their order');
+    }
+  }finally{await browser.close()}
+});
+
+test('focus typography preserves manual fonts, legacy placements and editable capoversi',async()=>{
+  const browser=await chromium.launch({headless:true});
+  try{
+    const page=await browser.newPage({viewport:{width:1280,height:720}});
+    const content={...make('freeform'),freeform_base:'focus',freeform:{
+      heading:{x:48,y:60,w:1184,h:120},'block-0':{x:48,y:200,w:560,h:360},
+      'block-1':{x:650,y:200,w:560,h:360}}};
+    content.blocks[0].text='Il primo capoverso introduce il concetto e la sua funzione.\n\nIl secondo collega il concetto a un esempio concreto.\n\nIl terzo esplicita una conseguenza.';
+    const original=JSON.stringify(content);
+    const project={title:'Impostazioni conservate',theme:'paper',theme_design:{title_size:58,body_size:26}};
+    await page.setContent('<style>'+slideCSS+'body{margin:0}</style>'+slideHTML(project,{content},0));
+    assert.equal(await page.locator('h1').evaluate(e=>getComputedStyle(e).fontSize),'58px');
+    assert.deepEqual(await page.locator('.prose-box p').evaluateAll(nodes=>nodes.map(e=>getComputedStyle(e).fontSize)),['26px','26px']);
+    const placements=await page.locator('[data-free-key]').evaluateAll(nodes=>Object.fromEntries(nodes.map(e=>[
+      e.dataset.freeKey,{x:e.offsetLeft,y:e.offsetTop,w:e.offsetWidth,h:e.offsetHeight}])));
+    for(const [key,value] of Object.entries(content.freeform))assert.deepEqual(placements[key],value);
+    const prose=page.locator('[data-edit-field="block-text"][data-index="0"]');
+    assert.equal(await prose.count(),1,'Capoversi keep the existing single inline-editing target');
+    assert.equal(await prose.textContent(),content.blocks[0].text);
+    assert.equal(await prose.evaluate(e=>getComputedStyle(e).whiteSpace),'pre-wrap');
+    await page.locator('.prose-box h2').first().evaluate(e=>e.style.fontSize='29px');
+    assert.equal(await page.locator('.prose-box h2').first().evaluate(e=>getComputedStyle(e).fontSize),'29px',
+      'Explicit element typography remains authoritative');
+    assert.equal(JSON.stringify(content),original);
+  }finally{await browser.close()}
+});
+
 test('invisible visual anchors cover compact, wide, top and bottom placements',()=>{
   assert.equal(visualAnchorAt(500,20,1000,600),'visual-top');
   assert.equal(visualAnchorAt(500,590,1000,600),'visual-bottom');

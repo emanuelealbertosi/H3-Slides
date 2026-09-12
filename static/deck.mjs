@@ -1,5 +1,6 @@
 import {layoutCandidates,composerCSS} from './composer.mjs';
 import katex from './vendor/katex/katex.mjs';
+import {codeHTML,codeCSS} from './code-blocks.mjs';
 export {layouts,layoutCandidates,fitSlide,visualAnchorAt} from './composer.mjs';
 export const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const formulaHTML=(source,displayMode=false)=>{
@@ -71,8 +72,8 @@ export function contentBlocks(content){return content.blocks||[]}
 const clamp=(value,minimum,maximum)=>Math.max(minimum,Math.min(maximum,value));
 function validFreePlacement(value,fallback){
   if(!value||!['x','y','w','h'].every(key=>Number.isFinite(Number(value[key]))))return fallback;
-  const w=clamp(Math.round(Number(value.w)),80,1280),h=clamp(Math.round(Number(value.h)),44,680);
-  return {x:clamp(Math.round(Number(value.x)),0,1280-w),y:clamp(Math.round(Number(value.y)),0,680-h),w,h};
+  const w=clamp(Math.round(Number(value.w)),80,1280),h=clamp(Math.round(Number(value.h)),44,968);
+  return {x:clamp(Math.round(Number(value.x)),0,1280-w),y:clamp(Math.round(Number(value.y)),0,968-h),w,h};
 }
 function defaultFreePlacements(content,hasVisual,hasPhoto=false){
   const placements={heading:{x:48,y:60,w:1184,h:120}};
@@ -120,7 +121,7 @@ const freeData=(placements,key)=>{
 };
 
 const imageCSS='.slide-frame .photo-visual{margin:0;display:flex;flex-direction:column;gap:6px;overflow:hidden}.photo-visual>img{width:100%;height:100%;flex:1;min-height:0;object-fit:contain}.photo-visual>.image-credit{flex:none;font:11px/1.3 Arial,sans-serif;color:var(--muted);max-height:30px;overflow:hidden}.image-credit a{color:inherit;text-decoration:none}.slide-frame .image-placeholder{display:flex;align-items:center;justify-content:center;border:2px dashed var(--line);border-radius:var(--box-radius,18px);background:var(--surface);color:var(--fg);padding:24px}.placeholder-copy{text-align:center;overflow:hidden;max-height:100%}.placeholder-title{display:block;font-size:23px;line-height:1.25}.placeholder-query{font-size:16px;line-height:1.4;color:var(--muted);overflow-wrap:anywhere}';
-export const slideCSS = '*{box-sizing:border-box}.slide-frame{width:1280px;height:720px;position:relative;overflow:hidden;font-family:var(--font,Arial),sans-serif;background:var(--bg);color:var(--fg);display:flex;flex-direction:column}.slide-frame .heading{flex:none}.slide-frame h1{color:var(--heading)}.slide-frame .slide-columns{display:flex}.slide-frame .footer{position:absolute;display:flex;justify-content:space-between;gap:20px;color:var(--muted);border-top:1px solid var(--line)}.slide-frame .footer span:first-child{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.slide-frame .katex-display{margin:.25em 0}.slide-frame .katex{font-size:1.04em}.slide-frame [data-edit-field] .katex{pointer-events:none}' + composerCSS + imageCSS;
+export const slideCSS = '*{box-sizing:border-box}.slide-frame{width:1280px;height:720px;position:relative;overflow:hidden;font-family:var(--font,Arial),sans-serif;background:var(--bg);color:var(--fg);display:flex;flex-direction:column}.slide-frame .heading{flex:none}.slide-frame h1{color:var(--heading)}.slide-frame .slide-columns{display:flex}.slide-frame .footer{position:absolute;display:flex;justify-content:space-between;gap:20px;color:var(--muted);border-top:1px solid var(--line)}.slide-frame .footer span:first-child{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.slide-frame .katex-display{margin:.25em 0}.slide-frame .katex{font-size:1.04em}.slide-frame [data-edit-field] .katex{pointer-events:none}' + composerCSS + imageCSS + codeCSS;
 
 export function slideHTML(project,slide,index,imageUrl=''){
   const c=slide.content,t=themeFor(project),visual=visualFor(project,c,slide),template=templateFor(project,c,index,slide);
@@ -147,11 +148,11 @@ export function slideHTML(project,slide,index,imageUrl=''){
     return '<section class="prose-box kind-'+esc(b.kind)+'" data-block-index="'+i+'"'+freeData(placements,'block-'+i)+' style="--box-bg:'+colors.bg+';--box-fg:'+colors.fg+';--box-border:'+colors.border+';'+freeStyle(placements,'block-'+i)+'">'+
       '<div class="block-number">'+String(i+1).padStart(2,'0')+'</div>'+
       '<h2 data-edit-field="block-heading" data-index="'+i+'"'+rawAttr(b.heading)+'>'+mathHTML(b.heading)+'</h2>'+
-      '<p data-edit-field="block-text" data-index="'+i+'"'+rawAttr(b.text)+'>'+mathHTML(b.text)+'</p>'+
+      '<p data-edit-field="block-text" data-index="'+i+'"'+rawAttr(b.text)+'>'+(b.kind==='code'?codeHTML(b.text,b.language):mathHTML(b.text))+'</p>'+
       '<div class="prose-source" data-edit-field="block-source" data-index="'+i+'"'+rawAttr(b.source)+'>'+mathHTML(b.source)+'</div></section>';
   };
   const record=[...(project.visual_assets||[]),...(project.sources||[]).flatMap(source=>source.images||[])].find(item=>item.id===visual.photo);
-  const credit=record?.origin==='web'?[record.author,record.license,'Wikimedia Commons'].filter(Boolean).join(' · '):'';
+  const credit=record?.origin==='web'?[record.author,record.license,record.image_provider||'Wikimedia Commons'].filter(Boolean).join(' · '):'';
   const attribution=credit?'<figcaption class="image-credit" title="'+esc(credit)+'">'+
     (/^https:\/\/commons\.wikimedia\.org\//.test(record.source)?'<a href="'+esc(record.source)+
       '" target="_blank" rel="noopener noreferrer">'+esc(credit)+'</a>':esc(credit))+'</figcaption>':'';
@@ -166,12 +167,13 @@ export function slideHTML(project,slide,index,imageUrl=''){
       '<div class="placeholder-copy"><strong class="placeholder-title">Immagine da inserire</strong>'+
       '<p class="placeholder-query">'+esc(c.image_query||c.title)+'</p></div></div>':'';
   return '<article class="slide-frame tpl-'+esc(template)+(template==='freeform'?' tpl-'+esc(freeBase):'')+
+    ' style-'+esc(['studio','editorial','vivid'].includes(project.graphic_style)?project.graphic_style:'classic')+
     ' density-'+esc(project.text_density||'detailed')+
     (visual.diagram||hasPhoto?' has-visual':'')+(visual.diagram?' has-diagram':'')+(dual?' has-multiple-visuals':'')+(blocks.reduce((n,b)=>n+b.text.length,0)>1100?' copy-dense':'')+
     ' heading-'+esc(c.heading_position||'top')+' heading-align-'+esc(c.heading_align||'left')+
     (d.title_size?' custom-title-size':'')+(d.body_size?' custom-body-size':'')+
     (template==='freeform'&&c.freeform_compact?' compact-spacing':'')+'" data-candidates="'+esc(JSON.stringify(candidates))+
-    '" data-layout="'+esc(template)+'" data-free-base="'+esc(freeBase)+'" data-free-compact="'+String(Boolean(c.freeform_compact))+
+    '" data-canvas-height="'+Math.max(720,Math.min(1008,Number(c.canvas_height)||720))+'" data-canvas-mode="'+(project.canvas_mode==='adaptive'?'adaptive':'fixed')+'" data-layout="'+esc(template)+'" data-free-base="'+esc(freeBase)+'" data-free-compact="'+String(Boolean(c.freeform_compact))+
     '" style="'+style+';--item-count:'+(blocks.length||c.bullets?.length||1)+'">'+
     '<div class="slide-accent"></div>'+
     '<div class="kicker">H3 SLIDES <span>/ '+String(index+1).padStart(2,'0')+'</span></div><div class="heading"'+freeData(placements,'heading')+' style="'+freeStyle(placements,'heading')+'">'+

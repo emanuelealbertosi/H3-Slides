@@ -64,6 +64,39 @@ async def test_truncated_json_is_reported_without_exposing_response():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("content,valid", [('{"ok":true}', True), ('{"outer":{"ok":true}', False)])
+async def test_length_boundary_accepts_only_a_complete_json_payload(content, valid):
+    async def complete(request):
+        return web.json_response({"choices": [{"finish_reason": "length", "message": {"content": content}}]})
+    app = web.Application();app.router.add_post("/chat/completions", complete)
+    async with TestServer(app) as server:
+        client = LLM(Provider(model="test"), SimpleNamespace(last_used=0))
+        client.url, client.model = str(server.make_url("")).rstrip("/"), "test"
+        if valid:
+            assert await client.json("Synthetic content") == {"ok": True}
+        else:
+            with pytest.raises(ValueError, match="troncata"):
+                await client.json("Synthetic content")
+
+
+@pytest.mark.asyncio
+async def test_remote_provider_without_json_mode_gets_one_compatibility_retry():
+    bodies = []
+    async def complete(request):
+        body = await request.json();bodies.append(body)
+        if "response_format" in body:
+            return web.json_response({"error": {"message": "response_format unsupported"}}, status=400)
+        return web.json_response({"choices": [{"finish_reason": "stop", "message": {"content": '{"ok":true}'}}]})
+    app = web.Application();app.router.add_post("/v1/chat/completions", complete)
+    async with TestServer(app) as server:
+        client = LLM(Provider(mode="remote", model="test", remote_consent=True,
+                     base_url=str(server.make_url("/"))), SimpleNamespace(last_used=0))
+        await client.prepare()
+        assert await client.json("Synthetic content") == {"ok": True}
+    assert len(bodies) == 2 and "response_format" not in bodies[1]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("limit", [12000, None])
 async def test_api_inference_reaches_server(limit, monkeypatch):
     bodies, timeouts = [], []
@@ -87,6 +120,7 @@ async def test_api_inference_reaches_server(limit, monkeypatch):
         assert await client.json("Synthetic content") == {"ok": True}
     assert timeouts == [900]
     body = bodies[0]
+    assert body["response_format"] == {"type": "json_object"}
     assert body["temperature"] == .6 and body["top_p"] == .8
     assert body["model"] == "test-api"
     if limit is None:

@@ -108,7 +108,7 @@ def _relevant(title, query):
     return not ((title_words & roman) - set(words))
 
 
-def openverse_candidate(row, query):
+def openverse_candidate(row, query, *, manual_selection=False):
     """Return a normalized candidate, retaining Openverse's original license code."""
     if not isinstance(row, dict):
         return None
@@ -121,7 +121,8 @@ def openverse_candidate(row, query):
         return None
     title, author, ident = (_plain(row.get("title")), _plain(row.get("creator")),
                             _plain(row.get("id"), 200))
-    if not title or not author or not ident or not _relevant(title, query):
+    # In the browser the user judges relevance; licence and safety checks still apply.
+    if not title or not author or not ident or (not manual_selection and not _relevant(title, query)):
         return None
     image_url = _https_url(row.get("url"))
     source_url = _https_url(row.get("foreign_landing_url"))

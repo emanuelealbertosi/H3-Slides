@@ -254,6 +254,33 @@ async def test_prompt_only_generation_and_regeneration(store, mode):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["local", "remote"])
+async def test_recover_partial_project_preserves_ready_slides_and_outline(store, mode):
+    p = store.create(ProjectInput(title="Da recuperare", prompt="Spiega il corso", count=2).model_dump())
+    ready = {"id": "conservata", "revision": 7, "status": "ready", "purpose": "Testo modificato a mano",
+             "content": SlideContent(title="Non cambiare", blocks=[{"text": "Modifica manuale da conservare."}]).model_dump()}
+    p["slides"] = [ready, {"id": "mancante", "revision": 0, "status": "pending", "purpose": "Da completare",
+                          "content": SlideContent(title="Seconda slide").model_dump()}]
+    store.save_project(p)
+    calls = []
+    class RecoveryLLM(FakeLLM):
+        entered = None
+        async def json(self, prompt, **kwargs):
+            calls.append(prompt)
+            assert "Proponi esattamente" not in prompt, "Recovery must retain the existing outline"
+            return await super().json(prompt, **kwargs)
+    worker = Worker(store, SimpleNamespace());worker.clients = RecoveryLLM
+    job = worker.submit(p["id"], Generation(provider={"mode": mode, "model": "fake", "remote_consent": True},
+                        prompt=p["prompt"], count=2, regenerate_all=False, rebuild_outline=False))
+    await worker.tasks[job["id"]]
+    result = store.project(p["id"])
+    assert store.job(job["id"])["status"] == "completed"
+    assert result["slides"][0] == ready
+    assert result["slides"][1]["id"] == "mancante" and result["slides"][1]["status"] == "ready"
+    assert len(calls) == 1 and len(store.projects()) == 1
+
+
+@pytest.mark.asyncio
 async def test_regenerate_all_rewrites_every_slide_but_keeps_outline(store):
     p = store.create(ProjectInput(title="Corso", prompt="Spiega il corso", count=2).model_dump())
     p["slides"] = [

@@ -24,6 +24,8 @@ from .composition import split_content
 from .diagrams import fingerprint
 from .remote_models import RemoteModelRequest, list_remote_models
 from .web_images import store_image, MAX_IMAGE_BYTES
+from .image_search import ImageSearch, SearchRequest, ImageSelection
+from .document_image_search import DocumentImageSearch
 from .export_names import EXPORT_FORMATS, save_download_name, download_filename, attachment_header
 
 
@@ -92,6 +94,8 @@ def create_app(root=None, data_root=None):
     app["manager"] = manager = LlamaManager(root, config, guard, profile_root=store.root)
     app["worker"] = worker = Worker(store, manager)
     app["export_lock"] = asyncio.Lock()
+    app["image_search"] = image_search = ImageSearch()
+    app["document_image_search"] = document_image_search = DocumentImageSearch()
     app["stop_event"] = asyncio.Event()
     picker_lock = asyncio.Lock()
     slidev_state = {"process": None, "project_id": None, "log": None}
@@ -203,6 +207,9 @@ def create_app(root=None, data_root=None):
                                   "loading_schema": LoadingSettings.model_json_schema(),
                                   "inference_schema": InferenceSettings.model_json_schema()})
 
+    async def admin_mtp(request):
+        return web.json_response(await manager.mtp_capability(request.query.get("model", "")))
+
     async def search_settings(request):
         if request.method == "POST":
             if worker.active():
@@ -309,7 +316,11 @@ def create_app(root=None, data_root=None):
     async def project(request):
         p = store.project(request.match_info["pid"])
         if request.method == "PATCH":
-            values = ProjectInput.model_validate(await request.json()).model_dump(exclude_unset=True)
+            payload = await request.json()
+            values = ProjectInput.model_validate(payload).model_dump(exclude_unset=True)
+            if "slide_layouts" in payload or "canvas_mode" in values:
+                from .project_layout import apply_layout_updates
+                apply_layout_updates(p, payload.get("slide_layouts", []), values.get("canvas_mode"))
             old_style = tuple(p.get(k) for k in ("theme", "font", "background_color", "accent_color"))
             p.update(values)
             if old_style != tuple(p.get(k) for k in ("theme", "font", "background_color", "accent_color")):
@@ -527,6 +538,77 @@ def create_app(root=None, data_root=None):
         store.save_project(p)
         return web.json_response({"slide": item, "visual_asset": asset})
 
+    def image_target(pid, sid):
+        p = store.project(pid)
+        item = next((s for s in p["slides"] if s["id"] == sid), None)
+        if item is None:
+            raise KeyError()
+        return p, item
+
+    async def search_slide_images(request):
+        pid, sid = request.match_info["pid"], request.match_info["sid"]
+        p, _ = image_target(pid, sid)
+        body = SearchRequest.model_validate(await request.json())
+        if body.source == "document" or body.search_id.startswith("doc-"):
+            result = await asyncio.to_thread(document_image_search.search, store, p, sid, body)
+            # Discard a catalogue made stale by a source/scope change during local I/O.
+            latest, _ = image_target(pid, sid)
+            for row in result["results"]:
+                document_image_search.result(store, latest, sid, result["search_id"], row["id"])
+            return web.json_response(result)
+        return web.json_response(await image_search.search(pid, sid, body))
+
+    async def preview_search_image(request):
+        pid, sid = request.match_info["pid"], request.match_info["sid"]
+        p, _ = image_target(pid, sid)
+        search_id, result_id = request.match_info["search"], request.match_info["result"]
+        if search_id.startswith("doc-"):
+            raw = await asyncio.to_thread(document_image_search.preview, store, p, sid, search_id, result_id)
+            latest, _ = image_target(pid, sid)
+            document_image_search.result(store, latest, sid, search_id, result_id)
+            return web.Response(body=raw, content_type="image/jpeg")
+        row = image_search.result(pid, sid, request.match_info["search"], request.match_info["result"])
+        return web.Response(body=await image_search.preview(row), content_type="image/jpeg")
+
+    async def select_search_image(request):
+        pid, sid = request.match_info["pid"], request.match_info["sid"]
+        body = ImageSelection.model_validate(await request.json())
+        _, item = image_target(pid, sid)
+        def conflict():
+            return web.json_response({"error": "La slide è cambiata: chiudi e riapri la ricerca prima di sostituire l'immagine"}, status=409)
+        if item["revision"] != body.revision:
+            return conflict()
+        if body.search_id.startswith("doc-"):
+            p, item = image_target(pid, sid)
+            row = document_image_search.result(store, p, sid, body.search_id, body.result_id)
+            content = SlideContent.model_validate(item["content"])
+            content.image_id, content.image_origin, content.image_placeholder = row["image_id"], "source", False
+            item.update(content=content.model_dump(), revision=body.revision+1, status="ready")
+            # An explicit manual choice enables source display, even when automatic
+            # source images had been disabled. The original asset is reused unchanged.
+            if not p.get("use_source_images"):
+                p["use_source_images"] = True
+                p["revision"] += 1
+            store.save_project(p)
+            return web.json_response({"slide": item, "source_image": {
+                "id": row["image_id"], "label": row["label"], "pdf_page": row.get("pdf_page"),
+                "kind": row.get("kind"), "document": row.get("document", "")},
+                "use_source_images": True})
+        row = image_search.result(pid, sid, body.search_id, body.result_id)
+        raw, metadata = await image_search.download(row)
+        # Re-read AFTER network awaits: neither concurrent edits nor other slide jobs are lost.
+        p, item = image_target(pid, sid)
+        if item["revision"] != body.revision:
+            return conflict()
+        content = SlideContent.model_validate(item["content"])
+        asset = store_image(store, pid, raw, origin="web", **metadata)
+        content.image_id, content.image_origin, content.image_placeholder = asset["id"], "web", False
+        content.image_query = metadata["query"]
+        item.update(content=content.model_dump(), revision=body.revision+1, status="ready")
+        p.setdefault("visual_assets", []).append(asset)
+        store.save_project(p)
+        return web.json_response({"slide": item, "visual_asset": asset})
+
     async def split_slide(request):
         p = store.project(request.match_info["pid"])
         item = next((s for s in p["slides"] if s["id"] == request.match_info["sid"]), None)
@@ -560,10 +642,34 @@ def create_app(root=None, data_root=None):
         return web.json_response(public_project(p))
 
     async def generate(request):
-        req = Generation.model_validate(await request.json())
+        payload = await request.json()
+        if not isinstance(payload, dict):
+            raise ValueError("Richiesta di generazione non valida")
+        new_version = payload.pop("new_version", False)
+        settings = payload.pop("project_settings", None)
+        req = Generation.model_validate(payload)
         if req.provider.mode == "remote" and not req.provider.remote_consent:
             raise ValueError("Conferma esplicitamente l'invio delle fonti all'API remota")
-        return web.json_response(worker.submit(request.match_info["pid"], req), status=202)
+        pid = request.match_info["pid"]
+        if type(new_version) is not bool:
+            raise ValueError("Scelta versione non valida")
+        if new_version:
+            if not req.regenerate_all or req.slide_id or req.diagram_only:
+                raise ValueError("Una nuova versione richiede la rigenerazione della presentazione")
+            if worker.active():
+                raise ValueError("Attendi o annulla la generazione attiva prima di creare una versione")
+            values = ProjectInput.model_validate(settings or store.project(pid)).model_dump()
+            if values["web_enabled"] and not req.web_consent:
+                raise ValueError("Autorizza la ricerca web prima di creare una versione")
+            p = store.fork_project(pid, values)
+            pid = p["id"]
+        result = worker.submit(pid, req)
+        p = store.project(pid)
+        p["generation_settings"] = {"project": ProjectInput.model_validate(p).model_dump(),
+            "provider": req.provider.model_dump(exclude={"api_key", "remote_consent"}),
+            "request": req.model_dump(exclude={"provider"}), "job_id": result["id"]}
+        store.save_project(p)
+        return web.json_response(result, status=202)
 
     async def jobs(request):
         return web.json_response(store.jobs())
@@ -688,6 +794,8 @@ def create_app(root=None, data_root=None):
         store.db.close()
 
     app.router.add_get("/", index)
+    app.router.add_get("/create", index)
+    app.router.add_get("/editor", index)
     app.router.add_get("/library", index)
     app.router.add_get("/library/", index)
     app.router.add_get("/admin", index)
@@ -698,6 +806,7 @@ def create_app(root=None, data_root=None):
     app.router.add_post("/api/local-models/{action}", local_model)
     app.router.add_get("/api/admin/llm", admin_llm)
     app.router.add_post("/api/admin/llm", admin_llm)
+    app.router.add_get("/api/admin/llm/mtp", admin_mtp)
     app.router.add_get("/api/admin/search", search_settings)
     app.router.add_post("/api/admin/search", search_settings)
     app.router.add_get("/api/themes", themes)
@@ -717,6 +826,9 @@ def create_app(root=None, data_root=None):
     app.router.add_delete("/api/projects/{pid}/sources/{source_id}", remove_source)
     app.router.add_patch("/api/projects/{pid}/slides/{sid}", slide)
     app.router.add_post("/api/projects/{pid}/slides/{sid}/image", upload_slide_image)
+    app.router.add_post("/api/projects/{pid}/slides/{sid}/image-search", search_slide_images)
+    app.router.add_get("/api/projects/{pid}/slides/{sid}/image-search/{search}/{result}/preview", preview_search_image)
+    app.router.add_post("/api/projects/{pid}/slides/{sid}/image-search/select", select_search_image)
     app.router.add_post("/api/projects/{pid}/reorder", reorder)
     app.router.add_post("/api/projects/{pid}/slides/{sid}/split", split_slide)
     app.router.add_post("/api/projects/{pid}/generate", generate)

@@ -60,7 +60,9 @@ async def test_worker_repairs_overlong_small_model_draft(tmp_path):
         job = worker.submit(project["id"], Generation(provider={"model":"fake"}, prompt=project["prompt"], count=1))
         await worker.tasks[job["id"]]
         assert store.job(job["id"])["status"] == "completed"
-        assert schemas == [305, 185]
+        # Repairs retain enough grammar headroom to close a sentence. The
+        # editorial budget is enforced by validation, not a hard truncation.
+        assert schemas == [305, 305]
         assert len(store.project(project["id"])["slides"][0]["content"]["blocks"]) == 4
     finally:
         await worker.close()

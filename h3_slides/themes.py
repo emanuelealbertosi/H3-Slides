@@ -37,6 +37,7 @@ class ThemeValues(BaseModel):
     background_color: str = Field(default="#ffffff", pattern=COLOR)
     accent_color: str = Field(default="#2563eb", pattern=COLOR)
     theme_design: ThemeDesign = Field(default_factory=ThemeDesign)
+    graphic_style: Literal["classic", "studio", "editorial", "vivid"] = "studio"
 
 
 class ThemePreset(BaseModel):

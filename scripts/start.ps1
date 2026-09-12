@@ -26,6 +26,12 @@ if ($health -and $health.app -eq 'H3-slides') {
 if (Get-NetTCPConnection -LocalPort $config.port -State Listen -ErrorAction SilentlyContinue) {
     throw "La porta $($config.port) e' occupata. Non avvio altre copie."
 }
+# Keep renderer/browser temporary files on the app drive, not the system disk.
+# Process-local environment only: no Windows or user settings are changed.
+$appTemp = Join-Path $projectRoot 'data\runtime-tmp'
+New-Item -ItemType Directory -Path $appTemp -Force | Out-Null
+$env:TEMP = $appTemp
+$env:TMP = $appTemp
 $python = Join-Path $projectRoot '.venv\Scripts\python.exe'
 $entry = Join-Path $projectRoot 'run_h3_slides.py'
 if (-not (Test-Path -LiteralPath $python) -or

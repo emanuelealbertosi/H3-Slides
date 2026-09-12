@@ -15,7 +15,7 @@ def ingest(store, pid, filename, raw):
     suffix = Path(filename).suffix.lower()
     source = {"id": uid(), "name": filename, "kind": suffix[1:],
               "text": "", "images": [], "warnings": []}
-    if suffix in (".md", ".txt"):
+    if suffix in (".md", ".txt", ".py", ".c", ".cpp", ".h", ".hpp", ".js", ".java", ".sql"):
         source["text"] = raw.decode("utf-8-sig")
         if len(source["text"]) > MAX_TEXT:
             raise ValueError("Testo troppo lungo: massimo 240.000 caratteri; dividi il documento")
@@ -33,5 +33,5 @@ def ingest(store, pid, filename, raw):
         source["images"].append({"id": name, "label": filename})
         source["warnings"].append("Per interpretare questa immagine seleziona un modello vision")
     else:
-        raise ValueError("Formati accettati: PDF, MD, TXT, PNG, JPG, WEBP")
+        raise ValueError("Formati accettati: PDF, MD, TXT, PNG, JPG, WEBP e sorgenti Python/C/C++/JS/Java/SQL")
     return source

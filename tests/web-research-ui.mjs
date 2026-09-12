@@ -40,7 +40,7 @@ try{
       assert.ok(Object.hasOwn(responses,url.pathname),'Unexpected API '+url.pathname);
       return route.fulfill({json:responses[url.pathname]});
     }
-    const relative=url.pathname==='/'?'index.html':url.pathname.replace(/^\/static\//,'');
+    const relative=['/','/create','/editor'].includes(url.pathname)?'index.html':url.pathname.replace(/^\/static\//,'');
     const file=resolve(staticRoot,relative);
     assert.ok(file.startsWith(staticRoot.endsWith(sep)?staticRoot:staticRoot+sep));
     const contentType={'.html':'text/html','.mjs':'text/javascript','.js':'text/javascript',
@@ -51,7 +51,7 @@ try{
   for(const status of [undefined,'completed','document_fallback','failed']){
     research={...baseResearch,...(status?{status}:{}),
       sources:status==='document_fallback'||status==='failed'?[]:baseResearch.sources};
-    await page.goto('http://127.0.0.1:9876/');
+    await page.goto('http://127.0.0.1:9876/create');
     const panel=page.locator('#web-sources');
     await panel.locator('details').waitFor();
     assert.equal(await panel.locator('details').getAttribute('data-research-status'),status||'completed');

@@ -99,3 +99,55 @@ def test_final_fit_preserves_full_sentences_and_original_text():
     c.blocks[0].kind, c.blocks[0].source, c.blocks[0].text = "quote", "libro.md", original
     fit_complete_sentences(c, p)
     assert c.blocks[0].text == original  # A literal source passage is never rewritten.
+
+
+@pytest.mark.parametrize("wrapper", ["'{}'", "‘{}’", '"{}"', "“{}”", "«{}»", "({})", "[{}]", "**{}**", "*{}*", "_{}_", "***{}***"])
+def test_complete_prose_with_closing_quotes_or_markdown_is_valid_and_unchanged(wrapper):
+    text = wrapper.format("La programmazione a oggetti organizza le responsabilità delle classi e rende espliciti i collegamenti tra dati e operazioni.")
+    content = SlideContent(title="Prosa completa", blocks=[{"text": text}], notes="Note originali da non alterare.")
+    before = content.model_dump()
+    project = ProjectInput().model_dump()
+    validate_content(content, project, "")
+    assert not fit_complete_sentences(content, project)
+    assert content.model_dump() == before
+
+
+@pytest.mark.parametrize("ending", ["parola interrott", "**parola interrott**", "‘parola interrott’", "parola interrott)"])
+def test_formatting_never_turns_a_truncated_sentence_into_a_complete_one(ending):
+    text = "Il testo descrive una relazione tra le componenti del sistema senza concludere la spiegazione relativa alla " + ending
+    content = SlideContent(title="Incompleto", blocks=[{"text": text}], notes="Conserva queste note.")
+    before = content.model_dump()
+    project = ProjectInput().model_dump()
+    with pytest.raises(ValueError, match="frase incompleta"):
+        validate_content(content, project, "")
+    assert not fit_complete_sentences(content, project)
+    assert content.model_dump() == before
+
+
+def test_recovery_of_another_box_never_cuts_a_valid_math_block():
+    math_text = ("Una derivata descrive la variazione istantanea e si collega alla pendenza della curva nel punto considerato. "
+                 r"Le due relazioni equivalenti sono \(f(x)=x^2\) e \(f'(x)=2x\)")
+    long_text = "Un paragrafo spiega il concetto e lo collega a un esempio concreto. "*12+"parola interrotta"
+    content = SlideContent(title="Derivate", blocks=[{"text": math_text}, {"text": long_text}])
+    project = ProjectInput().model_dump()
+    assert fit_complete_sentences(content, project)
+    assert content.blocks[0].text == math_text
+    validate_content(content, project, "")
+    assert long_text in content.notes and math_text not in content.notes
+
+
+def test_recovery_never_discards_existing_notes_to_store_the_draft():
+    text = "Un paragrafo spiega il concetto e lo collega a un esempio concreto. "*12+"parola interrotta"
+    content = SlideContent(title="Conservazione", blocks=[{"text": text}], notes="n"*6000)
+    before = content.model_dump()
+    assert not fit_complete_sentences(content, ProjectInput().model_dump())
+    assert content.model_dump() == before
+
+
+def test_recovery_keeps_existing_notes_and_full_original_draft_when_they_fit():
+    text = "Un paragrafo spiega il concetto e lo collega a un esempio concreto. "*12+"parola interrotta"
+    notes = "Le note precedenti contengono i dettagli e le fonti del contenuto."
+    content = SlideContent(title="Conservazione", blocks=[{"text": text}], notes=notes)
+    assert fit_complete_sentences(content, ProjectInput().model_dump())
+    assert content.notes.startswith(notes) and text in content.notes
+    assert len(content.notes) <= 6000
