@@ -5,8 +5,10 @@ import {createImageSearch} from './image-search.mjs';
 import {installStudioShell} from './studio-shell.mjs';
 import {fitEditedContent,layoutUpdatesFor} from './layout-editing.mjs';
 import {createMtpSettings} from './mtp-settings.mjs';
+import {createGenerationLog} from './generation-log.mjs';
 installStudioShell();
 const $=id=>document.getElementById(id);
+const generationLog=createGenerationLog($('events'));
 const mtpSettings=createMtpSettings({root:$('admin-loading'),status:$('admin-mtp-status'),model:$('admin-model'),
   load:id=>api('/api/admin/llm/mtp?model='+encodeURIComponent(id))});
 const layoutOptions=value=>'<option value="content">Automatico adattivo</option>'+Object.entries(layouts).map(([key,label])=>'<option value="'+key+'" '+(key===value?'selected':'')+'>'+label+'</option>').join('');
@@ -65,7 +67,7 @@ function renderJobPanel(){
   $('job-status').textContent=job?(job.error||job.events?.at(-1)?.message||job.status):(recovery?'Generazione da completare':'');
   $('job-percent').textContent=job?Math.round(job.progress*100)+'% · '+job.status:'';
   $('progress').value=job?.progress||0;
-  $('events').textContent=(job?.events||[]).map(e=>new Date(e.at*1000).toLocaleTimeString()+'  '+e.message).join('\n');
+  generationLog.update(job?.id||null,(job?.events||[]).map(e=>new Date(e.at*1000).toLocaleTimeString()+'  '+e.message).join('\n'));
   renderRecovery();
 }
 let componentDrag=null,itemPointer=null;

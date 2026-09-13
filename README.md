@@ -8,6 +8,9 @@ Progetto indipendente da H3-Comics: non ne modifica file, processi o configurazi
 - **Crea** apre una pagina di impostazioni; la generazione passa all'editor live.
   I progetti esistenti si aprono direttamente nell'editor. Il menu superiore
   **Presentazione** raccoglie download e ritorno alle impostazioni.
+- Il log della generazione segue automaticamente le righe più recenti, anche
+  quando viene riaperto. Risalire nello storico sospende lo scorrimento automatico;
+  tornare in fondo lo riattiva, senza spostare l'intera pagina.
 - I temi hanno anteprime compatte e combinazioni pronte di colori, font e riquadri.
   Le schede **Adattive** possono crescere fino a 1440 px; quelle **Fisse** restano 16:9.
   Il PDF conserva l'altezza di ogni scheda; PowerPoint e Slidev usano il formato

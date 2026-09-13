@@ -197,7 +197,8 @@ async function testViewport(viewport){
     // A running job is recoverable from the home page even before the first slide exists.
     const activeProject=project('active-empty','Generazione in corso senza slide');projects.push(activeProject);
     const activeJob=makeJob(activeProject.id,'running',null,20);
-    activeJob.progress=.42;activeJob.events=[{at:Date.now()/1000,message:'Preparazione delle fonti in corso'}];
+    activeJob.progress=.42;activeJob.events=[...Array.from({length:60},(_,i)=>({at:Date.now()/1000,message:'Evento precedente '+i})),
+      {at:Date.now()/1000,message:'Preparazione delle fonti in corso'}];
     jobs.unshift(activeJob);
     await page.evaluate(()=>localStorage.removeItem('h3slides-project'));
     await page.goto(origin+'/create');
@@ -217,6 +218,20 @@ async function testViewport(viewport){
     assert.equal(new URL(page.url()).pathname,'/editor');
     assert.match(await page.locator('#events').textContent(),/Preparazione delle fonti/);
     assert.equal(generated.length,beforeOpening,'Reopening a job never launches generation');
+    const log=page.locator('#events');
+    await log.evaluate(e=>{e.closest('details').open=true});
+    const waitLogBottom=()=>page.waitForFunction(()=>{
+      const e=document.querySelector('#events');return e.clientHeight>0&&e.scrollHeight>e.clientHeight&&e.scrollHeight-e.clientHeight-e.scrollTop<=1;
+    });
+    await waitLogBottom();
+    activeJob.events.push({at:Date.now()/1000,message:'Nuova riga arrivata dal polling'});
+    await page.waitForFunction(()=>document.querySelector('#events').textContent.includes('Nuova riga arrivata dal polling'));
+    await waitLogBottom();
+    await log.evaluate(e=>{e.scrollTop=0});
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    activeJob.events.push({at:Date.now()/1000,message:'Aggiornamento durante lettura dello storico'});
+    await page.waitForFunction(()=>document.querySelector('#events').textContent.includes('Aggiornamento durante lettura dello storico'));
+    assert.equal(await log.evaluate(e=>e.scrollTop),0,'Polling does not interrupt manual history reading');
 
     // Opening the live log may scroll down and collapse the navigation; scroll up as a user would.
     await page.evaluate(()=>window.scrollTo(0,0));
