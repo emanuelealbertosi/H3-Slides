@@ -401,13 +401,16 @@ async def test_invalid_optional_diagram_does_not_abort_slide_generation(tmp_path
     assert store.job(job["id"])["status"] == "completed"
     assert result["slides"][0]["content"]["title"] == "Ricerca aggiornata"
     assert result["slides"][0]["content"]["diagram"]["kind"] == "manim"
-    assert result["slides"][0]["diagram_render"]["engine"] == "manim"
-    assert any("verifico un fallback esplicito" in event["message"]
+    assert "diagram_render" not in result["slides"][0]
+    assert "nessun riepilogo" in result["slides"][0]["diagram_error"]
+    assert result["slides"][0]["content"]["diagram"]["brief"] == "Mostra la ricerca"
+    assert any("scena recuperabile" in event["message"]
                for event in store.job(job["id"])["events"])
-    assert any("Fallback Manim verificato" in event["message"]
+    assert any("testi e richiesta conservati" in event["message"]
                for event in store.job(job["id"])["events"])
     scene = result["slides"][0]["content"]["diagram"]["scene"]
-    assert scene["title"].startswith("Riepilogo") and not scene["connections"]
+    assert scene is None
+    assert "1 diagrammi non completati" in store.job(job["id"])["events"][-1]["message"]
     store.db.close()
 
 

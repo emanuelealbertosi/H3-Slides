@@ -475,7 +475,7 @@ def create_app(root=None, data_root=None):
         if any(len(point) > 160 for point in edit.content.bullets):
             raise ValueError("Massimo 160 caratteri per punto")
         rendered = None
-        if edit.content.diagram.kind == "manim":
+        if edit.content.diagram.kind == "manim" and edit.content.diagram.scene:
             previous_diagram = SlideContent.model_validate(item["content"]).diagram
             cached = item.get("diagram_render", {})
             if (edit.content.diagram == previous_diagram and cached.get("engine") == "manim"
@@ -494,8 +494,11 @@ def create_app(root=None, data_root=None):
         item.update(content=edit.content.model_dump(), revision=item["revision"] + 1, status="ready")
         if rendered:
             item["diagram_render"] = rendered
-        elif edit.content.diagram.kind != "manim":
+            item.pop("diagram_error", None)
+        else:
             item.pop("diagram_render", None)
+            if edit.content.diagram.kind != "manim":
+                item.pop("diagram_error", None)
         store.save_project(p)
         return web.json_response(item)
 

@@ -30,6 +30,8 @@ def main():
         report.update(width=1800, height=1200, ok=True)
     except ValueError as exc:
         report = {"ok": False, "error": str(exc)[:400]}
+        if hasattr(exc, "errors"):
+            report["issues"] = exc.errors(include_input=False, include_context=False)
     (output / "report.json").write_text(json.dumps(report), encoding="utf-8")
     if not report["ok"]:
         raise SystemExit(2)

@@ -264,6 +264,8 @@ def designed_scene_schema(families=()):
     ]
     primitive = {"box", "decision", "circle", "database", "document", "text"}
     concrete = requested & {kind for kinds, _, _ in families for kind in kinds} - primitive
+    if "concept_map" in requested:
+        concrete |= {"network", "tree"}
     if concrete or "flowchart" in requested:
         families = [(kinds, fields, required) for kinds, fields, required in families
                     if set(kinds) & (primitive | concrete)]
@@ -396,6 +398,11 @@ tre colonne x=2,6,10 con width=3; due righe y=2.6,5.5 con height=1.6.
 Per grid/bars/plot riserva width>=4.5, height>=3.5 e poche annotazioni vicine.
 Un diagramma di flusso usa circle per inizio/fine, decision per condizioni, document/database quando
 semanticamente corretti e connections per le frecce: non rappresentare tutto con box.
+Una mappa concettuale/mentale (concept_map) è un INTENTO, non un type: usa concetti in box/circle
+collegati da connections, oppure network/tree con dati espliciti. Sono ammessi box per tutti i concetti.
+Rappresenta il nodo centrale, i rami e i sottorami richiesti, non due intestazioni isolate della slide.
+Un flusso orizzontale/verticale richiede vere frecce tra ingressi, trasformazioni e risultati,
+compresi i rami descritti. Non sostituire la struttura richiesta con un riepilogo qualitativo.
 Niente sovrapposizioni. Usa testo BREVE (2–5 parole), caption solo se chiarisce, non ripetere la prosa.
 Le connections referenziano gli id degli elementi; label spiega la relazione, non 'collegamento'.
 Le frecce vengono instradate evitando gli elementi. Lascia spazio tra gli elementi per le etichette.

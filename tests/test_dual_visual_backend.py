@@ -21,6 +21,31 @@ ROOT = Path(__file__).resolve().parents[1]
 HEADERS = {"X-H3-Slides": "1"}
 
 
+@pytest.mark.asyncio
+async def test_uncompleted_diagram_does_not_block_text_edits_and_can_be_removed(tmp_path, monkeypatch):
+    app = create_app(ROOT, tmp_path / "data")
+    project = app["store"].create(ProjectInput(use_manim_diagrams=True).model_dump())
+    content = SlideContent(title="Da completare", diagram={"kind": "manim", "brief": "Mappa concettuale"}).model_dump()
+    project["slides"] = [{"id": "s1", "revision": 1, "status": "ready", "content": content,
+                          "diagram_error": "Diagramma non completato"}]
+    app["store"].save_project(project)
+    async def unexpected_render(*_):
+        pytest.fail("Editing text must not attempt to render a missing scene")
+    monkeypatch.setattr(app["worker"].renderer, "render", unexpected_render)
+    async with TestClient(TestServer(app)) as client:
+        content["title"] = "Titolo modificato"
+        url = f"/api/projects/{project['id']}/slides/s1"
+        response = await client.patch(url, headers=HEADERS, json={"revision": 1, "content": content})
+        assert response.status == 200, await response.text()
+        saved = await response.json()
+        assert saved["content"]["title"] == "Titolo modificato" and saved["diagram_error"]
+        assert saved["content"]["diagram"]["brief"] == "Mappa concettuale"
+        content["diagram"] = {"kind": "none"}
+        response = await client.patch(url, headers=HEADERS, json={"revision": 2, "content": content})
+        assert response.status == 200, await response.text()
+        assert "diagram_error" not in await response.json()
+
+
 def photo_bytes():
     raw = io.BytesIO()
     Image.new("RGB", (80, 60), "navy").save(raw, format="PNG")

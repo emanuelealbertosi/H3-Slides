@@ -46,15 +46,28 @@ def fit_text(value, width, height, *, font, color, size=30, minimum=20, bold=Fal
 ATOMIC = {"box", "decision", "circle", "database", "document", "text"}
 
 
+def node_text_layout(e, width, height, measure):
+    """Give captions the space left by the measured title, not a fixed 38%."""
+    inner_w = width*(.62 if e.type in ("decision", "circle") else .86)
+    inner_h = height*(.53 if e.type == "decision" else .76)
+    if not e.caption:
+        return measure(e.text, inner_w, inner_h, 30, 20, e.type != "text"), None
+    error = None
+    for fraction in (.6, .4, .25):
+        try:
+            title = measure(e.text, inner_w, inner_h*fraction, 30, 20, e.type != "text")
+            caption = measure(e.caption, inner_w, inner_h-title[0].height-.1, 22, 20, False)
+            return title, caption
+        except ValueError as exc:
+            error = exc
+    raise error
+
+
 def reflow_text_nodes(spec, measure):
     """Only reflow when full text cannot fit. Preserve IDs, shapes, edges and order."""
     def fits(e, width, height):
-        inner_w = width*(.62 if e.type in ("decision", "circle") else .86)
-        inner_h = height*(.53 if e.type == "decision" else .76)
         try:
-            measure(e.text, inner_w, inner_h*(.6 if e.caption else 1), 30, 20, e.type != "text")
-            if e.caption:
-                measure(e.caption, inner_w, inner_h*.38, 22, 20, False)
+            node_text_layout(e, width, height, measure)
             return True
         except ValueError:
             return False

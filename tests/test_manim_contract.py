@@ -130,15 +130,12 @@ def test_fallback_preserves_valid_previous_scene_without_reinterpreting_it():
     assert len(previous["scene"]["elements"][0]["labels"]) == 3
 
 
-def test_fallback_from_headings_is_a_disclosed_summary_without_invented_relations():
+def test_fallback_never_replaces_a_diagram_with_paragraph_headings():
     content = SlideContent(title="Componenti", blocks=[
         {"heading": "Superficie", "text": "Una superficie visibile."},
         {"heading": "Area", "text": "La regione descritta."}], diagram={"kind": "manim"})
-    summary = fallback_diagram(content, {"kind": "flow", "labels": []})["scene"]
-    assert summary["title"].startswith("Riepilogo")
-    assert not summary["connections"]
-    assert {element["text"] for element in summary["elements"]} == {"Superficie", "Area"}
-    assert all(element["type"] == "box" and not element["values"] for element in summary["elements"])
+    with pytest.raises(ValueError, match="nessuna scena valida"):
+        fallback_diagram(content, {"kind": "flow", "labels": []})
     with pytest.raises(ValueError, match="vero diagramma flowchart"):
         fallback_diagram(content, required_family="flowchart")
 
@@ -148,11 +145,11 @@ def test_comparison_fallback_cannot_turn_into_a_flow():
         {"heading": "Metodo A", "text": "Ricerca ordinata."},
         {"heading": "Metodo B", "text": "Ricerca per gruppi."}])
     assert requested_family(content.title) == "comparison"
-    actual = ManimSceneSpec.model_validate(fallback_diagram(content, required_family="comparison")["scene"])
+    previous = {"kind": "comparison", "labels": ["Metodo A", "Metodo B"]}
+    actual = ManimSceneSpec.model_validate(fallback_diagram(content, previous, required_family="comparison")["scene"])
     validate_designed_scene(actual, "comparison")
-    assert actual.title.startswith("Confronto qualitativo")
     assert not actual.connections and actual.elements[0].y == actual.elements[1].y
-    with pytest.raises(ValueError, match="almeno due voci"):
+    with pytest.raises(ValueError, match="nessuna scena valida"):
         fallback_diagram(SlideContent(title="Un solo concetto"), required_family="comparison")
 
 
@@ -264,16 +261,16 @@ async def test_retry_uses_the_responsible_stage(failure_phase):
 
 
 @pytest.mark.asyncio
-async def test_normalized_network_and_declared_qualitative_summary_render_with_real_manim(tmp_path):
+async def test_normalized_network_and_existing_comparison_render_with_real_manim(tmp_path):
     store = Store(tmp_path / "native-manim")
     try:
         project = store.create(ProjectInput(prompt="Verifica scene", use_manim_diagrams=True).model_dump())
         normalized, _ = normalize_scene_geometry(scene(values=[["0", "1"], ["1", "2"]]))
-        summary = fallback_diagram(SlideContent(title="Componenti", blocks=[
+        comparison = fallback_diagram(SlideContent(title="Componenti", blocks=[
             {"heading": "Area A", "text": "Primo elemento."},
-            {"heading": "Area B", "text": "Secondo elemento."}]))
+            {"heading": "Area B", "text": "Secondo elemento."}]), {"kind": "comparison", "labels": ["Area A", "Area B"]})
         renderer = ManimRenderer(store)
-        for diagram in ({"kind": "manim", "labels": [], "scene": normalized}, summary):
+        for diagram in ({"kind": "manim", "labels": [], "scene": normalized}, comparison):
             rendered = await renderer.render(project["id"], diagram, project)
             assert rendered["report"]["ok"] and rendered["report"]["bounds_checked"]
             assert rendered["report"]["min_font_size"] >= 20

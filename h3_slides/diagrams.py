@@ -13,9 +13,10 @@ import sys
 import tempfile
 from .diagram_spec import Element, ManimSceneSpec, SCENE_PROMPT, designed_scene_schema, legacy_scene
 from .diagram_input import normalize_scene_input
+from .diagram_errors import DiagramRenderError
 from .diagram_intent import requested_family, requested_families, requested_scene_families, validate_designed_scene
 
-RENDER_VERSION = 4
+RENDER_VERSION = 5
 STYLE_KEYS = ("theme", "font", "background_color", "accent_color")
 
 
@@ -262,22 +263,22 @@ def normalize_scene_geometry(value):
                 element.update(x=3+6*(index % 2), y=2.56+3.18*(index//2),
                                width=5.5, height=3.0 if element in visual_elements else 1.2)
             changed = True
-    elif can_reflow and 2 <= len(result["elements"]) <= 8 and all(
+    elif can_reflow and 2 <= len(result["elements"]) <= 14 and all(
             isinstance(element, dict) and isinstance(element.get("type"), str) and element["type"] in atomic
             for element in result["elements"]):
         count = len(result["elements"])
-        columns = 3 if count > 4 else 2
+        columns = 4 if count > 9 else 3 if count > 4 else 2
         rows = math.ceil(count / columns)
-        y_slots = {1: [4.15], 2: [2.65, 5.65], 3: [2.0, 4.2, 6.4]}[rows]
+        y_slots = {1: [4.15], 2: [2.65, 5.65], 3: [2.0, 4.2, 6.4], 4: [1.75, 3.35, 4.95, 6.55]}[rows]
         for index, element in enumerate(result["elements"]):
             row, column = divmod(index, columns)
             in_row = min(columns, count-row*columns)
             x_slots = [12*(slot+1)/(in_row+1) for slot in range(in_row)]
             element.update(
                 x=x_slots[column], y=y_slots[row],
-                width=min(float(element.get("width", 2.8)), 2.8 if columns == 3 else 3.6),
+                width=min(float(element.get("width", 2.8)), 2.2 if columns == 4 else 2.8 if columns == 3 else 3.6),
                 height=min(float(element.get("height", 1.4)),
-                           1.6 if element.get("type") in ("decision", "circle") else 1.4),
+                           1.3 if rows == 4 else 1.6 if element.get("type") in ("decision", "circle") else 1.4),
                 text=_normalize_text(element.get("text") or "", 30),
                 caption=_normalize_text(element.get("caption") or "", 20),
             )
@@ -286,7 +287,7 @@ def normalize_scene_geometry(value):
 
 
 def fallback_diagram(content, previous=None, required_family=""):
-    """Keep an existing valid scene, otherwise disclose an unconnected summary."""
+    """Recover only an existing scene; paragraph headings are not a diagram."""
     previous = previous or {}
     required = ([required_family] if isinstance(required_family, str) and required_family else
                 list(required_family or []))
@@ -294,41 +295,17 @@ def fallback_diagram(content, previous=None, required_family=""):
                                  len(previous.get("labels") or []) >= 2):
         try:
             scene = ManimSceneSpec.model_validate(scene_for(previous))
+            if (scene.elements and all(e.id.startswith("summary") for e in scene.elements)
+                    and not scene.connections and scene.takeaway == "Schema qualitativo dei concetti presenti nella slide."):
+                raise ValueError("Il vecchio riepilogo automatico non è un diagramma recuperabile")
             if required_family:
                 validate_designed_scene(scene, required_family)
             return {"kind": "manim", "labels": [], "brief": previous.get("brief") or content.diagram.brief,
                     "scene": scene.model_dump()}
         except ValueError:
             pass
-    if any(family != "comparison" for family in required):
-        raise ValueError(f"Il fallback non sostituisce un vero diagramma {', '.join(required)} con riquadri")
-    candidates = [block.heading for block in content.blocks if block.heading]
-    candidates.extend(content.bullets)
-    if not candidates:
-        candidates.extend(block.text.split(".", 1)[0] for block in content.blocks if block.text)
-    labels = []
-    for candidate in candidates:
-        label = _normalize_text(candidate, 28)
-        if isinstance(label, str) and label and label not in labels:
-            labels.append(label)
-        if len(labels) == 6:
-            break
-    if not labels:
-        labels = [_normalize_text(content.title, 28)]
-    comparison = "comparison" in required or previous.get("kind") == "comparison"
-    if comparison and len(labels) < 2:
-        raise ValueError("Il confronto richiede almeno due voci documentate")
-    columns = 2 if len(labels) > 1 else 1
-    rows = math.ceil(len(labels)/columns)
-    positions = {1: [4.15], 2: [2.65, 5.65], 3: [2.0, 4.2, 6.4]}[rows]
-    elements = [Element(id=f"summary{i}", type="box", x=3+6*(i % columns) if columns == 2 else 6,
-                        y=positions[i//columns], width=4.8, height=1.4, text=label)
-                for i, label in enumerate(labels)]
-    label = "Confronto qualitativo" if comparison else "Riepilogo"
-    scene = ManimSceneSpec(title=_normalize_text(label + " · " + content.title, 75), elements=elements,
-                           takeaway="Schema qualitativo dei concetti presenti nella slide.")
-    return {"kind": "manim", "labels": [], "brief": content.diagram.brief,
-            "scene": scene.model_dump()}
+    kind = " " + ", ".join(required) if required else ""
+    raise ValueError(f"Il fallback non sostituisce un vero diagramma{kind} con riquadri: nessuna scena valida da recuperare")
 
 
 def simplify_connection_labels(scene, keep_decisions=True):
@@ -401,8 +378,16 @@ class ManimRenderer:
                 report_path = output / "report.json"
                 report = json.loads(report_path.read_text(encoding="utf-8")) if report_path.exists() else {}
                 if code or not report.get("ok"):
-                    shutil.copyfile(log, work_root / "last-error.log")
-                    raise ValueError("Manim: " + report.get("error", "render non riuscito; controlla data/manim-work/last-error.log"))
+                    # Keep a bounded, private last-failure snapshot before the
+                    # temporary directory disappears. Caught layout errors do
+                    # not go to stdout, so copying only render.log lost them.
+                    message = report.get("error", "render non riuscito; controlla data/manim-work/last-error.log")
+                    (work_root / "last-error.log").write_text(
+                        json.dumps({"fingerprint": key, "exit_code": code, **report}, ensure_ascii=False, indent=2)
+                        + "\n" + log.read_text(encoding="utf-8", errors="replace")[-32000:], encoding="utf-8")
+                    shutil.copyfile(source, work_root / "last-error-scene.json")
+                    issues = report.get("issues") or [{"loc": (), "type": "validation", "msg": message}]
+                    raise DiagramRenderError("Manim: " + message, issues)
                 posters = list(output.rglob("poster.png"))
                 if len(posters) != 1:
                     raise ValueError("Manim non ha prodotto l'immagine finale")
@@ -474,12 +459,27 @@ def scene_validation_feedback(error, phase="validation"):
                 ("sovrapposti o troppo vicini", "element_overlap"),
                 ("testo mancante", "text_required"),
                 ("etichetta di una freccia", "connection_label_space"),
+                ("testo completo non leggibile", "text_space"),
+                ("testi completi troppo densi", "text_space"),
+                ("nessun percorso leggibile", "connection_route_space"),
+                ("fuori dall'ingombro", "element_content_space"),
+                ("è richiesta", "required_family"),
                 ("è richiesto", "required_family"),
             )
             code = next((rule for marker, rule in rules if marker in lower), code)
         # Pydantic supplies fixed error codes; arbitrary ValueErrors get a fixed
         # code above instead of exposing their message in job diagnostics.
-        issues.append({"category": category, "path": path, "code": code})
+        # Fixed, readable explanations: the failed label itself stays private.
+        explanation = {
+            "text_space": "testo completo troppo grande per lo spazio assegnato",
+            "connection_label_space": "spazio insufficiente per l'etichetta della freccia",
+            "connection_route_space": "manca un percorso libero per la freccia",
+            "element_content_space": "contenuto oltre i bordi del nodo",
+            "canvas_bounds": "elemento fuori dall'area utile",
+            "element_overlap": "nodi sovrapposti o troppo vicini",
+            "required_family": "il disegno non rappresenta il tipo di diagramma richiesto",
+        }.get(code, "")
+        issues.append({"category": category, "path": path, "code": code, **({"explanation": explanation} if explanation else {})})
         details.append(path + ": " + message)
     category = next((name for name in ("STRUTTURA", "DATI", "GEOMETRIA")
                      if any(issue["category"] == name for issue in issues)), "STRUTTURA")
@@ -570,7 +570,8 @@ async def design_diagram(client, renderer, pid, project, content, context, instr
                 raise  # Transport/provider failures are not scene corrections.
             feedback = scene_validation_feedback(exc, phase)
             diagnostic = feedback["category"] + " · " + "; ".join(
-                issue["path"] + " (" + issue["code"] + ")" for issue in feedback["issues"][:3])
+                issue["path"] + " (" + issue["code"] + ")" +
+                (": " + issue["explanation"] if issue.get("explanation") else "") for issue in feedback["issues"][:3])
             key = _failure_fingerprint(candidate, feedback)
             event("Manim · verifica non superata: " + diagnostic + " · candidato " + key[:10])
             reason = feedback["details"]

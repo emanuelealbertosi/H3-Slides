@@ -7,7 +7,9 @@ from .diagram_spec import ManimSceneSpec
 from .diagram_layout import bounds, route_connection
 from .math_expression import sample_expression, function_line, compile_expression
 from .chart_data import histogram_data, nice_axis, format_tick
-from .manim_typography import fit_text, reflow_text_nodes
+from .manim_typography import fit_text, reflow_text_nodes, node_text_layout
+from .diagram_errors import DiagramLayoutError
+from .diagram_reflow import graph_layout_candidates
 
 
 def point(x, y):
@@ -33,6 +35,26 @@ def palette(project):
 
 
 def build_scene(value, project):
+    try:
+        return _build_scene(value, project)
+    except ValueError as original:
+        # Only geometric failures permit deterministic re-layout. Data and
+        # shape errors still require a corrected model response.
+        if not (isinstance(original, DiagramLayoutError) or any(marker in str(original) for marker in (
+                "spazio", "ingombro", "Testi completi", "canvas", "percorso leggibile"))):
+            raise
+        spec = ManimSceneSpec.model_validate(value)
+        for candidate in graph_layout_candidates(spec):
+            try:
+                root, header, footer, stages, report = _build_scene(candidate.model_dump(), project)
+            except ValueError:
+                continue
+            report.update(text_layout_adjusted=True, geometry_recovered=True)
+            return root, header, footer, stages, report
+        raise original
+
+
+def _build_scene(value, project):
     spec = ManimSceneSpec.model_validate(value)
     colors = palette(project)
     font = project.get("font", "Arial")
@@ -42,6 +64,7 @@ def build_scene(value, project):
     plotted_curves = 0
     charts = []
     measured = {}
+    text_path = ("elements",)
 
     def measure(value, width, height, size, minimum, bold):
         key = (value, round(width, 4), round(height, 4), size, minimum, bold)
@@ -52,7 +75,9 @@ def build_scene(value, project):
             except ValueError:
                 measured[key] = None
         if measured[key] is None:
-            raise ValueError("Testo completo non leggibile: ingrandisci e riallinea i nodi senza abbreviare")
+            raise DiagramLayoutError(
+                f"Testo completo non leggibile nello spazio {width:.2f} × {height:.2f}; "
+                "ingrandisci e riallinea senza abbreviare", text_path)
         label, chosen = measured[key]
         return label.copy(), chosen
 
@@ -63,17 +88,20 @@ def build_scene(value, project):
         texts.append((label, chosen))
         return label
 
-    title = copy(spec.title, 11.1, .65, size=36, minimum=28, bold=True).move_to(point(6, .43))
+    text_path = ("title",)
+    title = copy(spec.title, 11.1, .75, size=36, minimum=24, bold=True).move_to(point(6, .43))
     rule = Line(point(.35, .88), point(11.65, .88), color=colors["accent"], stroke_width=2)
     header = VGroup(title, rule)
     footer = VGroup()
     if spec.takeaway:
-        label = copy(spec.takeaway, 10.8, .45, size=24, minimum=22)
+        text_path = ("takeaway",)
+        label = copy(spec.takeaway, 10.8, .56, size=24, minimum=20)
         label.move_to(point(6, 7.68))
-        footer.add(RoundedRectangle(width=11.4, height=.55, corner_radius=.1,
+        footer.add(RoundedRectangle(width=11.4, height=.64, corner_radius=.1,
                    fill_color=mix(colors["bg"], colors["accent"], .13), fill_opacity=1, stroke_width=0).move_to(label), label)
     objects = {}
-    for element in spec.elements:
+    for element_index, element in enumerate(spec.elements):
+        text_path = ("elements", element_index, "text")
         e, tone = element, colors[element.tone]
         w, h = e.width, e.height
         group = VGroup()
@@ -468,11 +496,12 @@ def build_scene(value, project):
                 if e.type == "document":
                     group.add(Line([w/2-fold, h/2, 0], [w/2-fold, h/2-fold, 0], color=tone, stroke_width=2),
                               Line([w/2-fold, h/2-fold, 0], [w/2, h/2-fold, 0], color=tone, stroke_width=2))
-            inside_w = w*(.62 if e.type in ("decision", "circle") else .86)
-            inside_h = h*(.53 if e.type == "decision" else .76)
-            label = copy(e.text, inside_w, inside_h*(.6 if e.caption else 1), size=30, minimum=20, bold=e.type != "text")
+            main_text, caption_text = node_text_layout(e, w, h, measure)
+            label = main_text[0]
+            texts.append(main_text)
             if e.caption:
-                caption = copy(e.caption, inside_w, inside_h*.38, size=22, minimum=20)
+                caption = caption_text[0]
+                texts.append(caption_text)
                 caption.set_color(colors["muted"])
                 group.add(VGroup(label, caption).arrange([0, -1, 0], buff=.1))
             else:
@@ -483,7 +512,8 @@ def build_scene(value, project):
         objects[e.id] = group
     links, occupied = [], [bounds(e, .025) for e in spec.elements]
     by_id = {e.id: e for e in spec.elements}
-    for edge in spec.connections:
+    for edge_index, edge in enumerate(spec.connections):
+        text_path = ("connections", edge_index, "label")
         route = route_connection(by_id[edge.source], by_id[edge.target], spec.elements)
         tone = colors[edge.tone]
         pts = [point(*p) for p in route]
@@ -492,35 +522,43 @@ def build_scene(value, project):
                       tip_length=.13, max_tip_length_to_length_ratio=.5)
         visual = VGroup(line, arrow)
         if edge.label:
-            for width, height in ((2.5, .7), (3.5, 1.1), (5, 1.4)):
-                try:
-                    label = copy(edge.label, width, height, size=22, minimum=20)
-                    break
-                except ValueError:
-                    if width == 5:
-                        raise
+            def place_label(label):
+                for a, b in sorted(zip(route, route[1:]), key=lambda pair: -math.dist(*pair)):
+                    vertical = abs(a[0]-b[0]) < .001
+                    for t in (.5, .3, .7, .15, .85):
+                        base_x, base_y = a[0]*(1-t)+b[0]*t, a[1]*(1-t)+b[1]*t
+                        for side in (1, -1):
+                            x = base_x + (side*(label.width/2+.13) if vertical else 0)
+                            y = base_y + (side*(label.height/2+.12) if not vertical else 0)
+                            box = x-label.width/2-.04, y-label.height/2-.04, x+label.width/2+.04, y+label.height/2+.04
+                            if box[0] < .05 or box[2] > 11.95 or box[1] < .95 or box[3] > 7.35:
+                                continue
+                            if any(box[0] < other[2] and box[2] > other[0] and box[1] < other[3] and box[3] > other[1] for other in occupied):
+                                continue
+                            label.move_to(point(x, y))
+                            occupied.append(box)
+                            return True
+                return False
+
             placed = False
-            for a, b in sorted(zip(route, route[1:]), key=lambda pair: -math.dist(*pair)):
-                vertical = abs(a[0]-b[0]) < .001
-                for t in (.5, .3, .7, .15, .85):
-                    base_x, base_y = a[0]*(1-t)+b[0]*t, a[1]*(1-t)+b[1]*t
-                    # Try both sides of the line.  Previously labels were only
-                    # attempted to the right/above, causing needless failures.
-                    for side in (1, -1):
-                        x = base_x + (side*(label.width/2+.13) if vertical else 0)
-                        y = base_y + (side*(label.height/2+.12) if not vertical else 0)
-                        box = x-label.width/2-.04, y-label.height/2-.04, x+label.width/2+.04, y+label.height/2+.04
-                        if box[0] < .05 or box[2] > 11.95 or box[1] < .95 or box[3] > 7.35:
-                            continue
-                        if any(box[0] < other[2] and box[2] > other[0] and box[1] < other[3] and box[3] > other[1] for other in occupied):
-                            continue
-                        label.move_to(point(x, y)); occupied.append(box); placed = True; break
+            # Fitting inside a theoretical label box is not sufficient: test
+            # the actual arrow corridor at both readable font sizes. Keep only
+            # the placed label in the bounds report, never discarded attempts.
+            for size in (22, 20):
+                for width, height in ((2.5, .7), (3.5, 1.1), (5, 1.4)):
+                    try:
+                        label, chosen = measure(edge.label, width, height, size, 20, False)
+                    except ValueError:
+                        continue
+                    placed = place_label(label)
                     if placed:
+                        texts.append((label, chosen))
                         break
                 if placed:
                     break
             if not placed:
-                raise ValueError("Non c'è spazio per l'etichetta di una freccia: allontana e riallinea gli elementi, conservando la relazione completa")
+                raise DiagramLayoutError("Non c'è spazio per l'etichetta di una freccia: allontana e riallinea gli elementi, conservando la relazione completa",
+                                         text_path, "connection_label_space")
             backing = RoundedRectangle(width=label.width+.10, height=label.height+.08, corner_radius=.035,
                          fill_color=colors["bg"], fill_opacity=1, stroke_width=0).move_to(label)
             visual.add(backing, label)

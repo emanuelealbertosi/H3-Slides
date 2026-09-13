@@ -530,11 +530,8 @@ class Worker:
                     slide = next(s for s in project["slides"] if s["id"] == sid)
                     expected_revision = slide["revision"]
                     content = SlideContent.model_validate(slide["content"])
-                    previous_diagram = content.diagram.model_dump()
                     brief = (request.prompt if request.slide_id else
                              content.diagram.brief or slide.get("purpose", "") or content.title)
-                    required_family = requested_scene_families(content.title, content.diagram.brief, brief)
-                    used_fallback = False
                     try:
                         if content.diagram.kind == "manim" and content.diagram.scene and not request.replace_diagrams:
                             diagram = content.diagram.model_dump()
@@ -546,18 +543,14 @@ class Worker:
                                 client, self.renderer, pid, project, content, context, instructions,
                                 lambda message: self.store.event(jid, message), lambda: self.checkpoint(jid))
                     except ValueError as exc:
-                        self.store.event(jid, f"Diagramma {index + 1}/{len(targets)} · uso il fallback Manim dopo: " +
-                                         str(exc)[:220])
-                        try:
-                            diagram = fallback_diagram(content, previous_diagram, required_family)
-                            rendered = await self.renderer.render(pid, diagram, project)
-                            used_fallback = True
-                        except ValueError as fallback_exc:
-                            if request.slide_id:
-                                raise ValueError(str(exc) + "; fallback: " + str(fallback_exc)) from None
-                            self.store.event(jid, f"Diagramma {index + 1}/{len(targets)} non creato · " +
-                                             str(fallback_exc)[:300], progress=(index + 1) / len(targets))
-                            continue
+                        # Do not count an unchanged cached scene as a successful
+                        # redesign. No write occurred: the user's slide is intact.
+                        message = "Riprogettazione non completata; versione precedente conservata · " + str(exc)[:300]
+                        if request.slide_id:
+                            raise ValueError(message) from None
+                        self.store.event(jid, f"Diagramma {index + 1}/{len(targets)} · " + message,
+                                         progress=(index + 1) / len(targets))
+                        continue
                     project = self.store.project(pid)
                     current = next((s for s in project["slides"] if s["id"] == sid), None)
                     if not current or current["revision"] != expected_revision:
@@ -576,13 +569,12 @@ class Worker:
                         placements["image"] = placements.pop("visual")
                     current["content"]["diagram"] = diagram
                     current["diagram_render"] = rendered
+                    current.pop("diagram_error", None)
                     current["revision"] += 1
                     current["status"] = "ready"
                     self.store.save_project(project)
                     successful += 1
-                    outcome = ("fallback verificato; la nuova progettazione non è riuscita"
-                               if used_fallback else "progettato e verificato")
-                    self.store.event(jid, f"Diagramma Manim {index + 1}/{len(targets)} {outcome}",
+                    self.store.event(jid, f"Diagramma Manim {index + 1}/{len(targets)} progettato e verificato",
                                      progress=(index + 1) / len(targets))
                 if not successful:
                     raise ValueError("Nessun diagramma è stato inserito: controlla i motivi nel log")
@@ -876,7 +868,7 @@ class Worker:
                     self.store.event(jid, "Diagramma Manim richiesto dalle opzioni del progetto")
                 if content.diagram.kind not in ("none", "manim") and len(content.diagram.labels) < 2:
                     raise ValueError("Un diagramma precedente richiede almeno due elementi")
-                rendered = None
+                rendered, diagram_error = None, ""
                 if content.diagram.kind == "manim":
                     content.diagram.scene = None
                     try:
@@ -886,7 +878,7 @@ class Worker:
                             lambda message: self.store.event(jid, message), lambda: self.checkpoint(jid))
                         content.diagram = type(content.diagram).model_validate(diagram)
                     except ValueError as exc:
-                        self.store.event(jid, "Progetto Manim non valido; verifico un fallback esplicito · " +
+                        self.store.event(jid, "Progetto Manim non valido; verifico se esiste una scena recuperabile · " +
                                          str(exc)[:220])
                         try:
                             required_family = requested_scene_families(content.title, content.diagram.brief,
@@ -894,11 +886,12 @@ class Worker:
                             diagram = fallback_diagram(content, previous_diagram, required_family)
                             rendered = await self.renderer.render(pid, diagram, project)
                             content.diagram = type(content.diagram).model_validate(diagram)
-                            self.store.event(jid, "Fallback Manim verificato; controlla lo schema di riepilogo")
+                            self.store.event(jid, "Scena precedente valida recuperata; nessun riepilogo sostitutivo")
                         except ValueError as fallback_exc:
-                            self.store.event(jid, "Diagramma Manim saltato; la slide viene salvata senza diagramma · " +
+                            self.store.event(jid, "Diagramma Manim non completato; testi e richiesta conservati per riprovare · " +
                                              str(fallback_exc)[:220])
-                            content.diagram = type(content.diagram)()
+                            content.diagram.scene = None
+                            diagram_error = "Diagramma non completato: nessun riepilogo sostitutivo. Usa Progetta Manim per riprovare."
                 if content.image_id and content.image_id not in valid_images:
                     raise ValueError("Il modello ha indicato un'immagine inesistente")
                 acquired = None
@@ -937,6 +930,10 @@ class Worker:
                 current = next((s for s in project["slides"] if s["id"] == sid), None)
                 if current and current["revision"] == expected_revision:
                     current.update(content=content.model_dump(), revision=expected_revision + 1, status="ready")
+                    if diagram_error:
+                        current["diagram_error"] = diagram_error
+                    else:
+                        current.pop("diagram_error", None)
                     if rendered:
                         current["diagram_render"] = rendered
                     else:
@@ -947,7 +944,9 @@ class Worker:
                 else:
                     message = f"Slide {index + 1}: conservata la tua modifica manuale"
                 self.store.event(jid, message, progress=0.15 + 0.85 * (index + 1) / len(targets))
-            self.store.event(jid, "Presentazione pronta", status="completed", progress=1)
+            incomplete = sum(bool(s.get("diagram_error")) for s in self.store.project(pid)["slides"])
+            self.store.event(jid, f"Presentazione salvata · {incomplete} diagrammi non completati (vedi log)"
+                             if incomplete else "Presentazione pronta", status="completed", progress=1)
         except asyncio.CancelledError:
             if self.store.job(jid)["status"] != "interrupted":
                 self.store.event(jid, "Generazione annullata; slide salvate conservate", status="cancelled")

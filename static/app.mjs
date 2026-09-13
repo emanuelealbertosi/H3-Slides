@@ -840,7 +840,7 @@ function render(){
           {diagram:assetURL(media.diagramAsset),image:assetURL(media.photo)})+
           '<div class="anchor-indicator" aria-live="polite"></div></div>'+
         (slide.content.diagram?.kind!=='none'&&!slide.diagram_render?.asset?
-          '<p class="diagram-pending">'+(slide.content.diagram?.kind==='manim'&&slide.content.diagram?.scene?
+          '<p class="diagram-pending">'+(slide.diagram_error?esc(slide.diagram_error):slide.content.diagram?.kind==='manim'&&slide.content.diagram?.scene?
             'La scena è valida ma il render va aggiornato. Usa Renderizza Manim.':'Il vecchio diagramma va riprogettato con Manim.')+'</p>':'');
       const select=card.querySelector('[data-slide-layout]');
       select.value=({split:'visual-right',statement:'focus'})[slide.content.layout]||slide.content.layout||'content';

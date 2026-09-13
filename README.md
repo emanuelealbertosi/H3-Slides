@@ -517,14 +517,23 @@ convertite nel formato corretto; dati contraddittori non vengono indovinati.
 Gli errori di dati, struttura e geometria ricevono correzioni diverse; se il
 modello ripete lo stesso errore sull'elemento non valido, i tentativi si fermano
 anche se ha cambiato il testo di altri elementi.
-I log riportano categoria, campo e regola, senza salvare la risposta del modello.
+I log visibili riportano categoria, campo, regola e una spiegazione senza riportare
+il testo del documento o della risposta del modello. Per diagnosticare il rendering,
+`data/manim-work/last-error.log` conserva l'ultimo rapporto strutturato e
+`last-error-scene.json` la scena corrispondente: file locali privati, sovrascritti
+al prossimo errore, non esposti fra le risorse della presentazione.
 Non vengono inventati valori o relazioni per superare la validazione.
 
-Se la progettazione fallisce, nella riprogettazione si può conservare una scena
-precedente valida; altrimenti l'app può verificare un **Riepilogo** esplicito,
-senza frecce fra titoli indipendenti. Un riepilogo non sostituisce una famiglia
-specifica richiesta, come Gantt, Venn o un diagramma di flusso. Il log segnala il
-fallback e distingue questo risultato da una nuova progettazione riuscita.
+Le mappe concettuali/mentali e i flussi orizzontali/verticali sono riconosciuti
+esplicitamente: richiedono concetti e relazioni, non titoli isolati. Il recupero
+geometrico prova prima ad ampliare i corridoi, poi disposizioni a livelli,
+conservando testi, nodi e collegamenti. Non richiede un'altra chiamata LLM.
+Se non basta, l'LLM riceve l'errore specifico per correggere la scena.
+Se la progettazione fallisce, non viene più creato un **Riepilogo** di intestazioni
+al posto del diagramma, neppure quando la famiglia non è riconosciuta. Nella
+riprogettazione la slide precedente rimane intatta e non viene conteggiata come
+nuovo risultato. Nella generazione completa i testi vengono salvati, la richiesta
+del diagramma resta recuperabile e l'anteprima mostra un avviso con **Progetta Manim**.
 Il render 1800 × 1200 viene riusato nell'editor, nel PPTX, nel PDF e in Slidev;
 l'export Manim anima progressivamente la stessa scena. La foto della slide
 rimane un elemento indipendente nell'editor e negli export PPTX, PDF e Slidev.

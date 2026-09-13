@@ -250,6 +250,17 @@ async function testViewport(viewport){
     activeJob.events.push({at:Date.now()/1000,message:'Generazione conclusa'});
     await activeBanner.waitFor({state:'hidden'});
     assert.equal(generated.length,beforeOpening,'Polling terminal status sends no generation request');
+    // A completed text generation can still expose a truthful, actionable
+    // missing-diagram warning. Opening it must not start a model request.
+    const incomplete=projects.find(p=>p.id==='completed');
+    incomplete.use_manim_diagrams=true;
+    incomplete.slides[0].content.diagram={kind:'manim',brief:'Mappa concettuale',scene:null};
+    incomplete.slides[0].diagram_error='Diagramma non completato: nessun riepilogo sostitutivo. Usa Progetta Manim per riprovare.';
+    await page.goto(origin+'/editor?project=completed');
+    await page.locator('.diagram-pending').waitFor({state:'visible'});
+    assert.match(await page.locator('.diagram-pending').textContent(),/nessun riepilogo sostitutivo/);
+    assert.ok(await page.getByRole('button',{name:'Progetta Manim',exact:true}).count());
+    assert.equal(generated.length,beforeOpening);
     assert.deepEqual(errors,[]);
     console.log(`Project recovery UI ${viewport.width}x${viewport.height}: failed/interrupted archive, logs, retry, resume, versioning, active-job home links, typography and no overflow passed.`);
   }finally{await page.unrouteAll({behavior:'wait'});await page.close()}

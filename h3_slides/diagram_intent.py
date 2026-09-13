@@ -29,10 +29,14 @@ _PATTERNS = (
               r"\b(?:decision|family)[ -]+trees?\b", r"\btrees?[ -]+(?:diagrams?|structures?)\b",
               r"\b(?:hierarchy|hierarchies|gerarchi[ae])\b", r"^trees?$",
               r"\b(?:draw|show|build|create)\s+(?:(?:a|the)\s+)?trees?\b")),
+    ("concept_map", (r"\bmapp[ae]\s+(?:concettual[ei]|mental[ei])\b",
+                     r"\b(?:concept|mind)[ -]?maps?\b")),
     ("network", (r"\b(?:graf[oi]|networks?)\b", r"\bdiagramm[ai]\s+di\s+rete\b",
                  r"\b(?:directed|undirected)[ -]+graphs?\b",
                  r"\bgraphs?\s+(?:theory|with\s+(?:nodes|vertices)|of\s+(?:nodes|vertices))\b")),
-    ("flowchart", (r"\bflow[ -]?charts?\b", r"\bdiagramm[ai]\s+di\s+flusso\b")),
+    ("flowchart", (r"\bflow[ -]?charts?\b", r"\bdiagramm[ai]\s+di\s+flusso\b",
+                   r"\bfluss[oi]\s+(?:orizzontal[ei]|vertical[ei])\b",
+                   r"\b(?:horizontal|vertical)[ -]+flows?\b")),
     ("comparison", (r"\b(?:confronto|confronti|confronta|confrontare|comparazion[ei]|comparisons?|comparative)\b",
                     # `compare` is also an Italian verb meaning 'appears'. An
                     # English request needs English syntax, not this token alone.
@@ -196,13 +200,35 @@ def validate_designed_scene(scene, required=""):
     """
     families = [required] if isinstance(required, str) and required else list(required or [])
     groups = _components(scene)
-    if (len(scene.elements) >= 3 and scene.connections and len(groups) == 1 and
+    if ("concept_map" not in families and len(scene.elements) >= 3 and scene.connections and len(groups) == 1 and
             all(element.type == "box" for element in scene.elements)):
         raise ValueError("Un flusso non può essere composto solo da rettangoli: usa forme semantiche pertinenti")
     for family in dict.fromkeys(families):
         if family == "comparison":
             if not (_separate_panels(groups) or any(_quantitative_comparison(element) for element in scene.elements)):
                 raise ValueError("È richiesto un confronto: usa almeno due pannelli o gruppi distinti leggibili, anche con frecce interne, oppure dati confrontabili")
+        elif family == "concept_map":
+            # Concepts may legitimately be rectangular. Relationships, not
+            # decorative shapes, distinguish a map from paragraph headings.
+            connected = any(len([e for e in group if e.type != "text"]) >= 3 for group in groups)
+            for element in scene.elements:
+                if element.type == "tree" and len(element.labels) >= 3:
+                    connected = True
+                if element.type == "network":
+                    neighbours = {i: set() for i in range(len(element.labels))}
+                    for a, b in zip(element.values[::2], element.values[1::2]):
+                        neighbours[a].add(b)
+                        neighbours[b].add(a)
+                    for start in neighbours:
+                        seen, pending = set(), [start]
+                        while pending:
+                            node = pending.pop()
+                            if node not in seen:
+                                seen.add(node)
+                                pending.extend(neighbours[node] - seen)
+                        connected |= len(seen) >= 3
+            if not connected:
+                raise ValueError("È richiesta una mappa concettuale con almeno tre concetti collegati, non titoli isolati")
         elif family == "flowchart":
             if not scene.connections or not any(element.type in {"circle", "decision", "database", "document"}
                                                 for element in scene.elements):
