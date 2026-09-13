@@ -15,20 +15,16 @@ from .diagram_spec import Element, ManimSceneSpec, SCENE_PROMPT, designed_scene_
 from .diagram_input import normalize_scene_input
 from .diagram_intent import requested_family, requested_families, requested_scene_families, validate_designed_scene
 
-RENDER_VERSION = 3
+RENDER_VERSION = 4
 STYLE_KEYS = ("theme", "font", "background_color", "accent_color")
 
 
-def _shorten(value, limit):
+def _normalize_text(value, limit):
+    # Legacy callers supply editorial limits; never enforce them by cutting
+    # words. Oversized fields go through validation and explicit redesign.
     if not isinstance(value, str):
         return value
-    value = " ".join(value.split())
-    if len(value) <= limit:
-        return value
-    prefix = value[:limit-1].rstrip()
-    if " " in prefix and len(prefix.rsplit(" ", 1)[0]) >= max(4, limit//2):
-        prefix = prefix.rsplit(" ", 1)[0]
-    return prefix.rstrip(" ,;:-") + "…"
+    return value.strip()
 
 
 def _numeric_string(value):
@@ -93,7 +89,7 @@ def normalize_scene_geometry(value):
                 edge.update(extra_free)
                 changed = True
     for key, limit in (("title", 75), ("takeaway", 130)):
-        repaired = _shorten(result.get(key), limit)
+        repaired = _normalize_text(result.get(key), limit)
         if repaired != result.get(key):
             result[key], changed = repaired, True
     for element in result["elements"]:
@@ -126,11 +122,11 @@ def normalize_scene_geometry(value):
         if number != raw:
             element["tangent_at"], changed = number, True
         for key, limit in (("text", 48), ("caption", 36)):
-            repaired = _shorten(element.get(key), limit)
+            repaired = _normalize_text(element.get(key), limit)
             if repaired != element.get(key):
                 element[key], changed = repaired, True
         if isinstance(element.get("labels"), list):
-            repaired = [_shorten(label, 18) for label in element["labels"]]
+            repaired = [_normalize_text(label, 18) for label in element["labels"]]
             if repaired != element["labels"]:
                 element["labels"], changed = repaired, True
         kind = element.get("type")
@@ -149,7 +145,7 @@ def normalize_scene_geometry(value):
         for edge in result["connections"]:
             if not isinstance(edge, dict):
                 continue
-            repaired = _shorten(edge.get("label"), 24)
+            repaired = _normalize_text(edge.get("label"), 24)
             if repaired != edge.get("label"):
                 edge["label"], changed = repaired, True
     for element in result["elements"]:
@@ -241,8 +237,8 @@ def normalize_scene_geometry(value):
             element.update(
                 x=10.05, y=y, width=min(float(element.get("width", 2.9)), 2.9),
                 height=min(float(element.get("height", 1.25)), 1.25),
-                text=_shorten(element.get("text") or "", 26),
-                caption=_shorten(element.get("caption") or "", 16),
+                text=_normalize_text(element.get("text") or "", 26),
+                caption=_normalize_text(element.get("caption") or "", 16),
             )
         changed = True
     elif (can_reflow and 2 <= len(visual_elements) <= 4 and
@@ -282,8 +278,8 @@ def normalize_scene_geometry(value):
                 width=min(float(element.get("width", 2.8)), 2.8 if columns == 3 else 3.6),
                 height=min(float(element.get("height", 1.4)),
                            1.6 if element.get("type") in ("decision", "circle") else 1.4),
-                text=_shorten(element.get("text") or "", 30),
-                caption=_shorten(element.get("caption") or "", 20),
+                text=_normalize_text(element.get("text") or "", 30),
+                caption=_normalize_text(element.get("caption") or "", 20),
             )
         changed = True
     return result, changed
@@ -312,13 +308,13 @@ def fallback_diagram(content, previous=None, required_family=""):
         candidates.extend(block.text.split(".", 1)[0] for block in content.blocks if block.text)
     labels = []
     for candidate in candidates:
-        label = _shorten(candidate, 28)
+        label = _normalize_text(candidate, 28)
         if isinstance(label, str) and label and label not in labels:
             labels.append(label)
         if len(labels) == 6:
             break
     if not labels:
-        labels = [_shorten(content.title, 28)]
+        labels = [_normalize_text(content.title, 28)]
     comparison = "comparison" in required or previous.get("kind") == "comparison"
     if comparison and len(labels) < 2:
         raise ValueError("Il confronto richiede almeno due voci documentate")
@@ -329,22 +325,20 @@ def fallback_diagram(content, previous=None, required_family=""):
                         y=positions[i//columns], width=4.8, height=1.4, text=label)
                 for i, label in enumerate(labels)]
     label = "Confronto qualitativo" if comparison else "Riepilogo"
-    scene = ManimSceneSpec(title=_shorten(label + " · " + content.title, 75), elements=elements,
+    scene = ManimSceneSpec(title=_normalize_text(label + " · " + content.title, 75), elements=elements,
                            takeaway="Schema qualitativo dei concetti presenti nella slide.")
     return {"kind": "manim", "labels": [], "brief": content.diagram.brief,
             "scene": scene.model_dump()}
 
 
 def simplify_connection_labels(scene, keep_decisions=True):
-    """Preserve the designed scene when only arrow-label placement fails."""
+    """Free arrow-label space without deleting or shortening relationships."""
     repaired = scene.model_copy(deep=True)
-    by_id = {element.id: element for element in repaired.elements}
-    for edge in repaired.connections:
-        source = by_id.get(edge.source)
-        if keep_decisions and source and source.type == "decision":
-            edge.label = _shorten(edge.label, 8)
-        else:
-            edge.label = ""
+    for element in repaired.elements:
+        # Spread centres outwards, clamping the complete node to the canvas.
+        element.x = min(11.84-element.width/2, max(.16+element.width/2, 6+(element.x-6)*1.12))
+        element.y = min(7.24-element.height/2, max(1.06+element.height/2, 4.15+(element.y-4.15)*1.12))
+    repaired = ManimSceneSpec.model_validate(repaired.model_dump())
     return repaired
 
 
@@ -492,7 +486,7 @@ def scene_validation_feedback(error, phase="validation"):
     advice = {
         "STRUTTURA": "Restituisci un solo oggetto conforme allo schema per-forma, con ID unici e collegamenti validi. Rispetta la famiglia richiesta.",
         "DATI": "Correggi i dati e la scelta della forma, non solo coordinate o testi. Non inventare valori o archi. Se la fonte non contiene misure/campioni e non è richiesto un grafico specifico, usa forme qualitative box/circle/document/text. Per un grafico esplicito non sostituire i dati mancanti con altri tipi. histogram usa samples originali e bin_edges crescenti, scatter coppie x_values/values, bars valori firmati con una categoria per valore. Per network usa labels dei nodi e values come coppie piatte di indici interi validi e distinti; per grid usa valori 0..1 e un totale multiplo di columns. Se una relazione manca, omettila.",
-        "GEOMETRIA": "Conserva dati, formule, relazioni e forme valide. Correggi soltanto disposizione, dimensioni o lunghezza delle etichette; lascia spazio libero tra gli elementi.",
+        "GEOMETRIA": "Conserva integralmente testi, dati, formule, relazioni e forme valide. Ingrandisci e riallinea i nodi, disponili su più righe e lascia spazio alle etichette. Vietati tagli, puntini di sospensione e rimozione delle relazioni per far entrare il diagramma.",
     }[category]
     return {"category": category, "issues": issues, "advice": advice,
             "details": "; ".join(details)[:1400]}
@@ -558,7 +552,7 @@ async def design_diagram(client, renderer, pid, project, content, context, instr
                 event("Manim · formato e collegamenti normalizzati senza inventare dati")
             candidate, repaired = normalize_scene_geometry(candidate)
             if repaired:
-                event("Manim · testo, numeri e ingombri normalizzati automaticamente")
+                event("Manim · numeri e ingombri normalizzati, testi completi conservati")
             scene = ManimSceneSpec.model_validate(candidate)
             validate_designed_scene(scene, required)
             diagram = {"kind": "manim", "labels": [], "brief": content.diagram.brief, "scene": scene.model_dump()}
@@ -566,6 +560,8 @@ async def design_diagram(client, renderer, pid, project, content, context, instr
             event("Rendering Manim · 1800 × 1200 · verifica testi, ingombri e collegamenti")
             phase = "render"
             rendered = await renderer.render(pid, diagram, project)
+            if rendered.get("report", {}).get("text_layout_adjusted"):
+                event("Manim · nodi ingranditi e riallineati per conservare tutte le etichette")
             await checkpoint()
             return diagram, rendered
         except ValueError as exc:
@@ -582,9 +578,9 @@ async def design_diagram(client, renderer, pid, project, content, context, instr
                 # Recover decorative labels immediately, avoiding repeated LLM
                 # calls for a scene whose data and geometry are already valid.
                 for keep_decisions in (True,):
-                    rescued = simplify_connection_labels(scene, keep_decisions)
                     try:
-                        event("Manim · etichette delle frecce adattate automaticamente")
+                        rescued = simplify_connection_labels(scene, keep_decisions)
+                        event("Manim · spazio fra nodi ampliato, etichette delle frecce conservate")
                         diagram = {"kind": "manim", "labels": [], "brief": content.diagram.brief,
                                    "scene": rescued.model_dump()}
                         await checkpoint()

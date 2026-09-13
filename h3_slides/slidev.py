@@ -3,6 +3,7 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
+from PIL import Image
 
 
 class SlidevLayoutError(ValueError, subprocess.SubprocessError):
@@ -12,6 +13,7 @@ class SlidevLayoutError(ValueError, subprocess.SubprocessError):
 def write_slidev(project, assets, output, strict=False):
     output.mkdir(parents=True, exist_ok=True)
     root = Path(__file__).resolve().parents[1]
+    media_dimensions = {}
     katex_fonts = root / "static" / "vendor" / "katex" / "fonts"
     if katex_fonts.exists():
         shutil.copytree(katex_fonts, output / "fonts", dirs_exist_ok=True)
@@ -27,10 +29,14 @@ def write_slidev(project, assets, output, strict=False):
         for image in images:
             (output / "assets").mkdir(exist_ok=True)
             src, dst = assets / image, output / "assets" / image
+            if image not in media_dimensions:
+                with Image.open(src) as decoded:
+                    media_dimensions[image] = {"width": decoded.width, "height": decoded.height}
             if not dst.exists():
                 shutil.copy2(src, dst)
     result = subprocess.run([str(root / "runtime/node/node.exe"), str(root / "scripts/slidev_source.mjs")],
-                            input=json.dumps(project), capture_output=True, text=True, encoding="utf-8",
+                            input=json.dumps({**project, "_media_dimensions": media_dimensions}),
+                            capture_output=True, text=True, encoding="utf-8",
                             timeout=20, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
     if result.returncode:
         # Parse only our fixed diagnostic line. Never expose stderr, source

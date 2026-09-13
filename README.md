@@ -9,7 +9,7 @@ Progetto indipendente da H3-Comics: non ne modifica file, processi o configurazi
   I progetti esistenti si aprono direttamente nell'editor. Il menu superiore
   **Presentazione** raccoglie download e ritorno alle impostazioni.
 - I temi hanno anteprime compatte e combinazioni pronte di colori, font e riquadri.
-  Le schede **Adattive** possono crescere fino al 40%; quelle **Fisse** restano 16:9.
+  Le schede **Adattive** possono crescere fino a 1440 px; quelle **Fisse** restano 16:9.
   Il PDF conserva l'altezza di ogni scheda; PowerPoint e Slidev usano il formato
   comune necessario a contenerle tutte. Contenuti ancora troppo grandi vengono
   segnalati, non tagliati silenziosamente.
@@ -19,8 +19,8 @@ Progetto indipendente da H3-Comics: non ne modifica file, processi o configurazi
   Passare alla modalità libera conserva una disposizione già valida. Durante
   spostamenti, ridimensionamenti e scrittura il renderer espande i box secondo
   il testo e riposiziona gli elementi coinvolti, senza ridurre i font o riscrivere
-  i contenuti. Le schede adattive crescono anche in modalità libera fino a 1008 px
-  (+40% rispetto ai 720 px del 16:9). La griglia fine è configurabile nel menu,
+  i contenuti. Le schede adattive crescono anche in modalità libera fino a 1440 px
+  quando lo richiedono testo, diagrammi e fotografie. La griglia fine è configurabile nel menu,
   Alt disattiva l'aggancio. Esc annulla l'editing e ripristina la disposizione.
   Riducendo un box si elimina lo spazio vuoto fino al minimo reale del contenuto.
   Se il resize supera lo spazio disponibile, si ferma alla misura valida più
@@ -150,6 +150,18 @@ I profili **llama.cpp integrato** mantengono caricamento e inferenza completi,
 si salvano con **Salva profilo** in data/llm_profiles.json e si applicano alle
 generazioni successive. Le impostazioni API sono incluse nella singola richiesta;
 modificarle non cambia i job gia avviati.
+
+Se un server API restituisce esplicitamente **Channel Error** o
+**Engine protocol predict request failed: fetch failed**, H3-Slides ripete
+la stessa richiesta **una sola volta dopo 2 secondi**, senza cambiare prompt,
+modello o parametri e senza avviare, scaricare o riavviare il server remoto.
+Il log del job mostra il tentativo e l'eventuale ritorno della risposta.
+Se l'errore persiste, il job si ferma con un messaggio specifico: non viene
+attribuito automaticamente al contesto. Errori generici, autenticazione,
+annullamenti/scaricamenti espliciti e segnalazioni di memoria/GPU associate
+non attivano questo recupero. I blocchi del documento già analizzati rimangono
+in cache e vengono riutilizzati al nuovo tentativo con gli stessi documenti,
+modello e impostazioni di inferenza. Non vengono saltate parti del documento.
 
 Il selettore nativo si apre sul PC che esegue l'app (Windows); da una sessione
 remota usare il percorso sul server. La selezione annullata non cambia nulla.
@@ -478,7 +490,21 @@ diagramma e il resto della presentazione prosegue; il log mantiene il motivo.
 **Crea diagrammi mancanti** riprova in blocco senza toccare i testi e continua
 anche se una singola scena non riesce; **Progetta Manim** riprova la sola slide.
 Gli errori comuni dei modelli remoti (numeri serializzati come testo, etichette
-troppo lunghe e piccoli difetti geometrici) vengono corretti prima del render.
+lunghe e piccoli difetti geometrici) vengono corretti prima del render.
+I testi non vengono più tagliati con puntini di sospensione: il renderer misura
+le etichette intere, le manda a capo, amplia i nodi o riallinea le righe e riserva
+spazio anche alle legende dei grafici. Il font Manim non scende sotto 20; quando
+il contenuto resta impossibile da impaginare, il feedback chiede all'LLM una
+riprogettazione che conservi informazioni e relazioni, non un render troncato.
+Il report comunica al composer una dimensione minima leggibile del diagramma.
+Anche le foto sono misurate sulla superficie realmente visibile, mantenendo
+le proporzioni senza ritagli o deformazioni: il composer può cambiare disposizione,
+separare foto e diagramma su righe diverse e allungare le schede adattive fino a
+1440 px. Il controllo è condiviso da anteprima ed esportazioni; il formato Fisso
+rimane 16:9 e segnala lo spazio insufficiente. Le posizioni libere scelte a mano
+non vengono alterate al solo caricamento. Ingrandire una foto non aumenta la sua
+risoluzione originale. I vecchi render già abbreviati richiedono **Riprogetta Manim**:
+ridimensionarli non può recuperare parole mancanti nell'immagine.
 Lo schema fornito all'LLM distingue i campi richiesti per ogni forma e, quando
 il tipo è esplicito, include soltanto le famiglie richieste e le forme di base.
 Questo riduce il contesto anche per i modelli locali. Una rete richiede nodi e

@@ -311,14 +311,14 @@ test('canvas limits clamp immediately and an invalid fallback cannot authorize o
   }finally{await page.close()}
 });
 
-test('adaptive freeform grows for 26 code lines and reports impossible 40-line content',async()=>{
-  for(const lines of [26,40]){
+test('adaptive freeform grows for 26 and 40 code lines and reports impossible 70-line content',async()=>{
+  for(const lines of [26,40,70]){
     const c=content({blocks:[code(lines)],freeform:{heading:{x:48,y:60,w:1184,h:120},'block-0':{x:48,y:200,w:1184,h:430}}});
     const {page,frame}=await render(c);
     try{
       const text=await frame.locator('.kind-code p').textContent(),font=await frame.locator('.kind-code p').evaluate(e=>getComputedStyle(e).fontSize);
       const result=await frame.evaluate(fitSlide);
-      if(lines===26){await assertValid(frame,result);assert.ok(result.height>720&&result.height<=1008)}
+      if(lines<70){await assertValid(frame,result);assert.ok(result.height>720&&result.height<=1440)}
       else{assert.equal(result.overflow,true);assert.ok((await frame.evaluate(geometry)).issues.length>0)}
       assert.equal(await frame.locator('.kind-code p').textContent(),text);
       assert.equal(await frame.locator('.kind-code p').evaluate(e=>getComputedStyle(e).fontSize),font);

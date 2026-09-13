@@ -195,8 +195,9 @@ def test_slidev_copies_photo_and_diagram_independently(
         tmp_path, monkeypatch, origin, source_enabled, manim_enabled, expected):
     assets, output = tmp_path / "source-assets", tmp_path / "slidev"
     assets.mkdir()
+    from PIL import Image
     for name in ("photo.jpg", "manim-existing.png"):
-        (assets / name).write_bytes(name.encode())
+        Image.new("RGB", (90, 270) if name == "photo.jpg" else (1800, 1200)).save(assets / name)
     project = {"title": "Due visuali", "use_source_images": source_enabled,
                "use_manim_diagrams": manim_enabled,
                "visual_assets": [{"id": "photo.jpg", "origin": origin}] if origin != "source" else [],
@@ -204,10 +205,18 @@ def test_slidev_copies_photo_and_diagram_independently(
                                        "diagram": {"kind": "manim"}},
                            "diagram_render": {"engine": "manim", "asset": "manim-existing.png"}}]}
     # Exercise Python packaging in isolation; browser HTML has separate integration coverage.
-    monkeypatch.setattr("h3_slides.slidev.subprocess.run", lambda *_, **__: SimpleNamespace(
-        returncode=0, stderr="", check_returncode=lambda: None,
-        stdout=json.dumps({"markdown": "# Due visuali", "css": ""})))
+    def render(*args, **kwargs):
+        sent = json.loads(kwargs["input"])
+        assert set(sent["_media_dimensions"]) == expected
+        if "photo.jpg" in expected:
+            assert sent["_media_dimensions"]["photo.jpg"] == {"width": 90, "height": 270}
+        if "manim-existing.png" in expected:
+            assert sent["_media_dimensions"]["manim-existing.png"] == {"width": 1800, "height": 1200}
+        return SimpleNamespace(returncode=0, stderr="", check_returncode=lambda: None,
+                               stdout=json.dumps({"markdown": "# Due visuali", "css": ""}))
+    monkeypatch.setattr("h3_slides.slidev.subprocess.run", render)
     write_slidev(project, assets, output)
+    assert "_media_dimensions" not in project
     copied = {path.name for path in (output / "assets").glob("*")}
     assert copied == expected
     for name in expected:

@@ -1,6 +1,5 @@
 """Trusted Manim scene compiler. All input is validated data, not executable code."""
 import math
-import textwrap
 import numpy as np
 from manim import (VGroup, Text, RoundedRectangle, Rectangle, Ellipse, Polygon,
                    Line, DashedLine, Arrow, VMobject, Dot, Axes, ManimColor, interpolate_color)
@@ -8,6 +7,7 @@ from .diagram_spec import ManimSceneSpec
 from .diagram_layout import bounds, route_connection
 from .math_expression import sample_expression, function_line, compile_expression
 from .chart_data import histogram_data, nice_axis, format_tick
+from .manim_typography import fit_text, reflow_text_nodes
 
 
 def point(x, y):
@@ -38,31 +38,30 @@ def build_scene(value, project):
     font = project.get("font", "Arial")
     if font not in ("Arial", "Calibri", "Segoe UI", "Georgia", "Verdana", "Consolas"):
         font = "Arial"
-    texts, shortened_texts = [], 0
+    texts = []
     plotted_curves = 0
     charts = []
+    measured = {}
+
+    def measure(value, width, height, size, minimum, bold):
+        key = (value, round(width, 4), round(height, 4), size, minimum, bold)
+        if key not in measured:
+            try:
+                measured[key] = fit_text(value, width, height, font=font, color=colors["fg"],
+                                         size=size, minimum=minimum, bold=bold)
+            except ValueError:
+                measured[key] = None
+        if measured[key] is None:
+            raise ValueError("Testo completo non leggibile: ingrandisci e riallinea i nodi senza abbreviare")
+        label, chosen = measured[key]
+        return label.copy(), chosen
+
+    spec, text_layout_adjusted = reflow_text_nodes(spec, measure)
 
     def copy(value, width, height, size=30, minimum=22, bold=False):
-        nonlocal shortened_texts
-        source = " ".join(value.split())
-        limits = [len(source), 60, 48, 36, 28, 22, 16, 12, 8, 5, 2]
-        tried = set()
-        for limit in limits:
-            if limit in tried or limit > len(source):
-                continue
-            tried.add(limit)
-            candidate_text = source if limit == len(source) else _shorten_for_render(source, limit)
-            for candidate in range(size, minimum-1, -2):
-                wrap = max(4, int(width/(candidate/150)))
-                wrapped = "\n".join(textwrap.fill(line, width=wrap, break_long_words=False)
-                                    for line in candidate_text.splitlines())
-                label = Text(wrapped, font=font, font_size=candidate, weight="BOLD" if bold else "NORMAL",
-                             color=colors["fg"], line_spacing=.65)
-                if label.width <= width and label.height <= height:
-                    texts.append((label, candidate))
-                    shortened_texts += candidate_text != source
-                    return label
-        raise ValueError("Testo non leggibile nello spazio assegnato: abbrevia le etichette o ingrandisci gli elementi")
+        label, chosen = measure(value, width, height, size, minimum, bold)
+        texts.append((label, chosen))
+        return label
 
     title = copy(spec.title, 11.1, .65, size=36, minimum=28, bold=True).move_to(point(6, .43))
     rule = Line(point(.35, .88), point(11.65, .88), color=colors["accent"], stroke_width=2)
@@ -82,13 +81,19 @@ def build_scene(value, project):
             panel = RoundedRectangle(width=w, height=h, corner_radius=.13, stroke_width=1.5,
                 color=mix(colors["bg"], tone, .55), fill_color=mix(colors["bg"], tone, .055), fill_opacity=1)
             group.add(panel)
+            top_inset, bottom_inset = .7, .7
             if e.text:
-                label = copy(e.text, w-.35, .48, size=28, minimum=24, bold=True).move_to([0, h/2-.34, 0])
+                label = copy(e.text, w-.35, min(1.3, h*.22), size=28, minimum=24, bold=True)
+                top_inset = max(.7, label.height+.3)
+                label.move_to([0, h/2-.15-label.height/2, 0])
                 group.add(label)
             if e.caption:
-                label = copy(e.caption, w-.35, .43, size=22, minimum=20).move_to([0, -h/2+.27, 0])
+                label = copy(e.caption, w-.35, min(1.2, h*.2), size=22, minimum=20)
+                bottom_inset = max(.7, label.height+.3)
+                label.move_to([0, -h/2+.15+label.height/2, 0])
                 label.set_color(colors["muted"]); group.add(label)
-            inner_w, inner_h = w-.75, h-1.4
+            chart_start = len(group)
+            inner_w, inner_h = w-.75, h-top_inset-bottom_inset
             if inner_h < .9:
                 raise ValueError(f"Grafico {e.id}: aumenta height almeno a 2.5")
             if e.type == "grid":
@@ -109,13 +114,18 @@ def build_scene(value, project):
                 lo, hi = min(0, min(e.values)), max(0, max(e.values))
                 if lo == hi:
                     hi = 1
-                bottom, top = -inner_h/2+.62, inner_h/2-.3
+                step = inner_w/count
+                category_labels = [copy(name, step-.12, min(1.65, inner_h*.42), size=22, minimum=20)
+                                   for name in e.labels]
+                label_h = max(label.height for label in category_labels)
+                bottom, top = -inner_h/2+label_h+.45, inner_h/2-.3
+                if top-bottom < .6:
+                    raise ValueError(f"Grafico {e.id}: aumenta height per etichette complete e barre leggibili")
                 ordinate = lambda value: bottom+(top-bottom)*(value-lo)/(hi-lo)
                 baseline = ordinate(0)
                 group.add(Line([-inner_w/2, baseline, 0], [inner_w/2, baseline, 0],
                                color=colors["muted"], stroke_width=2))
                 for i, value in enumerate(e.values):
-                    step = inner_w/count
                     x = -inner_w/2+(i+.5)*step
                     endpoint = ordinate(value)
                     if value:
@@ -123,7 +133,7 @@ def build_scene(value, project):
                             fill_color=mix(colors["bg"], tone, .65+.3*i/max(1, count-1)), fill_opacity=1).move_to([x, (endpoint+baseline)/2, 0]))
                     else:
                         group.add(Line([x-step*.28, baseline, 0], [x+step*.28, baseline, 0], color=tone, stroke_width=4))
-                    label = copy(e.labels[i], step-.1, .4, size=22, minimum=20).move_to([x, -inner_h/2-.08, 0])
+                    label = category_labels[i].move_to([x, -inner_h/2+label_h/2, 0])
                     number_y = endpoint+.17 if value >= 0 else endpoint-.17
                     number = copy(f"{value:g}", step-.05, .3, size=22, minimum=20).move_to([x, number_y, 0])
                     group.add(label, number)
@@ -207,7 +217,7 @@ def build_scene(value, project):
                     group.add(*[Dot(p, radius=.058, color=tone) for p in points])
                     placed = []
                     for index, name in enumerate(e.labels):
-                        label = copy(name, 1.1, .28, size=20, minimum=20)
+                        label = copy(name, min(2.8, (right-left)*.4), min(1.0, (top-bottom)*.35), size=20, minimum=20)
                         for direction in ([0, 1, 0], [1, 0, 0], [-1, 0, 0], [0, -1, 0], [1, 1, 0], [-1, -1, 0]):
                             label.next_to(points[index], direction, buff=.12)
                             x1, x2, y1, y2 = label.get_left()[0], label.get_right()[0], label.get_bottom()[1], label.get_top()[1]
@@ -254,7 +264,11 @@ def build_scene(value, project):
                                    "Secante", colors["red"], []))
                     markers.extend((x, colors["red"]) for x in e.secant_x)
                 legend_rows = math.ceil(len(curves)/2) if len(curves) > 1 else 0
-                legend_h = legend_rows*.34
+                legend_labels = [copy(name, inner_w/2-.45, min(1.1, inner_h*.3), size=20, minimum=20)
+                                 for _, name, _, _ in curves] if legend_rows else []
+                row_heights = [max(label.height for label in legend_labels[i:i+2])+.12
+                               for i in range(0, len(legend_labels), 2)]
+                legend_h = sum(row_heights)
                 chart_h = inner_h-legend_h-.25
                 if chart_h < .8:
                     raise ValueError(f"Grafico {e.id}: aumenta height per curve e legenda almeno a 4")
@@ -283,9 +297,10 @@ def build_scene(value, project):
                     if legend_rows:
                         slot_w = inner_w/2
                         lx = -inner_w/2+(index % 2)*slot_w
-                        ly = -inner_h/2+.08+(legend_rows-1-index//2)*.34
+                        row = index//2
+                        ly = -inner_h/2+legend_h-sum(row_heights[:row])-row_heights[row]/2
                         swatch = Line([lx, ly, 0], [lx+.23, ly, 0], color=curve_tone, stroke_width=4)
-                        label = copy(name, slot_w-.45, .29, size=20, minimum=20)
+                        label = legend_labels[index]
                         label.move_to([lx+.32+label.width/2, ly, 0])
                         group.add(swatch, label)
                 function = compile_expression(e.expression)
@@ -308,25 +323,34 @@ def build_scene(value, project):
                 if count == 2:
                     centers = [(-inner_w*.18, 0), (inner_w*.18, 0)]
                 elif count == 3:
-                    centers = [(-inner_w*.18, .22), (inner_w*.18, .22), (0, -.34)]
+                    centers = [(-inner_w*.18, inner_h*.18), (inner_w*.18, inner_h*.18), (0, -inner_h*.18)]
                 else:
-                    centers = [(-inner_w*.18, .24), (inner_w*.18, .24),
-                               (-inner_w*.18, -.28), (inner_w*.18, -.28)]
+                    centers = [(-inner_w*.18, inner_h*.18), (inner_w*.18, inner_h*.18),
+                               (-inner_w*.18, -inner_h*.18), (inner_w*.18, -inner_h*.18)]
                 diameter = min(inner_w*(.56 if count <= 3 else .48), inner_h*(.82 if count <= 3 else .68))
                 venn_colors = [colors["blue"], colors["amber"], colors["violet"], colors["red"]]
                 for index, ((x, y), name) in enumerate(zip(centers, e.labels)):
                     oval = Ellipse(width=diameter, height=diameter*.72, color=venn_colors[index],
                                    fill_color=venn_colors[index], fill_opacity=.2, stroke_width=3).move_to([x, y-.04, 0])
-                    label = copy(name, diameter*.55, .45, size=22, minimum=20, bold=True).move_to([x, y, 0])
+                    label = copy(name, diameter*.55, diameter*.4, size=22, minimum=20, bold=True).move_to([x, y, 0])
                     group.add(oval, label)
             elif e.type == "gantt":
                 starts, ends = e.values[::2], e.values[1::2]
                 lo, hi = min(starts), max(ends)
                 span = hi-lo
-                label_w, chart_left = inner_w*.28, -inner_w/2+inner_w*.28+.12
+                row_h = inner_h/len(e.labels)
+                for fraction in (.28, .36, .44, .5):
+                    label_w = inner_w*fraction
+                    try:
+                        task_labels = [measure(name, label_w-.12, row_h*.75, 22, 20, False)
+                                       for name in e.labels]
+                        break
+                    except ValueError:
+                        if fraction == .5:
+                            raise
+                chart_left = -inner_w/2+label_w+.12
                 chart_right = inner_w/2-.08
                 chart_w = chart_right-chart_left
-                row_h = inner_h/len(e.labels)
                 for tick in range(5):
                     x = chart_left+chart_w*tick/4
                     group.add(Line([x, -inner_h/2, 0], [x, inner_h/2, 0],
@@ -336,7 +360,9 @@ def build_scene(value, project):
                     group.add(tick_label)
                 for index, (name, start, end) in enumerate(zip(e.labels, starts, ends)):
                     y = inner_h/2-(index+.5)*row_h
-                    label = copy(name, label_w-.12, row_h*.75, size=22, minimum=20).move_to([-inner_w/2+label_w/2, y, 0])
+                    label, chosen = task_labels[index]
+                    texts.append((label, chosen))
+                    label.move_to([-inner_w/2+label_w/2, y, 0])
                     x1 = chart_left+chart_w*(start-lo)/span
                     x2 = chart_left+chart_w*(end-lo)/span
                     bar = RoundedRectangle(width=max(.08, x2-x1), height=max(.08, row_h*.5),
@@ -346,16 +372,17 @@ def build_scene(value, project):
             elif e.type == "timeline":
                 positions = list(e.values) if e.values else list(range(len(e.labels)))
                 lo, hi = positions[0], positions[-1]
-                xs = [-inner_w/2+.25+(inner_w-.5)*(value-lo)/(hi-lo) for value in positions]
+                slot_w = (inner_w-.35)/len(positions)*.9
+                xs = [-inner_w/2+slot_w/2+.1+(inner_w-slot_w-.2)*(value-lo)/(hi-lo) for value in positions]
                 group.add(Arrow([xs[0]-.18, 0, 0], [xs[-1]+.28, 0, 0], buff=0,
                                 color=tone, stroke_width=3, tip_length=.13))
-                slot_w = max(.65, (inner_w-.35)/len(xs)*.9)
                 for index, (x, name) in enumerate(zip(xs, e.labels)):
-                    y = .55 if index % 2 == 0 else -.55
+                    label = copy(name, slot_w, inner_h/2-.35, size=22, minimum=20, bold=True)
+                    y = (.3+label.height/2)*(1 if index % 2 == 0 else -1)
                     group.add(Dot([x, 0, 0], radius=.07, color=tone),
                               Line([x, .08 if y > 0 else -.08, 0], [x, y*.58, 0],
                                    color=tone, stroke_width=2),
-                              copy(name, slot_w, .55, size=22, minimum=20, bold=True).move_to([x, y, 0]))
+                              label.move_to([x, y, 0]))
             elif e.type == "tree":
                 parents = [None]+[int(value) for value in e.values]
                 depths = [0]
@@ -363,7 +390,12 @@ def build_scene(value, project):
                     depths.append(depths[parents[child]]+1)
                 levels = max(depths)+1
                 positions = {}
-                node_h = min(.62, inner_h/levels*.55)
+                max_nodes = max(depths.count(depth) for depth in set(depths))
+                max_w, max_h = inner_w/max_nodes*.82, inner_h/levels*.72
+                node_labels = [copy(name, max_w-.16, max_h-.08, size=22, minimum=20, bold=index == 0)
+                               for index, name in enumerate(e.labels)]
+                node_w = max(min(1.8, max_w), max(label.width for label in node_labels)+.16)
+                node_h = max(min(.62, max_h), max(label.height for label in node_labels)+.08)
                 for depth in range(levels):
                     nodes = [index for index, value in enumerate(depths) if value == depth]
                     for column, index in enumerate(nodes):
@@ -375,23 +407,29 @@ def build_scene(value, project):
                     group.add(Arrow([positions[parent][0], positions[parent][1]-node_h/2, 0],
                                     [positions[child][0], positions[child][1]+node_h/2, 0],
                                     buff=.04, color=colors["muted"], stroke_width=2, tip_length=.1))
-                max_nodes = max(depths.count(depth) for depth in set(depths))
-                node_w = min(1.8, inner_w/max_nodes*.72)
                 for index, name in enumerate(e.labels):
                     x, y = positions[index]
                     node = RoundedRectangle(width=node_w, height=node_h, corner_radius=.12,
                                             color=tone, fill_color=mix(colors["bg"], tone, .16),
                                             fill_opacity=1, stroke_width=2).move_to([x, y, 0])
-                    label = copy(name, node_w-.16, node_h-.08, size=22, minimum=20, bold=index == 0).move_to(node)
+                    label = node_labels[index].move_to(node)
                     group.add(node, label)
             elif e.type == "network":
                 count = len(e.labels)
-                radius_x, radius_y = inner_w*.38, inner_h*.34
+                max_w, max_h = min(2.8, inner_w*.30), min(1.4, inner_h*.30)
+                node_labels = [copy(name, max_w*.7, max_h*.7, size=22, minimum=20, bold=True)
+                               for name in e.labels]
+                node_w = max(min(1.35, max_w), max(label.width for label in node_labels)/.7)
+                node_h = max(min(.72, max_h), max(label.height for label in node_labels)/.7)
+                radius_x, radius_y = (inner_w-node_w)/2, (inner_h-node_h)/2
                 positions = [(radius_x*math.cos(-math.pi/2+2*math.pi*i/count),
                               radius_y*math.sin(-math.pi/2+2*math.pi*i/count)) for i in range(count)]
                 if count == 1:
                     positions = [(0, 0)]
-                node_w, node_h = min(1.35, inner_w*.22), min(.72, inner_h*.32)
+                for i, (x, y) in enumerate(positions):
+                    for xx, yy in positions[i+1:]:
+                        if abs(x-xx) < node_w+.08 and abs(y-yy) < node_h+.08:
+                            raise ValueError(f"Grafo {e.id}: aumenta lo spazio tra i nodi per etichette complete")
                 for a, b in zip(e.values[::2], e.values[1::2]):
                     start, end = np.array([*positions[int(a)], 0]), np.array([*positions[int(b)], 0])
                     if e.directed:
@@ -405,8 +443,10 @@ def build_scene(value, project):
                     node = Ellipse(width=node_w, height=node_h, color=tone,
                                    fill_color=mix(colors["bg"], tone, .18), fill_opacity=1,
                                    stroke_width=2.5).move_to([*position, 0])
-                    label = copy(name, node_w-.12, node_h-.08, size=22, minimum=20, bold=True).move_to(node)
+                    label = node_labels[index].move_to(node)
                     group.add(node, label)
+            for item in group.submobjects[chart_start:]:
+                item.shift([0, (bottom_inset-top_inset)/2, 0])
         else:
             fill = mix(colors["bg"], tone, .12)
             if e.type == "decision":
@@ -430,7 +470,7 @@ def build_scene(value, project):
                               Line([w/2-fold, h/2-fold, 0], [w/2, h/2-fold, 0], color=tone, stroke_width=2))
             inside_w = w*(.62 if e.type in ("decision", "circle") else .86)
             inside_h = h*(.53 if e.type == "decision" else .76)
-            label = copy(e.text, inside_w, inside_h*(.6 if e.caption else 1), size=30, minimum=24, bold=e.type != "text")
+            label = copy(e.text, inside_w, inside_h*(.6 if e.caption else 1), size=30, minimum=20, bold=e.type != "text")
             if e.caption:
                 caption = copy(e.caption, inside_w, inside_h*.38, size=22, minimum=20)
                 caption.set_color(colors["muted"])
@@ -452,7 +492,13 @@ def build_scene(value, project):
                       tip_length=.13, max_tip_length_to_length_ratio=.5)
         visual = VGroup(line, arrow)
         if edge.label:
-            label = copy(edge.label, 2.5, .7, size=22, minimum=20)
+            for width, height in ((2.5, .7), (3.5, 1.1), (5, 1.4)):
+                try:
+                    label = copy(edge.label, width, height, size=22, minimum=20)
+                    break
+                except ValueError:
+                    if width == 5:
+                        raise
             placed = False
             for a, b in sorted(zip(route, route[1:]), key=lambda pair: -math.dist(*pair)):
                 vertical = abs(a[0]-b[0]) < .001
@@ -474,7 +520,7 @@ def build_scene(value, project):
                 if placed:
                     break
             if not placed:
-                raise ValueError("Non c'è spazio per l'etichetta di una freccia: allontana gli elementi o abbrevia la relazione")
+                raise ValueError("Non c'è spazio per l'etichetta di una freccia: allontana e riallinea gli elementi, conservando la relazione completa")
             backing = RoundedRectangle(width=label.width+.10, height=label.height+.08, corner_radius=.035,
                          fill_color=colors["bg"], fill_opacity=1, stroke_width=0).move_to(label)
             visual.add(backing, label)
@@ -486,18 +532,15 @@ def build_scene(value, project):
     for label, size in texts:
         if label.get_left()[0] < -5.97 or label.get_right()[0] > 5.97 or label.get_top()[1] > 3.99 or label.get_bottom()[1] < -3.99:
             raise ValueError("Testo fuori dal canvas Manim")
+    minimum_size = min(size for _, size in texts)
+    glyph_height = Text("Ag", font=font, font_size=minimum_size).height*150
     report = {"engine": "manim", "elements": len(objects), "connections": len(links),
-              "min_font_size": min(size for _, size in texts), "text_count": len(texts),
-              "shortened_texts": shortened_texts, "bounds_checked": True,
+              "min_font_size": minimum_size, "text_count": len(texts),
+              "shortened_texts": 0, "bounds_checked": True,
+              "text_layout_adjusted": text_layout_adjusted,
+              "min_glyph_height_px": glyph_height,
+              "display_min_width": math.ceil(1800*16/max(glyph_height, 1)),
+              "display_min_height": math.ceil(1200*16/max(glyph_height, 1)),
               "plotted_curves": plotted_curves, "charts": charts,
               "types": sorted({e.type for e in spec.elements})}
     return root, header, footer, stages, report
-
-
-def _shorten_for_render(value, limit):
-    if len(value) <= limit:
-        return value
-    prefix = value[:limit-1].rstrip()
-    if " " in prefix and len(prefix.rsplit(" ", 1)[0]) >= max(2, limit//2):
-        prefix = prefix.rsplit(" ", 1)[0]
-    return prefix.rstrip(" ,;:-") + "…"

@@ -72,8 +72,8 @@ export function contentBlocks(content){return content.blocks||[]}
 const clamp=(value,minimum,maximum)=>Math.max(minimum,Math.min(maximum,value));
 function validFreePlacement(value,fallback){
   if(!value||!['x','y','w','h'].every(key=>Number.isFinite(Number(value[key]))))return fallback;
-  const w=clamp(Math.round(Number(value.w)),80,1280),h=clamp(Math.round(Number(value.h)),44,968);
-  return {x:clamp(Math.round(Number(value.x)),0,1280-w),y:clamp(Math.round(Number(value.y)),0,968-h),w,h};
+  const w=clamp(Math.round(Number(value.w)),80,1280),h=clamp(Math.round(Number(value.h)),44,1400);
+  return {x:clamp(Math.round(Number(value.x)),0,1280-w),y:clamp(Math.round(Number(value.y)),0,1400-h),w,h};
 }
 function defaultFreePlacements(content,hasVisual,hasPhoto=false){
   const placements={heading:{x:48,y:60,w:1184,h:120}};
@@ -157,8 +157,11 @@ export function slideHTML(project,slide,index,imageUrl=''){
     (/^https:\/\/commons\.wikimedia\.org\//.test(record.source)?'<a href="'+esc(record.source)+
       '" target="_blank" rel="noopener noreferrer">'+esc(credit)+'</a>':esc(credit))+'</figcaption>':'';
   const photoKey=dual||c.freeform?.image?'image':'visual';
+  const report=slide.diagram_render?.report||{};
+  const diagramMinWidth=Number(report.display_min_width)|| (report.min_font_size?640:0);
+  const diagramMinHeight=Number(report.display_min_height)|| (report.min_font_size?427:0);
   const diagramMarkup=visual.diagram&&urls.diagram?
-    '<img class="visual diagram-render" data-visual-kind="diagram"'+freeData(placements,'visual')+' style="'+freeStyle(placements,'visual')+
+    '<img class="visual diagram-render" data-visual-kind="diagram" data-media-aspect="1.5" data-media-min-width="'+esc(diagramMinWidth)+'" data-media-min-height="'+esc(diagramMinHeight)+'"'+freeData(placements,'visual')+' style="'+freeStyle(placements,'visual')+
       '" src="'+esc(urls.diagram)+'" alt="Diagramma renderizzato con Manim">':'';
   const photoMarkup=visual.photo&&urls.image?
     '<figure class="visual photo-visual" data-visual-kind="image"'+freeData(placements,photoKey)+' style="'+freeStyle(placements,photoKey)+'">'+
@@ -173,7 +176,7 @@ export function slideHTML(project,slide,index,imageUrl=''){
     ' heading-'+esc(c.heading_position||'top')+' heading-align-'+esc(c.heading_align||'left')+
     (d.title_size?' custom-title-size':'')+(d.body_size?' custom-body-size':'')+
     (template==='freeform'&&c.freeform_compact?' compact-spacing':'')+'" data-candidates="'+esc(JSON.stringify(candidates))+
-    '" data-canvas-height="'+Math.max(720,Math.min(1008,Number(c.canvas_height)||720))+'" data-canvas-mode="'+(project.canvas_mode==='adaptive'?'adaptive':'fixed')+'" data-layout="'+esc(template)+'" data-free-base="'+esc(freeBase)+'" data-free-compact="'+String(Boolean(c.freeform_compact))+
+    '" data-canvas-height="'+Math.max(720,Math.min(1440,Number(c.canvas_height)||720))+'" data-canvas-mode="'+(project.canvas_mode==='adaptive'?'adaptive':'fixed')+'" data-layout="'+esc(template)+'" data-free-base="'+esc(freeBase)+'" data-free-compact="'+String(Boolean(c.freeform_compact))+
     '" style="'+style+';--item-count:'+(blocks.length||c.bullets?.length||1)+'">'+
     '<div class="slide-accent"></div>'+
     '<div class="kicker">H3 SLIDES <span>/ '+String(index+1).padStart(2,'0')+'</span></div><div class="heading"'+freeData(placements,'heading')+' style="'+freeStyle(placements,'heading')+'">'+

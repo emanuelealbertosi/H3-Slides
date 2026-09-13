@@ -165,6 +165,8 @@ class Worker:
             client.metrics_callback = lambda metrics: self.record_llm_metrics(jid, metrics)
         if provider.mode == "local" and hasattr(client, "runtime_callback"):
             client.runtime_callback = lambda status: self.record_runtime_status(jid, status)
+        if hasattr(client, "event_callback"):
+            client.event_callback = lambda message: self.store.event(jid, message)
         return client
 
     def record_runtime_status(self, jid, status):

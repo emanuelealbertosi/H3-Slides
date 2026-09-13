@@ -19,7 +19,7 @@ export function installStudioShell(){
     '<input id="theme-preset-name" type="hidden"><div class="row">'+
     '<label>Composizione grafica<select id="graphic-style"><option value="studio">Studio · varia e ariosa</option><option value="vivid">Vivace · colore e contrasti</option><option value="editorial">Magazine · testo e immagini</option><option value="classic">Classica</option></select></label>'+
     '<label>Formato delle schede<select id="canvas-mode"><option value="adaptive">Adattivo · cresce con il contenuto</option><option value="fixed">Fisso · 16:9</option></select></label></div>'+
-    '<small>Le schede adattive possono crescere fino al 40%. Il PDF conserva le altezze; PowerPoint usa un formato comune, senza tagliare il contenuto.</small>';
+    '<small>Le schede adattive crescono quanto serve, fino a 1440 px, per testi e immagini leggibili. Il PDF conserva le altezze; PowerPoint usa un formato comune senza tagli.</small>';
   const stylePanel=document.querySelector('#template').closest('details');stylePanel.before(themes);stylePanel.open=false;
   stylePanel.querySelector('summary').textContent='Personalizzazione avanzata · layout, font e colori';
   const overlay=document.createElement('details');overlay.className='editor-menubar';overlay.id='editor-menu';

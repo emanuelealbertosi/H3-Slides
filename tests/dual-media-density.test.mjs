@@ -18,7 +18,7 @@ const svg = (width, height, color) => 'data:image/svg+xml,' + encodeURIComponent
 const urls = {diagram: svg(640, 360, '#c6d9ed'), image: svg(480, 320, '#d8e8d2')};
 const project = {
   id: 'synthetic-density', title: 'Verifica della composizione', theme: 'ink',
-  font: 'Arial', template: 'auto', text_density: 'complete',
+  font: 'Arial', template: 'auto', text_density: 'complete', canvas_mode: 'adaptive',
   use_manim_diagrams: true, use_source_images: true, visual_assets: [],
   sources: [{id: 'synthetic-source', images: [{id: 'synthetic-photo.png', label: 'Immagine sintetica'}]}],
 };
@@ -73,7 +73,7 @@ function inspect(frame) {
     inner.x + inner.w <= outer.x + outer.w + 1 && inner.y + inner.h <= outer.y + outer.h + 1;
   const overlaps = (a, b) => Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x) > 1 &&
     Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y) > 1;
-  const issues = [], canvas = {x: 0, y: 0, w: 1280, h: 720};
+  const issues = [], canvas = {x: 0, y: 0, w: 1280, h: frame.offsetHeight};
   const boxes = [...frame.querySelectorAll('.prose-box')];
   for (const [index, box] of boxes.entries()) {
     const bounds = rect(box), children = [...box.querySelectorAll('h2,p,.prose-source')];

@@ -10,13 +10,22 @@ const browser=await chromium.launch({headless:true});
 let rendered,overflow=[],canvasHeight=720;
 try{
   const page=await browser.newPage({viewport:{width:1280,height:720}});
-  const placeholder='data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+  // Measure using the actual image proportions supplied by the asset packager.
+  // A square 1px placeholder changes object-fit and gives the wrong layout.
+  const placeholder=(id,kind)=>{
+    const dim=project._media_dimensions?.[id];
+    const valid=dim&&Number.isFinite(dim.width)&&Number.isFinite(dim.height)&&dim.width>0&&dim.height>0;
+    const width=valid?dim.width:1800,height=valid?dim.height:1200;
+    return 'data:image/svg+xml,'+encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"></svg>`)+`#${kind}`;
+  };
+  const urls=project.slides.map(s=>{
+    const media=visualFor(project,s.content,s);
+    return {diagram:media.diagramAsset?placeholder(media.diagramAsset,'diagram'):'',image:media.photo?placeholder(media.photo,'image'):''};
+  });
   await page.setContent('<!doctype html><meta charset="utf-8"><style>'+sharedCSS+'body{margin:0}</style>'+
-    project.slides.map((s,i)=>{
-      const media=visualFor(project,s.content,s);
-      return slideHTML(project,s,i,{diagram:media.diagramAsset?placeholder+'#diagram':'',image:media.photo?placeholder+'#image':''});
-    }).join(''));
+    project.slides.map((s,i)=>slideHTML(project,s,i,urls[i])).join(''));
   await page.evaluate(()=>document.fonts.ready);
+  await page.evaluate(()=>Promise.all([...document.images].map(i=>i.decode())));
   for(const frame of await page.locator('.slide-frame').all())await frame.evaluate(fitSlide);
   rendered=await page.locator('.slide-frame').evaluateAll(nodes=>nodes.map(n=>({html:n.outerHTML,height:n.offsetHeight,overflow:n.dataset.overflow==='true'})));
   canvasHeight=Math.max(720,...rendered.map(r=>r.height));
@@ -28,7 +37,10 @@ try{
   if(overflow.length)throw new Error('Testo fuori dallo spazio nelle slide '+overflow.join(', ')+'. Dividi o modifica il contenuto prima di esportare; nessuna parte viene nascosta.');
   rendered=rendered.map((r,i)=>{
     const media=visualFor(project,project.slides[i].content,project.slides[i]);
-    return r.html.replace(placeholder+'#diagram','./assets/'+media.diagramAsset).replace(placeholder+'#image','./assets/'+media.photo);
+    let html=r.html;
+    if(urls[i].diagram)html=html.replace(urls[i].diagram,'./assets/'+media.diagramAsset);
+    if(urls[i].image)html=html.replace(urls[i].image,'./assets/'+media.photo);
+    return html;
   });
 }finally{await browser.close()}
 const lines=['---','theme: default','mcp: false','layout: none','canvasWidth: 1280','aspectRatio: '+(canvasHeight===720?'16/9':`1280/${canvasHeight}`),'title: '+JSON.stringify(project.title),'fonts:','  sans: '+(project.font||'Arial'),'  provider: none','drawings:','  enabled: false','---',''];

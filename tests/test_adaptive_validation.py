@@ -23,7 +23,7 @@ def test_new_slide_edit_rejects_position_beyond_its_canvas():
         SlideEdit.model_validate({"revision": 1, "content": raw})
 
 
-@pytest.mark.parametrize("height", [720, 792, 864, 936, 1008])
+@pytest.mark.parametrize("height", [720, 792, 864, 936, 1008, 1152, 1296, 1440])
 def test_new_slide_edit_accepts_exact_useful_bottom(height):
     edit = SlideEdit.model_validate({
         "revision": 1,
@@ -32,7 +32,7 @@ def test_new_slide_edit_accepts_exact_useful_bottom(height):
     assert edit.content.freeform["block-0"].y + edit.content.freeform["block-0"].h == height - 40
 
 
-@pytest.mark.parametrize("height", [720, 792, 864, 936])
+@pytest.mark.parametrize("height", [720, 792, 864, 936, 1152, 1296])
 def test_footer_reserve_applies_to_every_canvas_height(height):
     with pytest.raises(ValidationError, match="canvas utile"):
         SlideEdit.model_validate({
@@ -83,19 +83,19 @@ def test_legacy_slide_can_be_repaired_and_saved():
 
 @pytest.mark.parametrize("geometry", [
     {"x": 1200, "y": 200, "w": 100, "h": 100},
-    {"x": 48, "y": 900, "w": 500, "h": 69},
+    {"x": 48, "y": 1332, "w": 500, "h": 69},
     {"x": -1, "y": 200, "w": 500, "h": 80},
     {"x": 48, "y": -1, "w": 500, "h": 80},
     {"x": 48, "y": 200, "w": 79, "h": 80},
     {"x": 48, "y": 200, "w": 500, "h": 43},
 ])
-def test_absolute_freeplacement_safety_limits_are_unchanged(geometry):
+def test_absolute_freeplacement_safety_limits(geometry):
     with pytest.raises(ValidationError):
         FreePlacement.model_validate(geometry)
 
 
-@pytest.mark.parametrize("height", [719, 1009])
-def test_canvas_height_safety_limits_are_unchanged(height):
+@pytest.mark.parametrize("height", [719, 1441])
+def test_canvas_height_safety_limits(height):
     with pytest.raises(ValidationError):
         SlideContent.model_validate(free_content(height=height))
 

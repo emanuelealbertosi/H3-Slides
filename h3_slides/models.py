@@ -44,13 +44,13 @@ class TextBlock(BaseModel):
 class FreePlacement(BaseModel):
     model_config = ConfigDict(extra="forbid")
     x: int = Field(ge=0, le=1279)
-    y: int = Field(ge=0, le=967)
+    y: int = Field(ge=0, le=1399)
     w: int = Field(ge=80, le=1280)
-    h: int = Field(ge=44, le=968)
+    h: int = Field(ge=44, le=1400)
 
     @model_validator(mode="after")
     def inside_canvas(self):
-        if self.x + self.w > 1280 or self.y + self.h > 968:
+        if self.x + self.w > 1280 or self.y + self.h > 1400:
             raise ValueError("La posizione libera deve restare dentro il canvas della slide")
         return self
 
@@ -58,7 +58,7 @@ class FreePlacement(BaseModel):
 class SlideContent(BaseModel):
     model_config = ConfigDict(extra="forbid")
     title: str = Field(min_length=1, max_length=110)
-    canvas_height: int = Field(default=720, ge=720, le=1008)
+    canvas_height: int = Field(default=720, ge=720, le=1440)
     subtitle: str = Field(default="", max_length=220)
     bullets: list[str] = Field(default_factory=list, max_length=5)
     blocks: list[TextBlock] = Field(default_factory=list, max_length=4)

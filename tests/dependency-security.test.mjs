@@ -25,7 +25,7 @@ test('H3-Slides and both Slidev consumers resolve the patched distribution witho
   assert.deepEqual(await verifyDependencies(),{consumers:3,version:'4.0.1-h3.1',imageSize:false});
 });
 
-const makeProject=id=>({title:'Immagine di prova',theme:'paper',template:'auto',use_source_images:true,slides:[{content:{
+const makeProject=id=>({title:'Immagine di prova',theme:'paper',template:'auto',canvas_mode:'adaptive',use_source_images:true,slides:[{content:{
   title:'Una figura mantiene le proporzioni',subtitle:'Dimensioni lette dall immagine decodificata.',
   layout:'visual-left',bullets:['Il contenuto rimane modificabile.'],blocks:[],sources:[],image_id:id,
   diagram:{kind:'none',labels:[]},

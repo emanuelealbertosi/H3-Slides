@@ -10,7 +10,7 @@ class _LayoutUpdate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: str = Field(min_length=1, max_length=80, strict=True)
     revision: int = Field(ge=0, strict=True)
-    canvas_height: int = Field(ge=720, le=1008, strict=True)
+    canvas_height: int = Field(ge=720, le=1440, strict=True)
     freeform: dict[str, FreePlacement] = Field(max_length=12)
 
 

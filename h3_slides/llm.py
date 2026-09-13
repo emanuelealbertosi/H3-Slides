@@ -1,4 +1,5 @@
 import asyncio
+from asyncio import sleep as _retry_sleep
 import base64
 import ctypes
 import json
@@ -276,6 +277,16 @@ class LLM:
         self.provider, self.manager = provider, manager
         self.metrics_callback = None
         self.runtime_callback = None
+        self.event_callback = None
+
+    def notify(self, message):
+        # Only app-authored status messages belong here, never provider payloads.
+        logging.info("%s", message)
+        if self.event_callback is not None:
+            try:
+                self.event_callback(message)
+            except Exception:
+                logging.warning("Impossibile aggiornare il log di recupero LLM nel job")
 
     async def prepare(self):
         if self.provider.mode == "local":
@@ -336,11 +347,15 @@ class LLM:
         request_id = uuid.uuid4().hex[:12]
         started = time.perf_counter()
         result, status, outcome, attempts = None, None, "error", 0
+        engine_retried = False
         self.last_metrics = None
         try:
             async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session:
-                for attempt in range(3):
+                # At most one retry per reason: JSON compatibility, initial
+                # context limit, and remote engine disconnect. Never an open loop.
+                for attempt in range(4):
                     attempts, status = attempt + 1, None
+                    outcome = "error"
                     logging.info("LLM richiesta: id=%s tentativo=%s mode=%s prompt_chars=%s immagini=%s json=%s max_tokens=%s timeout=%s",
                                  request_id, attempt + 1, self.provider.mode,
                                  len(SYSTEM) + sum(len(item["text"]) for item in content if item["type"] == "text"),
@@ -356,6 +371,21 @@ class LLM:
                             # Inspect only for a fixed category; never expose or
                             # log a body that could echo documents or secrets.
                             payload = await response.content.read(65536)
+                            engine_problem = _remote_engine_problem(response.status, payload)
+                            if engine_problem:
+                                kind, message = engine_problem
+                                outcome = "engine_error"
+                                if self.provider.mode == "remote" and kind == "connection" and not engine_retried:
+                                    engine_retried = True
+                                    logging.info("LLM retry: id=%s motivo=connessione_motore tentativo=1/1", request_id)
+                                    self.notify("LLM remoto: errore interno del motore (Channel Error / fetch failed). "
+                                                "Unico tentativo automatico tra 2 secondi, con richiesta e parametri invariati.")
+                                    response.release()
+                                    await _retry_sleep(2)
+                                    continue
+                                if engine_retried:
+                                    message += " L'unico tentativo automatico è già stato eseguito."
+                                raise RuntimeError(message)
                             message, context_error = _remote_http_problem(response.status, payload)
                             if (self.provider.mode == "remote" and "response_format" in body and response.status == 400
                                     and any(term in payload.lower() for term in (b"response_format", b"json_object", b"json schema"))):
@@ -369,6 +399,8 @@ class LLM:
                             raise RuntimeError(message)
                         result = await response.json()
                         outcome = "response_received"
+                        if engine_retried:
+                            self.notify("LLM remoto: il server ha ripreso a rispondere dopo il tentativo automatico.")
                         break
         except TimeoutError:
             outcome = "timeout"
@@ -414,8 +446,51 @@ class LLM:
             return parse_json(raw)
         except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
             raise ValueError("Il modello non ha restituito JSON valido; cambia modello o riduci il prompt") from exc
+
+
+def _remote_engine_problem(status, payload):
+    """Recognize explicit engine diagnostics, not phrases in echoed documents."""
+    if status not in (400, 500, 502, 503, 504):
+        return None
+    text = payload.decode("utf-8", "ignore")
+    try:
+        error = json.loads(text)
+    except ValueError:
+        error = text
+    messages = []
+
+    def collect(value, depth=0):
+        if isinstance(value, str):
+            messages.append(value.strip().casefold())
+        elif isinstance(value, dict) and depth < 4:
+            for key in ("error", "message", "cause", "type", "code"):
+                if key in value:
+                    collect(value[key], depth+1)
+
+    collect(error)
+    if not any(re.match(r"^(?:error:\s*)?(?:channel error\b|"
+                        r"engine protocol predict request failed:\s*fetch failed\b)", message)
+               for message in messages):
+        return None
+    details = "\n".join(messages)
+    if any(term in details for term in ("explicitmodelunloaderror", "model unloaded", "cancelled", "canceled", "aborted")):
+        return ("stopped", f"LLM HTTP {status}: il server segnala un modello scaricato o una richiesta annullata. "
+                "Nessun riavvio automatico; controlla lo stato del server prima di riprovare.")
+    if any(term in details for term in ("out of memory", "out_of_memory", "memory allocation", "failed to allocate",
+                                       "cuda error", "cuda_error", "device lost", "device_lost", "errordevicelost",
+                                       "context length", "context_length", "context window", "context_window")):
+        return ("resources", f"LLM HTTP {status}: errore del motore con segnalazione di risorse, GPU o contesto. "
+                "Nessun tentativo automatico; controlla i log del server. Parametri invariati.")
+    return ("connection", f"LLM HTTP {status}: comunicazione interna del server con il motore di inferenza interrotta "
+            "(Channel Error / fetch failed). Controlla i log e lo stato del modello in LM Studio o nel provider. "
+            "Questo messaggio non dimostra un limite di contesto. I blocchi già analizzati restano in cache.")
+
+
 def _remote_http_problem(status, payload):
     """Classify a bounded provider error without exposing its response body."""
+    engine = _remote_engine_problem(status, payload)
+    if engine:
+        return engine[1], False
     text = payload.decode("utf-8", "ignore").casefold()
     context = any(term in text for term in (
         "context length", "context window", "maximum context", "max context",

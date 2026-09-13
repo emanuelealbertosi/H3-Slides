@@ -857,12 +857,20 @@ function render(){
         card.querySelector('.layout-warning')?.remove();
         if(result.overflow){
           const warning=document.createElement('p');warning.className='layout-warning';
-          warning.textContent='Questo contenuto non entra nelle disposizioni provate. Dividilo in più slide o modifica il testo. L’export si ferma invece di tagliarlo.';
+          warning.textContent=card.querySelector('.slide-frame').dataset.mediaOverflow==='true'?
+            'Foto o diagrammi hanno bisogno di più spazio per restare leggibili. Scegli Adattivo o Ricomponi; se la scheda è già al limite, dividila o riprogetta il diagramma. L’export non li riduce a miniature.':
+            'Questo contenuto non entra nelle disposizioni provate. Scegli Adattivo o dividilo in più slide. L’export si ferma invece di tagliarlo.';
           card.append(warning);
         }
       };
       requestAnimationFrame(fit);
       document.fonts.ready.then(fit);
+      for(const img of card.querySelectorAll('.visual img,img.visual'))if(!img.complete)img.addEventListener('load',fit,{once:true});
+      if(slide.diagram_render?.report?.shortened_texts>0){
+        const note=document.createElement('p');note.className='diagram-pending';
+        note.textContent='Questo vecchio render contiene etichette abbreviate. Usa Riprogetta Manim per ricrearle complete dal contenuto della slide.';
+        card.append(note);
+      }
     }
     if(container.children[index]!==card)container.insertBefore(card,container.children[index]||null);
   }
@@ -1208,7 +1216,7 @@ function measureFreeform(card){
     const box=element.getBoundingClientRect();
     let x=Math.round((box.left-root.left)/scale),y=Math.round((box.top-root.top)/scale);
     let w=Math.max(80,Math.round(box.width/scale)),h=Math.max(44,Math.round(box.height/scale));
-    const bottom=Math.min(968,frame.offsetHeight-40);
+    const bottom=Math.min(1400,frame.offsetHeight-40);
     w=Math.min(1280,w);h=Math.min(bottom,h);
     x=Math.max(0,Math.min(1280-w,x));y=Math.max(0,Math.min(bottom-h,y));
     placements[element.dataset.freeKey]={x,y,w,h};
@@ -1393,7 +1401,7 @@ function previewFreePosition(card,x,y){
   const drag=componentDrag,frame=card.querySelector('.slide-frame'),root=frame.getBoundingClientRect();
   if(drag?.type!=='freeform'||!root.width)return;
   const scale=root.width/1280,snap=itemPointer.fine?1:Number($('editor-grid').value||2);
-  const bottom=frame.dataset.canvasMode==='adaptive'?968:680;
+  const bottom=frame.dataset.canvasMode==='adaptive'?1400:680;
   let placement;
   if(itemPointer.mode==='resize'){
     const edge=itemPointer.edge||'se',start=drag.original;

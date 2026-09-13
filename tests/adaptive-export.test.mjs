@@ -17,6 +17,7 @@ const code='def esempio():\n'+Array.from({length:25},(_,i)=>'    print("riga '+i
 const formula=String.raw`Le frazioni mantengono le dimensioni leggibili anche quando cambia la pagina. \[\frac{\displaystyle\sum_{k=1}^{n}\frac{1}{k^2}}{\sqrt{\frac{a^2+b^2}{c^2+d^2}}}\] Il denominatore deve essere diverso da zero.`;
 const base=content=>({content:{layout:'content',bullets:[],blocks:[],diagram:{kind:'none'},...content}});
 const project={title:'Verifica geometria adattiva',theme:'paper',font:'Arial',canvas_mode:'adaptive',
+  _media_dimensions:{[photo]:{width:1,height:1},[diagram]:{width:1,height:1}},
   graphic_style:'studio',use_manim_diagrams:true,use_source_images:true,slides:[
     base({title:'Codice Python con indentazione e tutte le istruzioni visibili',blocks:[{heading:'Esempio Python',kind:'code',language:'python',text:code}]}),
     base({title:'Formule con frazioni, radici e sommatorie in una spiegazione matematica completa',blocks:[{heading:'Frazione composta',text:formula}]}),

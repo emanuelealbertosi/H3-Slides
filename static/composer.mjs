@@ -28,7 +28,7 @@ export function layoutCandidates(project,content,index=0,visual=false){
   const rotation=(index+Number(content.layout_variant||0))%auto.length;
   auto=[...auto.slice(rotation),...auto.slice(0,rotation)];
   const primary=Object.hasOwn(layouts,requested)?requested:content.layout_variant?auto[0]:Object.hasOwn(layouts,preference)?preference:auto[0];
-  return [...new Set([primary,...auto,visual?'visual-right':'editorial','cards','stack'])].filter(k=>
+  return [...new Set([primary,...auto,...(visual?['visual-left-wide','visual-right-wide','visual-bottom','visual-top']:[]),visual?'visual-right':'editorial','cards','stack'])].filter(k=>
     Object.hasOwn(layouts,k)&&(!k.startsWith('visual-')||visual)&&
     (k!=='comparison'||items===2)&&(k!=='timeline'||items>=2)&&
     (k!=='quote'||blocks.some(b=>b.kind==='quote')));
@@ -58,10 +58,35 @@ export function fitSlide(frame,options={}){
   const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
   const candidates=JSON.parse(frame.dataset.candidates||'["editorial"]');
   const free=candidates[0]==='freeform',adaptive=frame.dataset.canvasMode==='adaptive';
-  const imposed=Number.isFinite(options.targetHeight)?Math.round(clamp(options.targetHeight,720,1008)):null;
-  const initialHeight=free&&adaptive?Math.round(clamp(Number(frame.dataset.canvasHeight)||720,720,1008)):720;
-  const heights=imposed!==null?[imposed]:adaptive?[...new Set([initialHeight,...[720,792,864,936,1008].filter(h=>h>=initialHeight)])]:[720];
+  const imposed=Number.isFinite(options.targetHeight)?Math.round(clamp(options.targetHeight,720,1440)):null;
+  const initialHeight=free&&adaptive?Math.round(clamp(Number(frame.dataset.canvasHeight)||720,720,1440)):720;
+  const heights=imposed!==null?[imposed]:adaptive?[...new Set([initialHeight,...[720,792,864,936,1008,1152,1296,1440].filter(h=>h>=initialHeight)])]:[720];
   const visible=e=>e.getClientRects().length&&!e.closest('.drag-preview-source');
+  const media=[...frame.querySelectorAll('.visual')].map(element=>{
+    const img=element.matches('img')?element:element.querySelector('img');
+    const aspect=img?.naturalWidth&&img?.naturalHeight?img.naturalWidth/img.naturalHeight:
+      Number(element.dataset.mediaAspect)||1.5;
+    let w=Number(element.dataset.mediaMinWidth)||0,h=Number(element.dataset.mediaMinHeight)||0;
+    if(img&&element.dataset.visualKind==='image'){
+      // Size the actual contained photograph, not its surrounding empty frame.
+      w=Math.sqrt(90000*aspect);h=w/aspect;
+      const limit=Math.min(1,1100/w,760/h);w*=limit;h*=limit;
+    }
+    // Freeform is an explicit manual override. In particular, never force a
+    // previously valid 180px photo to grow to 300px while the user is shrinking
+    // its empty surrounding frame. Automatic composition enforces readability.
+    if(free){w=0;h=0}
+    const credit=element.querySelector('.image-credit');
+    return {element,img,aspect,w:Math.ceil(w),h:Math.ceil(h),credit:credit?credit.offsetHeight+6:0};
+  });
+  const diagram=media.find(m=>m.element.dataset.visualKind==='diagram');
+  const photo=media.find(m=>m.element.dataset.visualKind==='image');
+  frame.classList.toggle('media-stacked',!free&&media.length>1&&media.reduce((sum,m)=>sum+m.w,0)>1156);
+  frame.style.setProperty('--diagram-height',Math.max(200,(diagram?.h||0)+(diagram?.credit||0))+'px');
+  frame.style.setProperty('--photo-height',Math.max(180,(photo?.h||0)+(photo?.credit||0))+'px');
+  frame.style.setProperty('--media-min-width',Math.max(0,...media.map(m=>m.w))+'px');
+  frame.style.setProperty('--media-height',Math.max(180,...media.map(m=>m.h+m.credit))+'px');
+  frame.style.setProperty('--diagram-column',diagram?.w?Math.min(900,Math.max(400,diagram.w))+'px':'1fr');
   const apply=(layout,compact)=>{
     for(const c of [...frame.classList])if(c.startsWith('tpl-'))frame.classList.remove(c);
     frame.classList.add('tpl-'+layout);frame.classList.toggle('compact-spacing',compact);
@@ -82,12 +107,25 @@ export function fitSlide(frame,options={}){
     const outside=(r,p)=>Math.max(0,(p.left-r.left)/scale-1)+Math.max(0,(p.top-r.top)/scale-1)+
       Math.max(0,(r.right-p.right)/scale-1)+Math.max(0,(r.bottom-p.bottom)/scale-1);
     let excess=0;
+    let mediaExcess=0;
+    for(const m of media){
+      if(!m.img||!visible(m.element))continue;
+      const box=m.img.getBoundingClientRect();
+      const w=Math.min(box.width/scale,box.height/scale*m.aspect),h=w/m.aspect;
+      mediaExcess+=Math.max(0,m.w-w-1)+Math.max(0,m.h-h-1);
+    }
+    excess+=mediaExcess;frame.dataset.mediaOverflow=String(mediaExcess>=1);
     for(const e of frame.querySelectorAll('.heading,h1,.subtitle,.prose-box,.prose-box h2,.prose-box p,.prose-source,li,.bullet-text,.visual')){
       if(!visible(e))continue;
       const r=e.getBoundingClientRect(),owner=e.closest('.heading,.prose-box,li,.visual');
       excess+=Math.max(0,e.scrollWidth-e.clientWidth-2)+Math.max(0,e.scrollHeight-e.clientHeight-2);
       excess+=outside(r,{left:root.left,top:root.top,right:root.right,bottom});
       if(owner&&owner!==e)excess+=outside(r,owner.getBoundingClientRect());
+      if(e.closest('.prose-box')&&e.matches('h2,p,.prose-source')&&!e.querySelector('.katex')){
+        const range=document.createRange();range.selectNodeContents(e);
+        const bounds=(owner||e).getBoundingClientRect();
+        for(const line of range.getClientRects())if(line.width&&line.height)excess+=outside(line,bounds);
+      }
     }
     const objects=[...frame.querySelectorAll('.heading,.prose-box,li,.visual,.kicker')].filter(visible);
     for(let i=0;i<objects.length;i++)for(let j=i+1;j<objects.length;j++){
@@ -115,7 +153,7 @@ export function fitSlide(frame,options={}){
     const put=(entry,p)=>{for(const key of ['x','y','w','h'])entry.element.style.setProperty('--free-'+key,p[key]+'px')};
     const sizeAt=(entry,width)=>{
       width=Math.round(width);if(entry.sizes.has(width))return entry.sizes.get(width);
-      if(!entry.text)return {h:44,horizontal:false};
+      if(!entry.text){const m=media.find(m=>m.element===entry.element);return {h:Math.max(44,(m?.h||0)+(m?.credit||0)),horizontal:width<(m?.w||0)}}
       const e=entry.element,oldW=e.style.getPropertyValue('--free-w'),oldH=e.style.getPropertyValue('--free-h');
       e.style.setProperty('--free-w',width+'px');e.style.setProperty('--free-h','auto');
       // Natural box height includes padding, grid/flex rows, code lines and rendered math.
@@ -126,7 +164,7 @@ export function fitSlide(frame,options={}){
       const result={h:Math.max(44,required),horizontal};entry.sizes.set(width,result);return result;
     };
     const minimumWidth=entry=>{
-      if(!entry.text)return 80;
+      if(!entry.text)return Math.max(80,media.find(m=>m.element===entry.element)?.w||0);
       if(entry.minimumWidth!==undefined)return entry.minimumWidth;
       if(!sizeAt(entry,80).horizontal)return entry.minimumWidth=80;
       // Code lines, formulas and unbreakable headings have a real horizontal
@@ -143,8 +181,8 @@ export function fitSlide(frame,options={}){
     const footerInset=Math.max(40,footerRect?Math.ceil((root.bottom-footerRect.top)/scale):40);
     const expanded=entry=>{
       const maximumWidth=fromWest?entry.original.x+entry.original.w:1280-entry.original.x;
-      const w=entry===resizing?Math.min(maximumWidth,Math.max(entry.original.w,minimumWidth(entry))):entry.original.w;
-      const maximumHeight=fromNorth?entry.original.y+entry.original.h:(imposed??(adaptive?1008:720))-footerInset-entry.original.y;
+      const w=entry===resizing?Math.min(maximumWidth,Math.max(entry.original.w,minimumWidth(entry))):entry.text?entry.original.w:Math.max(entry.original.w,minimumWidth(entry));
+      const maximumHeight=fromNorth?entry.original.y+entry.original.h:(imposed??(adaptive?1440:720))-footerInset-entry.original.y;
       const h=Math.max(entry===resizing?Math.min(entry.original.h,maximumHeight):entry.original.h,sizeAt(entry,w).h);
       const x=entry===resizing&&fromWest?entry.original.x+entry.original.w-w:entry.original.x;
       const y=entry===resizing&&fromNorth?entry.original.y+entry.original.h-h:entry.original.y;
@@ -177,7 +215,7 @@ export function fitSlide(frame,options={}){
         // Moving/resizing an item must not silently move that same item elsewhere.
         // Try a taller adaptive canvas first; the caller rejects impossible drops.
         if(entry===anchor){placements[entry.key]=origin;accepted.push(origin);continue}
-        const widths=entry.text?[entry.original.w,Math.min(1184,1280-entry.original.x),1184,1280]:[entry.original.w];
+        const widths=entry.text?[entry.original.w,Math.min(1184,1280-entry.original.x),1184,1280]:[entry.original.w,minimumWidth(entry)];
         if(entry.text&&sizeAt(entry,entry.original.w).horizontal)widths.push(minimumWidth(entry));
         if(entry.text)for(const rect of accepted)widths.push(rect.x-48-12,1232-(rect.x+rect.w+12));
         const alternatives=[];
@@ -227,7 +265,7 @@ export function fitSlide(frame,options={}){
       const base=baseline.placements?.[resizing.key],height=Number(baseline.height);
       const legal=p=>p&&['x','y','w','h'].every(key=>Number.isFinite(p[key]))&&
         p.x>=0&&p.y>=0&&p.w>=80&&p.h>=44&&p.x+p.w<=1280&&p.y+p.h<=height-40;
-      if(Number.isFinite(height)&&height>=720&&height<=1008&&(adaptive||height===720)&&
+      if(Number.isFinite(height)&&height>=720&&height<=1440&&(adaptive||height===720)&&
           entries.every(entry=>legal(baseline.placements?.[entry.key]))){
         const initial={placements:result.placements,height:result.height};
         const restore=(state)=>{
@@ -415,6 +453,22 @@ export const composerCSS=`
 .slide-frame.has-multiple-visuals:is(.tpl-visual-top,.tpl-visual-bottom):not(.tpl-freeform) [data-visual-kind="diagram"]{grid-column:1}
 .slide-frame.has-multiple-visuals:is(.tpl-visual-top,.tpl-visual-bottom):not(.tpl-freeform) [data-visual-kind="image"]{grid-column:2}
 .slide-frame.has-multiple-visuals:is(.tpl-visual-top,.tpl-visual-bottom):not(.tpl-freeform) .prose-grid{grid-template-columns:repeat(2,minmax(0,1fr))}
+/* Reserve readable media dimensions, keeping the original aspect ratio. */
+.slide-frame.has-visual:not(.tpl-freeform) .visual{min-width:min(var(--media-min-width,0px),100%)}
+.slide-frame.has-multiple-visuals:not(.tpl-freeform) .visual{min-width:0}
+.slide-frame:is(.tpl-visual-top,.tpl-visual-bottom):not(.tpl-freeform) .visual{height:100%}
+.slide-frame.has-visual.tpl-visual-top:not(.tpl-freeform) .slide-columns{grid-template-rows:var(--media-height,280px) minmax(0,1fr)}
+.slide-frame.has-visual.tpl-visual-bottom:not(.tpl-freeform) .slide-columns{grid-template-rows:minmax(0,1fr) var(--media-height,280px)}
+.slide-frame.has-multiple-visuals:is(.tpl-visual-top,.tpl-visual-bottom):not(.tpl-freeform) .slide-columns{grid-template-columns:minmax(0,var(--diagram-column,1fr)) minmax(0,1fr)}
+.slide-frame.media-stacked:is(.tpl-visual-top,.tpl-visual-bottom):not(.tpl-freeform) .slide-columns{grid-template-columns:1fr}
+.slide-frame.media-stacked.tpl-visual-top:not(.tpl-freeform) .slide-columns{grid-template-rows:var(--diagram-height) var(--photo-height) minmax(0,1fr)}
+.slide-frame.media-stacked.tpl-visual-bottom:not(.tpl-freeform) .slide-columns{grid-template-rows:minmax(0,1fr) var(--diagram-height) var(--photo-height)}
+.slide-frame.media-stacked:is(.tpl-visual-top,.tpl-visual-bottom):not(.tpl-freeform) :is(.copy,[data-visual-kind]){grid-column:1}
+.slide-frame.media-stacked.tpl-visual-top:not(.tpl-freeform) .copy{grid-row:3}
+.slide-frame.media-stacked.tpl-visual-top:not(.tpl-freeform) [data-visual-kind=diagram]{grid-row:1}
+.slide-frame.media-stacked.tpl-visual-top:not(.tpl-freeform) [data-visual-kind=image]{grid-row:2}
+.slide-frame.media-stacked.tpl-visual-bottom:not(.tpl-freeform) [data-visual-kind=diagram]{grid-row:2}
+.slide-frame.media-stacked.tpl-visual-bottom:not(.tpl-freeform) [data-visual-kind=image]{grid-row:3}
 /* Dense rows keep the citation beside the paragraph, not in an
    extra row below it. This preserves font sizes and leaves manual frames alone. */
 .slide-frame.has-multiple-visuals.tpl-stack.compact-spacing:not(.tpl-freeform) .slide-columns{grid-template-columns:minmax(0,1.8fr) minmax(0,1fr)}

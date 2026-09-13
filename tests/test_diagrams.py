@@ -73,9 +73,8 @@ def test_connection_label_rescue_keeps_shapes_arrows_and_decision_meaning():
     assert [element.type for element in rescued.elements] == ["circle","decision","circle"]
     assert [(edge.source, edge.target) for edge in rescued.connections] == [
         ("start","choice"),("choice","end")]
-    assert rescued.connections[0].label == ""
-    assert rescued.connections[1].label
-    assert len(rescued.connections[1].label) <= 8
+    assert [edge.label for edge in rescued.connections] == [edge.label for edge in scene.connections]
+    assert rescued.elements[0].x < scene.elements[0].x
 
 
 @pytest.mark.asyncio
@@ -102,7 +101,9 @@ async def test_label_placement_is_repaired_before_calling_the_model_again():
         Client(), Renderer(), "test", {}, SlideContent(title="Processo"), "", "",
         events.append, checkpoint)
     assert rendered["report"]["ok"] and len(calls) == 1 and len(renders) == 2
-    assert renders[0]["scene"]["elements"] == renders[1]["scene"]["elements"]
+    assert [{k:v for k,v in e.items() if k not in ("x","y")} for e in renders[0]["scene"]["elements"]] == [
+        {k:v for k,v in e.items() if k not in ("x","y")} for e in renders[1]["scene"]["elements"]]
+    assert renders[0]["scene"]["connections"] == renders[1]["scene"]["connections"]
     assert any("verifica non superata" in event for event in events)
 
 
@@ -163,15 +164,16 @@ def test_overlapping_chart_and_annotation_get_separate_general_regions():
 
 def test_common_remote_scene_type_and_length_errors_are_repaired():
     value = sample_scene()
-    value["title"], value["takeaway"] = "Titolo " * 30, "Conclusione " * 30
+    value["title"], value["takeaway"] = "Titolo completo " * 5, "Conclusione completa " * 6
     value["elements"][0].update(x="1,7", y="2.3", width="2.6", height="1.3",
                                 text="Una etichetta inutilmente prolissa " * 5)
     value["elements"][3]["values"] = [str(number) for number in value["elements"][3]["values"]]
     repaired, changed = normalize_scene_geometry(value)
     scene = ManimSceneSpec.model_validate(repaired)
     assert changed is True
-    assert len(scene.title) <= 75 and len(scene.takeaway) <= 130
-    assert len(scene.elements[0].text) <= 48
+    assert scene.title == value["title"].strip() and scene.takeaway == value["takeaway"].strip()
+    assert scene.elements[0].text == value["elements"][0]["text"].strip()
+    assert "…" not in scene.elements[0].text
     assert isinstance(scene.elements[0].x, float)
     assert all(isinstance(number, float) for number in scene.elements[3].values)
 

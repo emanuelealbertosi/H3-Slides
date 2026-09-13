@@ -38,8 +38,8 @@ class Element(BaseModel):
     y: float = Field(ge=1.1, le=7.2, allow_inf_nan=False)
     width: float = Field(default=2.8, ge=.6, le=11, allow_inf_nan=False)
     height: float = Field(default=1.2, ge=.5, le=6, allow_inf_nan=False)
-    text: str = Field(default="", max_length=80)
-    caption: str = Field(default="", max_length=90)
+    text: str = Field(default="", max_length=180)
+    caption: str = Field(default="", max_length=180)
     tone: Tone = "accent"
     stage: int = Field(default=1, ge=1, le=12)
     values: list[Number] = Field(default_factory=list, max_length=64)
@@ -49,7 +49,7 @@ class Element(BaseModel):
     x_label: str = Field(default="", max_length=32)
     y_label: str = Field(default="", max_length=32)
     directed: bool = False
-    labels: list[Annotated[str, Field(max_length=18)]] = Field(default_factory=list, max_length=16)
+    labels: list[Annotated[str, Field(max_length=80)]] = Field(default_factory=list, max_length=16)
     columns: int = Field(default=4, ge=1, le=8)
     expression: str = Field(default="", max_length=120)
     x_min: Number = -5
@@ -164,14 +164,14 @@ class Connection(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source: str = Field(max_length=32)
     target: str = Field(max_length=32)
-    label: str = Field(default="", max_length=34)
+    label: str = Field(default="", max_length=80)
     tone: Tone = "neutral"
 
 
 class ManimSceneSpec(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    title: str = Field(min_length=1, max_length=75)
-    takeaway: str = Field(default="", max_length=130)
+    title: str = Field(min_length=1, max_length=160)
+    takeaway: str = Field(default="", max_length=260)
     elements: list[Element] = Field(min_length=1, max_length=14)
     connections: list[Connection] = Field(default_factory=list, max_length=22)
 
@@ -399,6 +399,9 @@ semanticamente corretti e connections per le frecce: non rappresentare tutto con
 Niente sovrapposizioni. Usa testo BREVE (2–5 parole), caption solo se chiarisce, non ripetere la prosa.
 Le connections referenziano gli id degli elementi; label spiega la relazione, non 'collegamento'.
 Le frecce vengono instradate evitando gli elementi. Lascia spazio tra gli elementi per le etichette.
+Ogni testo deve essere completo: non tagliare parole o relazioni con ... o … per farle entrare.
+Il renderer manda a capo e adatta il font entro limiti leggibili; se serve ingrandisci i nodi,
+riallineali su più righe e riserva più spazio ai grafici. Non eliminare informazioni per risolvere collisioni.
 stage determina l'ordine di rivelazione nell'animazione: prima dati/ingressi, poi trasformazione, infine risultato.
 Una decisione deve avere uscite etichettate distinte. Una relazione causale va nella direzione corretta.
 title e takeaway spiegano ciò che si deve vedere. Nessun codice, URL, file, comandi o espressioni da eseguire.
