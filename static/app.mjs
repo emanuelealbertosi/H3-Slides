@@ -1,4 +1,5 @@
 import {esc,slideHTML,slideCSS,themes,themeFor,blockColors,contrast,layouts,fitSlide,visualAnchorAt,visualFor} from './deck.mjs';
+import {renderPageCard} from './page-v2-editor.mjs';
 import {createRemoteModelSelector} from './remote-models.mjs';
 import {createApiSettings} from './api-settings.mjs';
 import {createImageSearch} from './image-search.mjs';
@@ -123,7 +124,7 @@ async function finishInlineEdits(){
   await Promise.all([...inlineSaves]);
   if($('slides').querySelector('[contenteditable]'))throw new Error('Salva o annulla il testo ancora in modifica.');
 }
-const designFields={'template':'template','font':'font','text-density':'text_density','background-color':'background_color','accent-color':'accent_color','source-images':'use_source_images','web-images':'use_web_images','openverse-images':'use_openverse_images','manim-diagrams':'use_manim_diagrams','pdf-scope':'pdf_scope',
+const designFields={'creation-engine':'engine','template':'template','font':'font','text-density':'text_density','background-color':'background_color','accent-color':'accent_color','source-images':'use_source_images','web-images':'use_web_images','openverse-images':'use_openverse_images','manim-diagrams':'use_manim_diagrams','pdf-scope':'pdf_scope',
   'web-enabled':'web_enabled','web-provider':'web_provider','web-query':'web_query','web-max-sources':'web_max_sources','source-priority':'source_priority','web-always-search':'web_always_search'};
 // Source priority belongs to the project: a previous web-first choice must not
 // silently make new projects web-first as well.
@@ -325,7 +326,7 @@ async function selectProject(id){
   current=selected;drafts.clear();
   $('project-list').value=id;
   for(const key of ['title','prompt','count','theme'])$(key).value=current[key];
-  const defaults={template:'auto',font:'Arial',text_density:'detailed',background_color:themes[current.theme].bg,accent_color:themes[current.theme].accent,use_source_images:true,use_web_images:false,use_openverse_images:false,use_manim_diagrams:false,pdf_scope:'auto',
+  const defaults={engine:'classic',template:'auto',font:'Arial',text_density:'detailed',background_color:themes[current.theme].bg,accent_color:themes[current.theme].accent,use_source_images:true,use_web_images:false,use_openverse_images:false,use_manim_diagrams:false,pdf_scope:'auto',
     web_enabled:false,web_provider:'wikipedia',web_query:'',web_max_sources:3,source_priority:'documents',web_always_search:false};
   for(const [id,key] of Object.entries(designFields)){const value=current[key]??defaults[key];if($(id).type==='checkbox')$(id).checked=value;else $(id).value=value||defaults[key]}
   restoreWebConsent();$('web-refresh').checked=false;
@@ -366,6 +367,7 @@ async function newProject(){
   projectSelectionRevision++;
   current=null;drafts.clear();$('title').value='Nuova presentazione';$('prompt').value='';$('project-list').value='';
   $('canvas-mode').value='adaptive';$('graphic-style').value='studio';localStorage.removeItem('h3slides-project');
+  $('creation-engine').value=JSON.parse(localStorage.getItem('h3slides-settings')||'{}')['creation-engine']||'v2';
   $('web-enabled').checked=false;$('web-query').value='';$('source-priority').value='documents';restoreWebConsent();$('web-refresh').checked=false;render();
   navigatePage('create');
 }
@@ -533,7 +535,7 @@ function updateGenerationButtons(){
   }
   scheduleFloatingGeneration();
 }
-async function generate(slideId=null,diagramOnly=false,regenerateAll=false,replaceDiagrams=false,providedInstructions=null,rebuildOutline=false,recoverExisting=false){
+async function generate(slideId=null,diagramOnly=false,regenerateAll=false,replaceDiagrams=false,providedInstructions=null,rebuildOutline=false,recoverExisting=false,pageNodeId=''){
   if(busy)return;busy=true;updateGenerationButtons();
   try{
     await finishInlineEdits();
@@ -562,6 +564,7 @@ async function generate(slideId=null,diagramOnly=false,regenerateAll=false,repla
     if(instructions===null)return;
     job=await api('/api/projects/'+current.id+'/generate','POST',{provider:selected,prompt:instructions,count:Number($('count').value),slide_id:slideId,
       diagram_only:diagramOnly,replace_diagrams:replaceDiagrams,regenerate_all:regenerateAll,rebuild_outline:rebuildOutline,
+      ...(pageNodeId?{page_node_id:pageNodeId}:{}),
       new_version:regenerateAll&&!recoverExisting,project_settings:regenerateAll&&!recoverExisting?brief():null,
       web_consent:diagramOnly?false:$('web-consent').checked,web_refresh:diagramOnly?false:$('web-refresh').checked});
     $('web-refresh').checked=false;
@@ -635,6 +638,8 @@ $('document-library').onclick=async event=>{
 };
 const resize=new ResizeObserver(entries=>{for(const entry of entries){
   entry.target.style.setProperty('--slide-scale',entry.contentRect.width/1280);
+  const v2=entry.target.querySelector('.page-v2');
+  if(v2){const r=fitSlide(v2);v2.style.transform='scale('+(entry.contentRect.width/1280)+')';entry.target.style.height=(r.height*entry.contentRect.width/1280)+'px'}
   const card=entry.target.closest('.slide-card');positionVisualActions(card);positionFreeformHandles(card);
 }});
 function elementDeleteButton(kind,index,label){
@@ -815,6 +820,25 @@ function render(){
     const arranging=layoutEditors.has(slide.id);
     card.className='slide-card '+slide.status+(arranging?' layout-editing':'');card.dataset.id=slide.id;card.draggable=!arranging;
     const signature=JSON.stringify([slide,display.theme,design(),index,arranging]);
+    if(slide.content.page||slide.page_draft){
+      if(card.dataset.signature!==signature&&!card.dataset.saving&&!card.querySelector('[contenteditable]')){
+        card.dataset.signature=signature;
+        renderPageCard(card,display,slide,index,{toast,observe:element=>resize.observe(element),
+          refresh:()=>{delete card.dataset.signature;render()},
+          upload:nodeId=>chooseSlideImage(slide.id,nodeId),search:nodeId=>searchSlideImage(slide.id,nodeId),
+          diagram:nodeId=>{
+            const node=slide.content.page.nodes.find(n=>n.id===nodeId);
+            const instructions=prompt('Che cosa deve rappresentare il diagramma?',node?.text||slide.content.title);
+            if(instructions?.trim())return generate(slide.id,true,false,true,instructions,false,false,nodeId);
+          },
+          save:(mutate,message)=>{
+            if(current?.id!==display.id)throw Error('Riapri il progetto prima di salvare questa modifica');
+            return saveContentChange(slide.id,mutate,message);
+          }});
+      }
+      if(container.children[index]!==card)container.insertBefore(card,container.children[index]||null);
+      continue;
+    }
     if(card.dataset.signature!==signature&&!card.dataset.saving&&!card.querySelector('[contenteditable="plaintext-only"]')){
       card.dataset.signature=signature;
       const media=visualFor(display,slide.content,slide),assetURL=id=>id?'/api/assets/'+current.id+'/'+id:'';
@@ -877,14 +901,18 @@ function render(){
     if(container.children[index]!==card)container.insertBefore(card,container.children[index]||null);
   }
   for(const card of [...container.children])if(!ids.has(card.dataset.id))card.remove();
-  document.querySelectorAll('[data-export]').forEach(b=>b.disabled=!current?.slides.length||exporting.has(b.dataset.export));
+  document.querySelectorAll('[data-export]').forEach(b=>{
+    const v2Manim=b.dataset.export==='manim'&&current?.slides.some(s=>s.content.page);
+    b.disabled=!current?.slides.length||exporting.has(b.dataset.export)||v2Manim;
+    b.title=v2Manim?'V2: disponibili PDF, PowerPoint e Slidev; video Manim del deck non ancora disponibile':'';
+  });
   updateGenerationButtons();
   const missingDiagrams=(current?.slides||[]).filter(slide=>slide.content?.layout!=='cover'&&slide.status==='ready'&&!slide.diagram_render?.asset).length;
-  $('generate-missing-diagrams').hidden=!current?.use_manim_diagrams;
+  $('generate-missing-diagrams').hidden=!current?.use_manim_diagrams||current?.engine==='v2';
   $('generate-missing-diagrams').disabled=!missingDiagrams||busy;
   $('generate-missing-diagrams').textContent='◇ Crea diagrammi mancanti'+(missingDiagrams?' · '+missingDiagrams:'');
   const diagramSlides=(current?.slides||[]).filter(slide=>slide.content?.layout!=='cover'&&slide.status==='ready').length;
-  $('redesign-diagrams').hidden=!current?.use_manim_diagrams;
+  $('redesign-diagrams').hidden=!current?.use_manim_diagrams||current?.engine==='v2';
   $('redesign-diagrams').disabled=!diagramSlides||busy;
   $('redesign-diagrams').textContent='✦ Riprogetta tutti i diagrammi'+(diagramSlides?' · '+diagramSlides:'');
 }
@@ -1119,11 +1147,11 @@ async function addImageBlock(id,imageId){
     if(!hadVisual&&content.layout!=='freeform'&&!String(content.layout||'').startsWith('visual-'))content.layout='visual-right';
   },'Immagine aggiunta e impaginazione ricalcolata.');
 }
-async function chooseSlideImage(id){
+async function chooseSlideImage(id,nodeId=''){
   await finishInlineEdits();
   const slide=current?.slides.find(item=>item.id===id);
   if(!slide?.revision)throw new Error('Attendi che la slide sia pronta');
-  imageUploadTarget={pid:current.id,sid:id,revision:slide.revision};
+  imageUploadTarget={pid:current.id,sid:id,revision:slide.revision,node_id:nodeId};
   $('slide-image-file').value='';$('slide-image-file').click();
 }
 const imageSearch=createImageSearch({api,inserted(target,result){
@@ -1137,13 +1165,14 @@ const imageSearch=createImageSearch({api,inserted(target,result){
   }
   toast('Immagine inserita e salvata, disponibile anche nelle esportazioni.');
 }});
-async function searchSlideImage(id){
+async function searchSlideImage(id,nodeId=''){
   await finishInlineEdits();
   const slide=current?.slides.find(item=>item.id===id);
   if(!slide?.revision)throw new Error('Attendi che la slide sia pronta');
-  imageSearch.open({pid:current.id,sid:id,revision:slide.revision,
+  const node=slide.content.page?.nodes.find(n=>n.id===nodeId);
+  imageSearch.open({pid:current.id,sid:id,revision:slide.revision,node_id:nodeId,
     source:current.sources.some(source=>source.kind==='pdf'||source.images?.length)?'document':'web',
-    query:slide.content.image_query||slide.content.title||current.title,
+    query:node?.query||node?.text||slide.content.image_query||slide.content.title||current.title,
     openverse:$('openverse-images').checked});
 }
 $('slide-image-file').onchange=async()=>{
@@ -1154,6 +1183,7 @@ $('slide-image-file').onchange=async()=>{
     if(file.size>20*1024*1024)throw new Error('Usa un’immagine fino a 20 MB');
     if(card)card.dataset.saving='1';
     const form=new FormData();form.append('revision',String(target.revision));form.append('file',file);
+    if(target.node_id)form.append('node_id',target.node_id);
     const result=await api('/api/projects/'+target.pid+'/slides/'+target.sid+'/image','POST',form);
     if(current?.id===target.pid){
       current.slides[current.slides.findIndex(item=>item.id===target.sid)]=result.slide;
@@ -1328,7 +1358,8 @@ $('slides').ondblclick=e=>{
   field.onblur=async()=>{
     const value=field.closest('.kind-code')?field.innerText:field.textContent.trim();field.removeAttribute('contenteditable');card.draggable=true;
     if(cancelled||value===original){delete card.dataset.signature;render();return}
-    if(field.dataset.editField==='bullets')content.bullets[Number(field.dataset.index)]=value;
+    if(field.dataset.editField==='page-text')content.page.nodes.find(n=>n.id===field.dataset.pageText).text=value;
+    else if(field.dataset.editField==='bullets')content.bullets[Number(field.dataset.index)]=value;
     else if(field.dataset.editField.startsWith('block-'))content.blocks[Number(field.dataset.index)][field.dataset.editField.slice(6)]=value;
     else content[field.dataset.editField]=value;
     card.dataset.saving='1';

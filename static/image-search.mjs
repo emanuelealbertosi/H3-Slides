@@ -86,7 +86,7 @@ export function createImageSearch({api,inserted}){
     selecting=true;controls();status.textContent=origin.value==='document'?'Inserimento dell’immagine dal documento…':'Verifica licenza e inserimento dell’immagine…';
     const destination={...target};
     try{
-      const data=await api(endpoint()+'/select','POST',{search_id:searchId,result_id:resultId,revision:destination.revision});
+      const data=await api(endpoint()+'/select','POST',{search_id:searchId,result_id:resultId,revision:destination.revision,...(destination.node_id?{node_id:destination.node_id}:{})});
       inserted(destination,data);dialog.close();
     }catch(error){status.textContent=error.message}
     finally{selecting=false;controls()}

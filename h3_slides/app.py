@@ -25,6 +25,7 @@ from .diagrams import fingerprint
 from .remote_models import RemoteModelRequest, list_remote_models
 from .web_images import store_image, MAX_IMAGE_BYTES
 from .image_search import ImageSearch, SearchRequest, ImageSelection
+from .page_v2 import set_page_image
 from .document_image_search import DocumentImageSearch
 from .export_names import EXPORT_FORMATS, save_download_name, download_filename, attachment_header
 
@@ -430,6 +431,11 @@ def create_app(root=None, data_root=None):
         file_names.discard(None)
         p["sources"] = [item for item in p["sources"] if item.get("id") != source_id]
         for slide in p["slides"]:
+            for page in (slide.get("content", {}).get("page"), slide.get("page_draft")):
+                for node in (page or {}).get("nodes", []):
+                    if node.get("asset_id") in image_names:
+                        node["asset_id"], node["source"] = "", ""
+                        slide["revision"] = slide.get("revision", 0) + 1
             if slide.get("content", {}).get("image_id") in image_names:
                 slide["content"]["image_id"] = ""
                 slide["revision"] = slide.get("revision", 0) + 1
@@ -467,6 +473,11 @@ def create_app(root=None, data_root=None):
             return web.json_response({"error": "Slide aggiornata altrove: ricarica prima di salvare", "slide": item}, status=409)
         visuals = {i["id"]: i for i in p.get("visual_assets", [])}
         assets = {i["id"] for source in p["sources"] for i in source["images"]} | visuals.keys()
+        if edit.content.page:
+            diagram_assets = {d.get("render", {}).get("asset") for s in p["slides"]
+                              for d in s.get("page_diagrams", {}).values()}
+            if any(n.asset_id and n.asset_id not in assets | diagram_assets for n in edit.content.page.nodes):
+                raise ValueError("Risorsa V2 non appartenente al progetto")
         if edit.content.image_id and edit.content.image_id not in assets:
             raise ValueError("Immagine non appartenente a questo progetto")
         if edit.content.image_id:
@@ -492,6 +503,8 @@ def create_app(root=None, data_root=None):
                     return web.json_response({"error": "Slide aggiornata durante il rendering: ricarica prima di salvare",
                                               "slide": item}, status=409)
         item.update(content=edit.content.model_dump(), revision=item["revision"] + 1, status="ready")
+        item.pop("page_draft", None)
+        item.pop("page_error", None)
         if rendered:
             item["diagram_render"] = rendered
             item.pop("diagram_error", None)
@@ -506,13 +519,18 @@ def create_app(root=None, data_root=None):
         pid, sid = request.match_info["pid"], request.match_info["sid"]
         store.project(pid)
         reader = await request.multipart()
-        revision, raw, filename = None, None, ""
+        revision, raw, filename, node_id = None, None, "", ""
         while part := await reader.next():
             if part.name == "revision":
                 value = await part.read_chunk()
                 if len(value) > 20 or not value.strip().isdigit():
                     raise ValueError("Revisione slide non valida")
                 revision = int(value)
+            elif part.name == "node_id":
+                value = await part.read_chunk()
+                if len(value) > 48:
+                    raise ValueError("Elemento V2 non valido")
+                node_id = value.decode("utf-8")
             elif part.name == "file" and part.filename:
                 if raw is not None:
                     raise ValueError("Carica una sola immagine")
@@ -533,9 +551,12 @@ def create_app(root=None, data_root=None):
                                       "slide": item}, status=409)
         if not revision:
             raise ValueError("Attendi che la prima versione della slide sia pronta")
-        asset = store_image(store, pid, bytes(raw), Path(filename).name)
         content = SlideContent.model_validate(item["content"])
-        content.image_id, content.image_origin, content.image_placeholder = asset["id"], "upload", False
+        set_page_image(content, node_id, "")  # Validate target before writing an asset.
+        asset = store_image(store, pid, bytes(raw), Path(filename).name)
+        set_page_image(content, node_id, asset["id"])
+        if not content.page:
+            content.image_id, content.image_origin, content.image_placeholder = asset["id"], "upload", False
         item.update(content=content.model_dump(), revision=revision+1, status="ready")
         p.setdefault("visual_assets", []).append(asset)
         store.save_project(p)
@@ -581,11 +602,14 @@ def create_app(root=None, data_root=None):
             return web.json_response({"error": "La slide è cambiata: chiudi e riapri la ricerca prima di sostituire l'immagine"}, status=409)
         if item["revision"] != body.revision:
             return conflict()
+        set_page_image(SlideContent.model_validate(item["content"]), body.node_id, "")
         if body.search_id.startswith("doc-"):
             p, item = image_target(pid, sid)
             row = document_image_search.result(store, p, sid, body.search_id, body.result_id)
             content = SlideContent.model_validate(item["content"])
-            content.image_id, content.image_origin, content.image_placeholder = row["image_id"], "source", False
+            set_page_image(content, body.node_id, row["image_id"], row.get("source", ""))
+            if not content.page:
+                content.image_id, content.image_origin, content.image_placeholder = row["image_id"], "source", False
             item.update(content=content.model_dump(), revision=body.revision+1, status="ready")
             # An explicit manual choice enables source display, even when automatic
             # source images had been disabled. The original asset is reused unchanged.
@@ -605,8 +629,10 @@ def create_app(root=None, data_root=None):
             return conflict()
         content = SlideContent.model_validate(item["content"])
         asset = store_image(store, pid, raw, origin="web", **metadata)
-        content.image_id, content.image_origin, content.image_placeholder = asset["id"], "web", False
-        content.image_query = metadata["query"]
+        set_page_image(content, body.node_id, asset["id"], " · ".join(str(metadata.get(k, "")) for k in ("source", "author", "license")))
+        if not content.page:
+            content.image_id, content.image_origin, content.image_placeholder = asset["id"], "web", False
+            content.image_query = metadata["query"]
         item.update(content=content.model_dump(), revision=body.revision+1, status="ready")
         p.setdefault("visual_assets", []).append(asset)
         store.save_project(p)
@@ -708,6 +734,10 @@ def create_app(root=None, data_root=None):
         fmt = request.match_info["fmt"]
         if fmt not in ("pptx", "pdf", "slidev", "manim"):
             raise ValueError("Formato non valido")
+        if fmt == "manim" and any(s["content"].get("page") for s in p["slides"]):
+            raise ValueError("V2: esporta in PDF, PowerPoint o Slidev. Il video Manim dell'intero deck non è ancora disponibile.")
+        if any(s.get("status") != "ready" for s in p["slides"]) and p.get("engine") == "v2":
+            raise ValueError("Completa o riprendi le pagine V2 prima di esportare: le bozze non sono pagine definitive")
         async with app["export_lock"]:
             eid = uid()
             output = root / "outputs" / p["id"] / eid

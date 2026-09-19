@@ -32,12 +32,12 @@ class Store:
                 job.update(status="interrupted", error="App riavviata. Le slide già salvate sono conservate.")
                 self.save_job(job)
 
-    def _save(self, table, item):
+    def _save(self, table, item, notify=True):
         item["updated_at"] = now()
         self.db.execute(f"INSERT OR REPLACE INTO {table} VALUES (?,?)",
                         (item["id"], json.dumps(item, ensure_ascii=False)))
         self.db.commit()
-        if table == "projects" and self.on_project_saved:
+        if table == "projects" and notify and self.on_project_saved:
             try:
                 self.on_project_saved(item)
             except (OSError, subprocess.SubprocessError):
@@ -55,8 +55,8 @@ class Store:
         return sorted((json.loads(row[0]) for row in self.db.execute("SELECT body FROM projects")),
                       key=lambda p: p["updated_at"], reverse=True)
 
-    def save_project(self, project):
-        return self._save("projects", project)
+    def save_project(self, project, notify=True):
+        return self._save("projects", project, notify=notify)
 
     def create(self, values):
         return self.save_project(dict(id=uid(), created_at=now(), revision=1,

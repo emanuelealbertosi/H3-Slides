@@ -1,4 +1,5 @@
 import {slideHTML,slideCSS,visualFor,fitSlide} from '../static/deck.mjs';
+import {pageAssets} from '../static/page-v2.mjs';
 import {fileURLToPath} from 'node:url';
 let input='';for await(const chunk of process.stdin)input+=chunk;
 const project=JSON.parse(input);
@@ -20,7 +21,7 @@ try{
   };
   const urls=project.slides.map(s=>{
     const media=visualFor(project,s.content,s);
-    return {diagram:media.diagramAsset?placeholder(media.diagramAsset,'diagram'):'',image:media.photo?placeholder(media.photo,'image'):''};
+    return {assets:Object.fromEntries(pageAssets(s.content.page).map(id=>[id,placeholder(id,id)])),diagram:media.diagramAsset?placeholder(media.diagramAsset,'diagram'):'',image:media.photo?placeholder(media.photo,'image'):''};
   });
   await page.setContent('<!doctype html><meta charset="utf-8"><style>'+sharedCSS+'body{margin:0}</style>'+
     project.slides.map((s,i)=>slideHTML(project,s,i,urls[i])).join(''));
@@ -38,6 +39,7 @@ try{
   rendered=rendered.map((r,i)=>{
     const media=visualFor(project,project.slides[i].content,project.slides[i]);
     let html=r.html;
+    for(const [id,url] of Object.entries(urls[i].assets))html=html.replaceAll(url,'./assets/'+id);
     if(urls[i].diagram)html=html.replace(urls[i].diagram,'./assets/'+media.diagramAsset);
     if(urls[i].image)html=html.replace(urls[i].image,'./assets/'+media.photo);
     return html;

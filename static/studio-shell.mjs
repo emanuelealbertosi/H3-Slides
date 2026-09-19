@@ -15,6 +15,8 @@ export function installStudioShell(){
   retry.innerHTML='<p id="recovery-description"></p><button type="button" id="recovery-restart" class="quiet">Ricrea da zero in una nuova versione</button>';
   jobPanel.append(retry);
   const themes=document.createElement('section');themes.className='theme-picker-panel';
+  const engine=document.createElement('label');engine.innerHTML='Motore di creazione <select id="creation-engine"><option value="v2">V2 · pagina progettata dall’AI (anteprima)</option><option value="classic">Classico · layout automatici</option></select><small>V2: composizione libera a sezioni, senza il limite di quattro blocchi. I progetti esistenti mantengono il loro motore.</small>';
+  header.after(engine);
   themes.innerHTML='<h2>Scegli un’atmosfera</h2><p class="muted">Un clic imposta colori, caratteri e stile. I dettagli rimangono personalizzabili.</p><div id="theme-gallery" class="theme-gallery"></div>'+
     '<input id="theme-preset-name" type="hidden"><div class="row">'+
     '<label>Composizione grafica<select id="graphic-style"><option value="studio">Studio · varia e ariosa</option><option value="vivid">Vivace · colore e contrasti</option><option value="editorial">Magazine · testo e immagini</option><option value="classic">Classica</option></select></label>'+

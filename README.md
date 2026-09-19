@@ -3,7 +3,52 @@
 Studio locale per trasformare PDF, Markdown e immagini in presentazioni modificabili.
 Progetto indipendente da H3-Comics: non ne modifica file, processi o configurazioni.
 
-## Studio, versioni e codice
+## Motore V2 · pagine progettate dall'AI (anteprima)
+
+In **Crea → Motore di creazione** scegli **V2**. I nuovi progetti lo propongono
+di default; i progetti esistenti mantengono **Classico**. Per provare un progetto
+esistente, cambia motore nelle impostazioni e usa **Rigenera**: viene creata una
+nuova versione, senza sostituire l'originale.
+
+- Il modello progetta contenuti **e composizione** di ciascuna pagina: gruppi
+  annidati, colonne con proporzioni diverse, sequenze, titoli, paragrafi, codice,
+  immagini e diagrammi. Non passa dal contratto classico dei quattro blocchi.
+- Gli elementi completi appaiono progressivamente durante lo streaming. Il
+  formato è un albero dichiarativo reso in HTML, non HTML/JavaScript eseguibile
+  del modello. Restano limiti tecnici anti-abuso (200 elementi, 8 livelli),
+  non un numero di riquadri imposto dal template.
+- Il percorso è comune a llama.cpp integrato e API compatibili OpenAI.
+  Se un provider restituisce solo JSON completo, la pagina appare a fine risposta.
+  Le metriche dipendono dai dati comunicati dal server; non vengono inventate.
+- In formato **Adattivo** l'altezza segue il contenuto. Il formato **Fisso**
+  segnala il testo che non entra; l'export non lo taglia silenziosamente.
+- Doppio clic modifica i testi. I comandi al passaggio del mouse modificano o
+  eliminano un elemento. Trascina la maniglia per riordinarlo; Maiusc lo inserisce
+  dentro una sezione. **Struttura pagina** e la matita delle sezioni permettono
+  di cambiare colonne, proporzioni, spazi e dimensione testo. Puoi aggiungere
+  testi, immagini e sezioni senza il limite di quattro blocchi.
+- Ogni immagine mantiene upload e ricerca nei documenti o su Internet.
+  Manim conserva progettazione e riprogettazione mirata dei diagrammi.
+  Documenti e preferenze di ricerca mantengono la priorità impostata.
+- Le bozze sopravvivono al ricaricamento. Un errore non trasforma la pagina in
+  riquadri di ripiego: **Riprendi** riprogetta la pagina incompleta, conservando
+  le altre. La pagina in generazione è bloccata per l'editing; le altre restano
+  modificabili. Una modifica concorrente non viene sovrascritta dal modello.
+- Sono disponibili **PDF**, **PowerPoint modificabile** e **Slidev**. PDF e
+  anteprima usano lo stesso HTML; nel PowerPoint testi e superfici restano nativi,
+  mentre formule e diagrammi vengono inseriti come immagini. PowerPoint e Slidev
+  usano un'altezza comune per il deck.
+
+Limiti dell'anteprima V2: il posizionamento libero a pixel con otto maniglie del
+motore classico non è ancora migrato; si modifica la struttura fluida a sezioni.
+Il video Manim dell'intero deck è disabilitato (i diagrammi nelle pagine funzionano).
+La qualità della regia grafica dipende dal modello: non equivale a una garanzia
+di qualità Gamma. La suite usa server LLM simulati; il modello reale va provato
+con i propri contenuti. Nessun servizio immagini a pagamento è stato aggiunto.
+
+Test dedicati: `npm run test:v2` e `python -m pytest tests/test_page_v2.py`.
+
+## Studio, versioni e codice (motore classico)
 
 - **Crea** apre una pagina di impostazioni; la generazione passa all'editor live.
   I progetti esistenti si aprono direttamente nell'editor. Il menu superiore

@@ -28,6 +28,9 @@ def mathematical_block(text):
 def content_contract(project, block_count=None):
     density = project.get("text_density", "detailed")
     schema = SlideContent.model_json_schema()
+    schema["properties"].pop("page", None)
+    for name in ("PageSpec", "PageNode", "PageStyle"):
+        schema["$defs"].pop(name, None)
     schema["properties"].pop("canvas_height", None)
     for key in ("image_origin", "image_placeholder"):
         schema["properties"].pop(key, None)  # Resolved by the app after acquisition.

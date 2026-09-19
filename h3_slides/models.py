@@ -4,6 +4,7 @@ from typing import Annotated
 from .themes import ThemeDesign
 from .runtime_settings import RemoteInferenceSettings
 from .diagram_spec import ManimSceneSpec
+from .page_v2 import PageSpec
 
 
 class DiagramSpec(BaseModel):
@@ -84,6 +85,7 @@ class SlideContent(BaseModel):
     sources: list[str] = Field(default_factory=list, max_length=12)
     animation: Literal["none", "reveal"] = "none"
     diagram: DiagramSpec = Field(default_factory=DiagramSpec)
+    page: PageSpec | None = None
 
     def validate_canvas_geometry(self):
         """Validate edited positions without rejecting legacy content on read.
@@ -120,6 +122,7 @@ class Generation(BaseModel):
     prompt: str = Field(min_length=1, max_length=12000)
     count: int = Field(default=6, ge=1, le=30)
     slide_id: str | None = None
+    page_node_id: str = Field(default="", max_length=48)
     diagram_only: bool = False
     replace_diagrams: bool = False
     regenerate_all: bool = False
@@ -129,6 +132,8 @@ class Generation(BaseModel):
 
     @model_validator(mode="after")
     def diagram_target(self):
+        if self.page_node_id and not (self.slide_id and self.diagram_only):
+            raise ValueError("Un elemento V2 richiede slide_id e diagram_only")
         if self.rebuild_outline and not self.regenerate_all:
             raise ValueError("Ricreare la scaletta richiede la rigenerazione completa")
         if self.regenerate_all and self.slide_id:
@@ -148,6 +153,7 @@ class Generation(BaseModel):
 
 
 class ProjectInput(BaseModel):
+    engine: Literal["classic", "v2"] = "classic"
     title: str = Field(default="Nuova presentazione", min_length=1, max_length=140)
     prompt: str = Field(default="", max_length=12000)
     count: int = Field(default=6, ge=1, le=30)

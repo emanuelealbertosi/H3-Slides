@@ -47,6 +47,35 @@ export function visualAnchorAt(x,y,width,height){
 
 // Self-contained: same measured-fit code in preview, PDF, PPTX and Slidev.
 export function fitSlide(frame,options={}){
+  if(frame?.dataset.engine==='v2'){
+    const controls=[...frame.querySelectorAll('.v2-tools')];
+    const saved=controls.map(e=>e.style.display);controls.forEach(e=>e.style.display='none');
+    try{
+      // A model may request too many columns around a detailed visual. Preserve
+      // its content/aspect ratio, enlarging the containing grid span as needed.
+      let mediaAdjusted=false;
+      for(const media of frame.querySelectorAll('.v2-media')){
+        const image=media.querySelector('img'),aspect=image?.naturalWidth&&image?.naturalHeight?image.naturalWidth/image.naturalHeight:1.5;
+        const minimum=media.dataset.visualKind==='diagram'?600:Math.min(720,Math.max(280,Math.sqrt(90000*aspect)));
+        let cell=media.closest('.v2-node');
+        while(cell&&media.clientWidth+1<minimum){
+          cell.style.gridColumn='1 / -1';mediaAdjusted=true;
+          cell=cell.parentElement?.closest('.v2-node');
+        }
+      }
+      frame.style.height='auto';
+      frame.style.minHeight='720px';
+      const needed=frame.offsetHeight;
+      const height=Math.max(720,frame.dataset.canvasMode==='fixed'?720:needed,Number(options?.targetHeight)||0);
+      frame.style.height=height+'px';
+      const bounds=frame.getBoundingClientRect();
+      const overflow=needed>height+2||height>8192||[...frame.querySelectorAll('.v2-node,.v2-text')].some(e=>{
+        const r=e.getBoundingClientRect();return r.right>bounds.right+2||r.left<bounds.left-2||r.bottom>bounds.bottom+2||e.scrollWidth>e.clientWidth+2;
+      });
+      frame.dataset.overflow=String(overflow);
+      return {layout:'ai-page',height,overflow,adjusted:height>720||mediaAdjusted};
+    }finally{controls.forEach((e,i)=>e.style.display=saved[i])}
+  }
   // Keep every helper inside this function: preview/export serialize it with evaluate().
   // Editor chrome is not slide content. In particular, a 34px delete button in a
   // 27px subtitle must not inflate its scrollHeight or trigger a false overflow.

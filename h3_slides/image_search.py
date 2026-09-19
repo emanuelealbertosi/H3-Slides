@@ -34,6 +34,7 @@ class ImageSelection(BaseModel):
     search_id: str = Field(max_length=40)
     result_id: str = Field(max_length=40)
     revision: int = Field(ge=1)
+    node_id: str = Field(default="", max_length=48)
 
 
 @asynccontextmanager

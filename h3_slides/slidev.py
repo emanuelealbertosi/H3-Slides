@@ -26,6 +26,7 @@ def write_slidev(project, assets, output, strict=False):
         origin = record.get("origin", c.get("image_origin", "source"))
         photo = c.get("image_id", "") if origin != "source" or project.get("use_source_images", True) else ""
         images = {image for image in (rendered.get("asset") if diagram else "", photo) if image}
+        images.update(n["asset_id"] for n in (c.get("page") or {}).get("nodes", []) if n.get("asset_id"))
         for image in images:
             (output / "assets").mkdir(exist_ok=True)
             src, dst = assets / image, output / "assets" / image

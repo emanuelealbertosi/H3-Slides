@@ -4,6 +4,7 @@ import {fileURLToPath} from 'node:url';
 import pptxgen from 'pptxgenjs';
 import {chromium} from 'playwright-chromium';
 import {slideHTML,slideCSS,themeFor,visualFor,fitSlide} from '../static/deck.mjs';
+import {pageAssets} from '../static/page-v2.mjs';
 
 // Measure every layout, including bullets, illustrations, borders and footers.
 export async function measureLayouts(page,options={}){
@@ -12,20 +13,20 @@ export async function measureLayouts(page,options={}){
     const origin=node.getBoundingClientRect();
     const rect=e=>{const r=e.getBoundingClientRect();return {x:(r.x-origin.x)/96,y:(r.y-origin.y)/96,w:r.width/96,h:r.height/96}};
     const visible=e=>e.textContent.trim()&&e.getClientRects().length&&getComputedStyle(e).display!=='none';
-    const texts=[...node.querySelectorAll('.kicker,h1,.subtitle,.prose-box h2,.prose-box p,.prose-source,.block-number,.bullet-mark,.bullet-text,.footer span,.image-credit,.placeholder-title,.placeholder-query')].map((e,domIndex)=>({e,domIndex})).filter(({e})=>visible(e)).map(({e,domIndex})=>{
+    const texts=[...node.querySelectorAll('.kicker,h1,.subtitle,.prose-box h2,.prose-box p,.prose-source,.block-number,.bullet-mark,.bullet-text,.footer span,.image-credit,.placeholder-title,.placeholder-query,.v2-text')].map((e,domIndex)=>({e,domIndex})).filter(({e})=>visible(e)).map(({e,domIndex})=>{
       const c=getComputedStyle(e);return {...rect(e),domIndex,formula:Boolean(e.querySelector('.katex')),
         value:e.dataset.editRaw??e.textContent,size:parseFloat(c.fontSize)*.75,
         font:c.fontFamily.split(',')[0].replaceAll('"',''),bold:Number(c.fontWeight)>=600,
         italic:c.fontStyle==='italic',color:c.color,lineHeight:parseFloat(c.lineHeight)*.75};
     });
-    const boxes=[...node.querySelectorAll('.prose-box,.prose-box h2,li,.slide-accent,.image-placeholder')].map(e=>{
+    const boxes=[...node.querySelectorAll('.prose-box,.prose-box h2,li,.slide-accent,.image-placeholder,.v2-node,.v2-root')].map(e=>{
       const c=getComputedStyle(e);return {...rect(e),color:c.backgroundColor,radius:parseFloat(c.borderTopLeftRadius)/96,
         shadow:c.boxShadow!=='none',borders:['Top','Right','Bottom','Left'].map(side=>({
           color:c['border'+side+'Color'],width:parseFloat(c['border'+side+'Width'])*.75}))};
     });
-    const visuals=[...node.querySelectorAll('.visual')].map(visual=>{
+    const visuals=[...node.querySelectorAll('.visual,.v2-media')].map(visual=>{
       const img=visual.matches('img')?visual:visual.querySelector('img');
-      return {kind:visual.dataset.visualKind||'image',frame:img?rect(img):rect(visual),
+      return {kind:visual.dataset.visualKind||'image',asset:visual.dataset.assetId,frame:img?rect(img):rect(visual),
         image:img?{width:img.naturalWidth,height:img.naturalHeight}:null};
     });
     return {height:origin.height,layout:node.dataset.layout,overflow:node.dataset.overflow==='true',texts,boxes,
@@ -64,6 +65,8 @@ export async function buildExports(project,assetsDir,outDir,format){
   const articles=[];
   for(const [index,item] of project.slides.entries()){
     const visual=visualFor(project,item.content,item),urls={};
+    urls.assets={};
+    for(const id of pageAssets(item.content.page))urls.assets[id]='data:'+(id.endsWith('.png')?'image/png':'image/jpeg')+';base64,'+(await fs.readFile(imagePath(id))).toString('base64');
     for(const [kind,id] of [['diagram',visual.diagramAsset],['image',visual.photo]]){
       if(id)urls[kind]='data:'+(id.endsWith('.png')?'image/png':'image/jpeg')+';base64,'+
         (await fs.readFile(imagePath(id))).toString('base64');
@@ -81,12 +84,13 @@ export async function buildExports(project,assetsDir,outDir,format){
     await page.evaluate(()=>Promise.all([...document.images].map(i=>i.decode())));
     let measured=await measureLayouts(page);
     const deckHeight=Math.max(720,...measured.map(m=>m.height));
+    if(format==='pptx'&&deckHeight>5376)throw new Error('Una pagina supera il limite fisico di PowerPoint (56 pollici). Suddividila o riduci la struttura; il PDF mantiene il formato adattivo.');
     if(format==='pptx')measured=await measureLayouts(page,{targetHeight:deckHeight});
     await fs.writeFile(path.join(outDir,'layout-report.json'),JSON.stringify(measured.map((m,i)=>({
       slide:i+1,layout:m.layout,overflow:m.overflow,width:1280,height:m.height,footer:m.footer})),null,2));
     const bad=measured.flatMap((m,i)=>m.overflow?[i+1]:[]);
-    if(bad.length)throw new Error('Testo fuori dallo spazio nelle slide '+bad.join(', ')+': il composer ha provato altre disposizioni. Dividi il contenuto in più slide o modifica il testo; nessuna parte viene nascosta nell’export.');
-    const textSelector='.kicker,h1,.subtitle,.prose-box h2,.prose-box p,.prose-source,.block-number,.bullet-mark,.bullet-text,.footer span,.image-credit,.placeholder-title,.placeholder-query';
+    if(bad.length)throw new Error('Testo fuori dallo spazio nelle slide '+bad.join(', ')+': '+(project.slides.some(s=>s.content.page)?'la pagina V2 supera il formato disponibile. Scegli Adattivo o modifica la struttura; nessuna parte viene nascosta nell’export.':'il composer ha provato altre disposizioni. Dividi il contenuto in più slide o modifica il testo; nessuna parte viene nascosta nell’export.'));
+    const textSelector='.kicker,h1,.subtitle,.prose-box h2,.prose-box p,.prose-source,.block-number,.bullet-mark,.bullet-text,.footer span,.image-credit,.placeholder-title,.placeholder-query,.v2-text';
     const formulaImages=[];
     for(const [slideIndex,layout] of (format==='pptx'?measured:[]).entries()){
       const items=[];
@@ -128,7 +132,7 @@ export async function buildExports(project,assetsDir,outDir,format){
       }
       s.addShape(pptx.ShapeType.line,{x:layout.footer.x,y:layout.footer.y,w:layout.footer.w,h:0,line:{color:t.line.slice(1),width:.75}});
       for(const media of layout.visuals){
-        const id=media.kind==='diagram'?visual.diagramAsset:visual.photo;
+        const id=media.asset||(media.kind==='diagram'?visual.diagramAsset:visual.photo);
         if(!id)continue;
         const frame=media.frame,p=imagePath(id),dims=media.image;
         if(!dims||!Number.isFinite(dims.width)||!Number.isFinite(dims.height)||dims.width<=0||dims.height<=0)
@@ -138,7 +142,8 @@ export async function buildExports(project,assetsDir,outDir,format){
         s.addImage({path:p,x:frame.x+(frame.w-w)/2,y:frame.y+(frame.h-h)/2,w,h});
       }
       const credit=(project.visual_assets||[]).find(asset=>asset.id===visual.photo&&asset.origin==='web');
-      s.addNotes((c.notes||'')+'\n\n[Sources]\n'+(c.sources||[]).join('\n')+'\n[/Sources]'+
+      s.addNotes((c.page?.notes||c.notes||'')+'\n\n[Sources]\n'+(c.page?.sources||c.sources||[]).join('\n')+'\n[/Sources]'+
+        (c.page?'\n'+c.page.nodes.filter(n=>n.source).map(n=>n.source).join('\n'):'')+
         (credit?'\n\n[Image attribution]\n'+[credit.label,credit.author,credit.license,credit.source,credit.license_url].join('\n'):''));
     }
     const output=path.join(outDir,'presentazione.pptx');

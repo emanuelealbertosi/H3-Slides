@@ -514,6 +514,10 @@ class Worker:
                 priority_rules += (DOCUMENT_ONLY_RULE if document_fallback.get("status") == "skipped"
                                    else DOCUMENT_FALLBACK_RULE)
             context += priority_rules
+            if project.get("engine") == "v2":
+                from .worker_v2 import run_pages
+                await run_pages(self, client, jid, pid, request, context, assets, research)
+                return
             if request.diagram_only:
                 project = self.store.project(pid)
                 targets = [s["id"] for i, s in enumerate(project["slides"])

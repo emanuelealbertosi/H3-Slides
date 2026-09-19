@@ -1,6 +1,7 @@
 import {layoutCandidates,composerCSS} from './composer.mjs';
 import katex from './vendor/katex/katex.mjs';
 import {codeHTML,codeCSS} from './code-blocks.mjs';
+import {pageHTML,pageCSS} from './page-v2.mjs';
 export {layouts,layoutCandidates,fitSlide,visualAnchorAt} from './composer.mjs';
 export const esc = value => String(value ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const formulaHTML=(source,displayMode=false)=>{
@@ -121,9 +122,10 @@ const freeData=(placements,key)=>{
 };
 
 const imageCSS='.slide-frame .photo-visual{margin:0;display:flex;flex-direction:column;gap:6px;overflow:hidden}.photo-visual>img{width:100%;height:100%;flex:1;min-height:0;object-fit:contain}.photo-visual>.image-credit{flex:none;font:11px/1.3 Arial,sans-serif;color:var(--muted);max-height:30px;overflow:hidden}.image-credit a{color:inherit;text-decoration:none}.slide-frame .image-placeholder{display:flex;align-items:center;justify-content:center;border:2px dashed var(--line);border-radius:var(--box-radius,18px);background:var(--surface);color:var(--fg);padding:24px}.placeholder-copy{text-align:center;overflow:hidden;max-height:100%}.placeholder-title{display:block;font-size:23px;line-height:1.25}.placeholder-query{font-size:16px;line-height:1.4;color:var(--muted);overflow-wrap:anywhere}';
-export const slideCSS = '*{box-sizing:border-box}.slide-frame{width:1280px;height:720px;position:relative;overflow:hidden;font-family:var(--font,Arial),sans-serif;background:var(--bg);color:var(--fg);display:flex;flex-direction:column}.slide-frame .heading{flex:none}.slide-frame h1{color:var(--heading)}.slide-frame .slide-columns{display:flex}.slide-frame .footer{position:absolute;display:flex;justify-content:space-between;gap:20px;color:var(--muted);border-top:1px solid var(--line)}.slide-frame .footer span:first-child{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.slide-frame .katex-display{margin:.25em 0}.slide-frame .katex{font-size:1.04em}.slide-frame [data-edit-field] .katex{pointer-events:none}' + composerCSS + imageCSS + codeCSS;
+export const slideCSS = '*{box-sizing:border-box}.slide-frame{width:1280px;height:720px;position:relative;overflow:hidden;font-family:var(--font,Arial),sans-serif;background:var(--bg);color:var(--fg);display:flex;flex-direction:column}.slide-frame .heading{flex:none}.slide-frame h1{color:var(--heading)}.slide-frame .slide-columns{display:flex}.slide-frame .footer{position:absolute;display:flex;justify-content:space-between;gap:20px;color:var(--muted);border-top:1px solid var(--line)}.slide-frame .footer span:first-child{overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.slide-frame .katex-display{margin:.25em 0}.slide-frame .katex{font-size:1.04em}.slide-frame [data-edit-field] .katex{pointer-events:none}' + composerCSS + imageCSS + codeCSS + pageCSS;
 
 export function slideHTML(project,slide,index,imageUrl=''){
+  if(slide.content.page||slide.page_draft)return pageHTML(project,slide,index,imageUrl||{},{esc,mathHTML,codeHTML,themeFor,autoText});
   const c=slide.content,t=themeFor(project),visual=visualFor(project,c,slide),template=templateFor(project,c,index,slide);
   const urls=typeof imageUrl==='string'?(visual.diagram?{diagram:imageUrl}:{image:imageUrl}):(imageUrl||{});
   const hasPhoto=Boolean(visual.photo||visual.photoPlaceholder),dual=Boolean(visual.diagram&&hasPhoto);

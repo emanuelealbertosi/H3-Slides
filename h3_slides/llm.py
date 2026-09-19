@@ -308,7 +308,8 @@ class LLM:
             self.model = self.provider.model
             self.sampling = self.provider.inference.model_dump()
 
-    async def json(self, prompt, schema=None, images=None):
+    async def json(self, prompt, schema=None, images=None, *, system=None, on_text=None):
+        system = system or SYSTEM
         if schema:
             # Grammar constrains tokens but does not tell the model what the
             # fields mean. Include the contract in the actual conversation too.
@@ -322,9 +323,11 @@ class LLM:
                 data = base64.b64encode(path.read_bytes()).decode()
                 content.append({"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + data}})
         sampling = getattr(self, "sampling", InferenceSettings().model_dump())
-        body = {"model": self.model, "messages": [{"role": "system", "content": SYSTEM},
+        body = {"model": self.model, "messages": [{"role": "system", "content": system},
                 {"role": "user", "content": content}], "temperature": sampling["temperature"],
-                "top_p": sampling["top_p"], "stream": False}
+                "top_p": sampling["top_p"], "stream": on_text is not None}
+        if on_text is not None:
+            body["stream_options"] = {"include_usage": True}
         if sampling["max_tokens"] is not None:
             body["max_tokens"] = sampling["max_tokens"]
         # Local llama.cpp supports constrained JSON decoding. Remote APIs vary.
@@ -387,6 +390,9 @@ class LLM:
                                     message += " L'unico tentativo automatico è già stato eseguito."
                                 raise RuntimeError(message)
                             message, context_error = _remote_http_problem(response.status, payload)
+                            if response.status == 400 and "stream_options" in body and b"stream_options" in payload.lower():
+                                body.pop("stream_options")
+                                continue
                             if (self.provider.mode == "remote" and "response_format" in body and response.status == 400
                                     and any(term in payload.lower() for term in (b"response_format", b"json_object", b"json schema"))):
                                 logging.info("LLM retry: id=%s motivo=json_mode_non_supportato", request_id)
@@ -397,7 +403,12 @@ class LLM:
                                 body["max_tokens"] = 1600
                                 continue
                             raise RuntimeError(message)
-                        result = await response.json()
+                        if on_text is not None and "text/event-stream" in response.headers.get("Content-Type", ""):
+                            result = await _read_completion_stream(response, on_text)
+                        else:
+                            result = await response.json()
+                            if on_text is not None:
+                                await on_text(result["choices"][0]["message"]["content"])
                         outcome = "response_received"
                         if engine_retried:
                             self.notify("LLM remoto: il server ha ripreso a rispondere dopo il tentativo automatico.")
@@ -446,6 +457,42 @@ class LLM:
             return parse_json(raw)
         except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
             raise ValueError("Il modello non ha restituito JSON valido; cambia modello o riduci il prompt") from exc
+
+
+async def _read_completion_stream(response, on_text):
+    """One bounded SSE completion. Never retry a partially delivered response."""
+    text, finish, metadata, size = [], None, {}, 0
+    async for raw in response.content:
+        if len(raw) > 500000:
+            raise ValueError("Evento streaming LLM troppo grande")
+        line = raw.decode("utf-8").strip()
+        if not line.startswith("data:"):
+            continue
+        data = line[5:].strip()
+        if data == "[DONE]":
+            break
+        event = json.loads(data)
+        if event.get("error"):
+            raise ValueError("Il server LLM ha interrotto lo streaming; bozza conservata")
+        for key in ("usage", "timings", "stats"):
+            if key in event:
+                metadata[key] = event[key]
+        for choice in event.get("choices", []):
+            if choice.get("index", 0) != 0:
+                continue
+            delta = choice.get("delta", {}).get("content") or ""
+            if delta:
+                if not isinstance(delta, str):
+                    raise ValueError("Formato streaming LLM non supportato")
+                size += len(delta)
+                if size > 400000:
+                    raise ValueError("Risposta streaming troppo grande")
+                text.append(delta)
+                await on_text(delta)
+            finish = choice.get("finish_reason") or finish
+    if not finish:
+        raise ValueError("Streaming LLM interrotto prima della conclusione; bozza conservata")
+    return {**metadata, "choices": [{"finish_reason": finish, "message": {"content": "".join(text)}}]}
 
 
 def _remote_engine_problem(status, payload):
