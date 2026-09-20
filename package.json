@@ -4,8 +4,10 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "pretest": "npm run test:v2",
-    "test:v2": "node --test tests/page-v2.test.mjs tests/page-v2-ui.mjs",
+    "pretest": "npm run test:v2 && npm run test:workflow && npm run test:themes",
+    "test:workflow": "node --test tests/creation-flow-ui.mjs tests/slide-format-ui.mjs",
+    "test:v2": "node --test tests/page-v2.test.mjs tests/page-v2-ui.mjs tests/page-v2-preview-ui.mjs tests/page-v2-themes.test.mjs tests/page-v2-bounded.test.mjs tests/page-format-export.test.mjs",
+    "test:themes": "node --test tests/theme-studio-ui.mjs tests/theme-v2-export.test.mjs",
     "slidev": "slidev examples/slides.md --port 3031 --bind 127.0.0.1",
     "test": "node --test tests/generation-log.test.mjs tests/export.test.mjs tests/composer.test.mjs tests/dual-media-density.test.mjs tests/media-readability.test.mjs tests/dependency-security.test.mjs tests/remote-models.test.mjs tests/api-settings.test.mjs tests/mtp-settings-ui.mjs tests/web-research-ui.mjs tests/web-consents-ui.mjs tests/openverse-images-ui.mjs tests/floating-generation-ui.mjs tests/dual-media-ui.mjs tests/image-search-ui.mjs tests/document-image-search-ui.mjs tests/studio-export.test.mjs tests/project-recovery-ui.mjs tests/adaptive-layout.test.mjs tests/adaptive-export.test.mjs tests/adaptive-editor-ui.mjs tests/resize-editor-ui.mjs tests/project-save-race-ui.mjs",
     "verify:vendor": "node scripts/vendor-pptxgenjs.mjs"

@@ -1,5 +1,6 @@
 """AI-authored page trees. Only declarative, bounded HTML layout primitives."""
 import json
+import re
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -10,7 +11,7 @@ class PageStyle(BaseModel):
     columns: list[float] = Field(default_factory=lambda: [1, 1], min_length=1, max_length=12)
     gap: int = Field(default=24, ge=0, le=100)
     padding: int = Field(default=0, ge=0, le=100)
-    surface: Literal["none", "soft", "accent", "dark", "paper"] = "none"
+    surface: Literal["none", "plain", "soft", "accent", "dark", "paper", "gradient", "example", "key", "quote"] = "none"
     radius: int = Field(default=0, ge=0, le=64)
     shadow: bool = False
     border: bool = False
@@ -32,6 +33,7 @@ class PageNode(BaseModel):
     id: str = Field(pattern=r"^[a-zA-Z][a-zA-Z0-9_-]{0,47}$")
     parent: str = Field(default="root", pattern=r"^[a-zA-Z][a-zA-Z0-9_-]{0,47}$")
     kind: Literal["group", "heading", "text", "code", "image", "diagram"]
+    role: Literal["auto", "title", "subtitle", "eyebrow", "lead", "body", "callout", "example", "quote", "stat", "step", "caption"] = "auto"
     text: str = Field(default="", max_length=16000)
     language: Literal["python", "c", "cpp", "javascript", "java", "sql", "text"] = "text"
     asset_id: str = Field(default="", pattern=r"^(?:[a-f0-9-]+\.jpg|manim-[a-f0-9]{64}\.png)?$")
@@ -64,37 +66,213 @@ class PageSpec(BaseModel):
 
 
 class PageStream:
-    """Expose complete, validated nodes, never incomplete HTML or partial strings."""
-    def __init__(self):
-        self.buffer = ""
-        self.offset = None
-        self.nodes = []
+    """Incrementally scan JSON and expose validated declarative previews.
 
-    def feed(self, chunk):
-        self.buffer += chunk
-        if len(self.buffer) > 400000:
-            raise ValueError("Risposta V2 troppo grande")
-        if self.offset is None:
-            import re
-            match = re.search(r'"nodes"\s*:\s*\[', self.buffer)
-            if not match:
-                return None
-            self.offset = match.end()
-        changed = False
-        while True:
-            start = self.offset
-            while start < len(self.buffer) and self.buffer[start] in " \r\n\t,":
-                start += 1
+    Incomplete text is decoded as a literal string. Identity fields and optional
+    containers must be complete before they affect a preview. The full response
+    still goes through the ordinary strict final validation.
+    """
+    def __init__(self):
+        self.characters = 0
+        self.nodes = []
+        self.root = None
+        self.stack = []
+        self.completed = set()
+        self.node_cache = {}
+        self.string = None
+        self.escaped = False
+        self.scalar = []
+        self.invalid = False
+        self.last_draft = None
+        self.prefix_depth = 0
+        self.prefix_quoted = False
+        self.prefix_escaped = False
+
+    @staticmethod
+    def _string_value(raw, complete):
+        # Lazy import avoids the models -> page_v2 -> llm -> models cycle.
+        from .llm import _escape_latex_in_json
+        if not complete:
+            # Wait for a trailing escape/LaTeX command/Unicode pair to become
+            # unambiguous before exposing any decoded characters from it.
+            pending = re.search(r'(?<!\\)(?:\\\\)*\\(?:[A-Za-z]*|u[0-9a-fA-F]{0,3})$', raw)
+            if pending:
+                paired = (len(pending.group()) - len(pending.group().lstrip("\\"))) // 2
+                raw = raw[:pending.start()] + "\\\\" * paired
+        try:
+            value = json.loads(_escape_latex_in_json('"' + raw + '"'))
+        except (ValueError, UnicodeError):
+            return None
+        if not complete and value and 0xD800 <= ord(value[-1]) <= 0xDBFF:
+            value = value[:-1]
+        if any(0xD800 <= ord(char) <= 0xDFFF for char in value):
+            return None
+        return value
+
+    def _attach(self, value):
+        if not self.stack:
+            if self.root is not None or not isinstance(value, dict):
+                self.invalid = True
+                return
+            self.root = value
+            return
+        frame = self.stack[-1]
+        if frame["state"] != "value":
+            self.invalid = True
+            return
+        if isinstance(frame["value"], dict):
+            frame["value"][frame["key"]] = value
+        else:
+            frame["value"].append(value)
+        frame["state"] = "comma"
+
+    def _skip_prefix(self, char):
+        if self.prefix_quoted:
+            if char == '"' and not self.prefix_escaped:
+                self.prefix_quoted = False
+            self.prefix_escaped = char == "\\" and not self.prefix_escaped
+            return True
+        if char == '"':
+            self.prefix_quoted, self.prefix_escaped = True, False
+            return True
+        if self.prefix_depth:
+            if char == "{":
+                self.prefix_depth += 1
+                if self.prefix_depth > 40:
+                    raise ValueError("Risposta V2 troppo annidata")
+            elif char == "}":
+                self.prefix_depth -= 1
+            return True
+        return char != "{"
+
+    def _scan(self, char):
+        if self.root is None and self._skip_prefix(char):
+            return
+        if self.string is not None:
+            if char == '"' and not self.escaped:
+                value = self._string_value("".join(self.string), True)
+                self.string = None
+                if value is None:
+                    self.invalid = True
+                elif self.stack and self.stack[-1]["state"] == "key":
+                    self.stack[-1].update(key=value, state="colon")
+                else:
+                    self._attach(value)
+                return
+            self.string.append(char)
+            self.escaped = char == "\\" and not self.escaped
+            return
+        if self.scalar:
+            if char not in " \r\n\t,]}":
+                self.scalar.append(char)
+                return
             try:
-                raw, end = json.JSONDecoder().raw_decode(self.buffer, start)
-            except json.JSONDecodeError:
+                self._attach(json.loads("".join(self.scalar)))
+            except ValueError:
+                self.invalid = True
+            self.scalar.clear()
+        if char.isspace():
+            return
+        if not self.stack and self.root is not None:
+            return
+        if (len(self.stack) == 1 and not self.root and self.stack[0]["state"] == "key"
+                and char not in ('"', '}')):
+            # A braced prose prefix cannot start a JSON object key. Skip its
+            # entire scope, including quoted/nested examples. Once any key has
+            # started, ordinary strict parsing applies and never restarts.
+            self.root = None
+            self.stack.clear()
+            self.prefix_depth = 1
+            self._skip_prefix(char)
+            return
+        if char == '"':
+            self.string, self.escaped = [], False
+        elif char in "{[":
+            value = {} if char == "{" else []
+            self._attach(value)
+            self.stack.append({"value": value, "state": "key" if char == "{" else "value", "key": None})
+            if len(self.stack) > 40:
+                raise ValueError("Risposta V2 troppo annidata")
+        elif char in "}]":
+            frame = self.stack[-1]
+            matching = isinstance(frame["value"], dict) == (char == "}")
+            if not matching or frame["state"] not in ("comma", "key", "value"):
+                self.invalid = True
+                return
+            self.completed.add(id(self.stack.pop()["value"]))
+        elif char == ":" and self.stack[-1]["state"] == "colon":
+            self.stack[-1]["state"] = "value"
+        elif char == "," and self.stack[-1]["state"] == "comma":
+            frame = self.stack[-1]
+            frame["state"] = "key" if isinstance(frame["value"], dict) else "value"
+        elif self.stack[-1]["state"] == "value" and char in "-0123456789tfn":
+            self.scalar = [char]
+        else:
+            self.invalid = True
+
+    def feed(self, chunk, *, emit=True):
+        self.characters += len(chunk)
+        if self.characters > 400000:
+            raise ValueError("Risposta V2 troppo grande")
+        for char in chunk:
+            if self.invalid:
                 break
-            node = PageNode.model_validate(raw)
-            page = PageSpec(nodes=self.nodes + [node])
-            self.nodes = page.nodes
-            self.offset = end
-            changed = True
-        return PageSpec(nodes=self.nodes).model_dump() if changed else None
+            self._scan(char)
+        return self.snapshot() if emit else None
+
+    def snapshot(self):
+        if not isinstance(self.root, dict) or not isinstance(self.root.get("nodes"), list):
+            return None
+        nodes = []
+        for raw in self.root["nodes"]:
+            if not isinstance(raw, dict):
+                break
+            complete = id(raw) in self.completed
+            if complete:
+                if id(raw) not in self.node_cache:
+                    self.node_cache[id(raw)] = PageNode.model_validate(raw)
+                node = self.node_cache[id(raw)]
+            else:
+                # Explicit parents avoid showing a text-first node at the root
+                # before its real parent arrives later in the object.
+                if not {"id", "parent", "kind"}.issubset(raw):
+                    break
+                candidate = {key: value for key, value in raw.items()
+                             if not isinstance(value, (dict, list)) or id(value) in self.completed}
+                if (self.string is not None and self.stack and self.stack[-1]["value"] is raw
+                        and self.stack[-1]["key"] == "text" and self.stack[-1]["state"] == "value"):
+                    value = self._string_value("".join(self.string), False)
+                    if value is not None:
+                        candidate["text"] = value
+                try:
+                    node = PageNode.model_validate(candidate)
+                except ValueError:
+                    break
+            nodes.append(node)
+            if not complete:
+                break
+        if not nodes:
+            return None
+        style = self.root.get("style")
+        values = {"nodes": nodes}
+        if isinstance(style, dict) and id(style) in self.completed:
+            values["style"] = style
+        try:
+            page = PageSpec(**values)
+        except ValueError:
+            if nodes and id(self.root["nodes"][len(nodes)-1]) not in self.completed:
+                nodes.pop()
+                if not nodes:
+                    return None
+                page = PageSpec(**values)
+            else:
+                raise
+        self.nodes = page.nodes
+        draft = page.model_dump()
+        if draft == self.last_draft:
+            return None
+        self.last_draft = draft
+        return draft
 
 
 def set_page_image(content, node_id, asset_id, source=""):
@@ -117,6 +295,16 @@ non copiarne lunghi brani. Distingui esempi originali dai dati delle fonti.
 Non esiste il limite di quattro blocchi. Scegli numero, ordine, gruppi, colonne
 e proporzioni in base al messaggio. Non riempire ogni pagina di riquadri uguali:
 usa spazio negativo, gerarchia, sezioni editoriali, confronti, fasce e callout.
+Segui l'identità visiva del tema fornita nel brief, non una gabbia fissa.
+role distingue title (unico titolo principale), subtitle, eyebrow (occhiello),
+lead (introduzione), body, callout, example, quote, stat, step e caption.
+Assegna i ruoli in base al significato: non trasformare ogni paragrafo in callout.
+I ruoli ereditano palette e tipografia dal tema; ometti font_size quando basta
+la gerarchia del tema. Per sezioni colorate usa surface=soft, example, key,
+quote, accent o gradient; alternale a testo senza riquadro (surface=plain).
+surface=none eredita la superficie del ruolo, plain la rende trasparente.
+La composizione resta adattiva: scegli colonne e gruppi secondo il contenuto,
+varia il ritmo tra pagine senza cambiare identità, ordine logico o leggibilità.
 Ogni nodo ha un id unico, parent=root oppure ID di un group PRECEDENTE.
 group contiene altri nodi; heading/text/code contengono testo letterale.
 Nessun HTML/CSS eseguibile: usa soltanto le proprietà style previste.
@@ -124,7 +312,15 @@ flow=columns usa columns come pesi (es. [2,1]), flow=stack impila, row affianca.
 span estende un nodo su più colonne del genitore. padding, gap, radius e font_size
 sono pixel su una pagina larga 1280px con margini. Non usare dimensioni minuscole:
 titolo 44–60px, testo 24–30px, codice almeno 18px. Titoli coerenti fra pagine.
-Non mettere altezza fissa ai testi: la pagina si allunga se serve. Allinea i
+Progetta una vera slide, non una pagina web lunga. Il brief fornisce formato,
+altezza e budget: mantieni le pagine circa uniformi e usa poco testo ben disposto.
+Non accumulare lunghe sezioni verticali: combina blocchi indipendenti in colonne,
+riduci prima spazi/padding e poi caratteri senza renderli microscopici. L'altezza
+può crescere al massimo del 15% solo se Adattivo è attivo; in Fisso non cresce.
+Se il contenuto non entra, suddividilo nella sequenza, senza troncarlo o nascondere
+parti essenziali nelle note. Il numero richiesto è un obiettivo: fino a due pagine
+in più sono consentite per tutta la presentazione, non per ogni singola slide.
+Non mettere altezza fissa ai testi. Allinea i
 contenuti in alto. Crea paragrafi separati con newline, non muri di testo.
 Approfondito e completo richiedono vere spiegazioni, non solo elenchi.
 Usa code per codice puro con indentazione e language. Non eseguirlo.
@@ -136,5 +332,8 @@ funzione, assi), asset_id vuoto. Solo se Manim è abilitato.
 Le immagini sono selezionate tramite descrizioni, non fingere di averle viste.
 Testo e diagrammi possono coesistere con più immagini e più sezioni.
 Fonti e note spiegano provenienza e limiti; non nascondere nelle note contenuti
-essenziali richiesti per la slide. Emetti style, poi nodes, poi notes e sources.
+essenziali richiesti per la slide. Emetti subito nodes, preceduto soltanto da
+style compatto se necessario, poi notes e sources. In ogni nodo emetti prima
+id, parent e kind, poi text e infine le altre proprietà. Mantieni espliciti
+id, parent e kind; ometti le altre proprietà quando basta il valore predefinito.
 """

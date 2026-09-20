@@ -18,7 +18,9 @@ from .citations import SourceCitationError, resolve_web_source
 
 AGENT = "H3-Slides/0.2 (https://github.com/emanuelealbertosi/H3-Slides)"
 CACHE_SECONDS = 3600
-CACHE_VERSION = "web-v3"
+CACHE_VERSION = "web-v4"
+PROVIDER_NAMES = {"wikipedia": "Wikipedia diretta", "searxng": "SearXNG locale",
+                  "duckduckgo": "DuckDuckGo gratuito"}
 SEARCH_URL = "https://html.duckduckgo.com/html/"
 MAX_PAGE_BYTES = 2_000_000
 MAX_SOURCE_CHARS = 240_000
@@ -97,6 +99,10 @@ def focused_wikipedia_results(results, query):
                   (subject_words <= set(_search_words(candidate.get("title", ""))) and
                    focus_words & set(_search_words(candidate.get("title", ""))))]
     return ranked
+
+
+class SearchUnavailable(ValueError):
+    """Transient transport/service failure; not a denial, CAPTCHA or invalid setting."""
 
 
 class NoSearchResults(ValueError):
@@ -322,6 +328,12 @@ class WebResearch:
                             "categories":"general", "language":"it", "safesearch":1}, allow_redirects=False) as response:
                         if response.status == 403:
                             raise ValueError("SearXNG richiede il formato JSON: abilita search.formats [html, json] nella sua configurazione")
+                        if 500 <= response.status < 600:
+                            error_body = (await response.content.read(16384)).decode("utf-8", errors="replace").casefold()
+                            if any(marker in error_body for marker in
+                                   ("captcha", "access denied", "too many requests", "rate limit")):
+                                raise ValueError("SearXNG segnala un blocco o un limite del servizio: riprova più tardi")
+                            raise SearchUnavailable(f"SearXNG HTTP {response.status}: servizio temporaneamente non disponibile")
                         if response.status != 200:
                             raise ValueError(f"SearXNG HTTP {response.status}: verifica il servizio locale")
                         raw = bytearray()
@@ -331,12 +343,17 @@ class WebResearch:
                                 raise ValueError("Risposta SearXNG troppo grande")
                         data = json.loads(raw)
                 except (aiohttp.ClientError, TimeoutError, OSError) as exc:
-                    raise ValueError("SearXNG non raggiungibile: avvialo o imposta il suo indirizzo in Ricerca web. "
-                                     "In alternativa scegli esplicitamente DuckDuckGo.") from exc
+                    raise SearchUnavailable("SearXNG non raggiungibile: controlla il servizio e il suo indirizzo in Ricerca web.") from exc
                 except (json.JSONDecodeError, UnicodeError) as exc:
                     raise ValueError("Il servizio non ha restituito JSON SearXNG valido") from exc
             if not isinstance(data, dict) or not isinstance(data.get("results"), list):
                 raise ValueError("Risposta non compatibile con SearXNG")
+            if not data["results"] and data.get("unresponsive_engines"):
+                # Empty results with upstream errors are not an ordinary zero-match
+                # query. They can include CAPTCHA, denials or rate limits, including
+                # localized messages: do not guess that these permit a retry.
+                raise ValueError("SearXNG non ha fornito risultati e segnala errori nei motori interni. "
+                                 "Controlla il servizio; nessun blocco o limite verrà aggirato.")
             results, seen = [], set()
             for item in data["results"][:40]:
                 try:
@@ -352,7 +369,9 @@ class WebResearch:
         try:
             status, _, raw, _ = await bounded_get(session, SEARCH_URL+"?"+urlencode({"q":query}), limit=600000)
         except (aiohttp.ClientError, TimeoutError, OSError) as exc:
-            raise ValueError("Ricerca gratuita non raggiungibile: controlla Internet o riprova più tardi") from exc
+            raise SearchUnavailable("Ricerca gratuita non raggiungibile: controlla Internet o riprova più tardi") from exc
+        if 500 <= status < 600 and "anomaly.js" not in raw and "anomaly-modal" not in raw:
+            raise SearchUnavailable(f"DuckDuckGo HTTP {status}: servizio temporaneamente non disponibile")
         if status != 200 or "anomaly.js" in raw or "anomaly-modal" in raw:
             raise ValueError("DuckDuckGo ha limitato la ricerca o richiede un CAPTCHA. "
                              "Riprova più tardi o cambia motore; nessun servizio a pagamento verrà usato.")
@@ -361,6 +380,70 @@ class WebResearch:
         return parser.results
 
     async def collect(self, pid, query, limit, refresh, event, checkpoint, provider="wikipedia",
+                      endpoint="http://127.0.0.1:8080", fallback=True):
+        """Use the consented free chain only on unavailability or empty search results.
+
+        The route cache records the actual provider and is separate from opt-out
+        requests. Provider-specific caches cannot contain another provider's data.
+        Denials, malformed responses and unreadable sources never advance the chain.
+        """
+        query = query.strip()
+        if not query or len(query) > 200 or not 3 <= limit <= 5:
+            raise ValueError("Inserisci una query di massimo 200 caratteri e scegli 3–5 fonti")
+        if provider not in PROVIDER_NAMES:
+            raise ValueError("Motore di ricerca non supportato")
+        if provider == "searxng":
+            from .search_settings import SearchSettings
+            endpoint = SearchSettings(searxng_url=endpoint).searxng_url
+        use_fallback = provider == "searxng" and bool(fallback)
+        route = ["searxng", "wikipedia", "duckduckgo"] if use_fallback else [provider]
+        await checkpoint()
+        key = hashlib.sha256(json.dumps([CACHE_VERSION, "route", provider,
+            endpoint if provider == "searxng" else "", query, limit, use_fallback]).encode()).hexdigest()
+        cache = self.store.asset_path(pid, "web-" + key + ".json")
+        if cache.exists() and not refresh:
+            try:
+                data = json.loads(cache.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                data = {}
+            if isinstance(data, dict) and data.get("sources") and \
+                    0 <= time.time() - data.get("created_at", 0) < CACHE_SECONDS:
+                event("Web: riuso delle fonti in cache · " + data["provider"] +
+                      (" (ripiego gratuito)" if data.get("fallback_used") else "") + " · massimo un'ora")
+                return {**data, "cache_used": True}
+        attempts, notices = [], []
+        for index, selected in enumerate(route):
+            await checkpoint()
+            try:
+                data = await self._collect_single(pid, query, limit, refresh, event, checkpoint,
+                                                  provider=selected, endpoint=endpoint)
+            except ValueError as exc:
+                status = ("unavailable" if isinstance(exc, SearchUnavailable) else
+                          "no_results" if isinstance(exc, NoSearchResults) else "failed")
+                attempts.append({"provider": selected, "status": status, "message": str(exc)[:350]})
+                exc.fallback_attempts = list(attempts)
+                if status in ("unavailable", "no_results") and index + 1 < len(route):
+                    notice = ("Web: " + PROVIDER_NAMES[selected] + " · " + str(exc)[:350] +
+                              " Ripiego gratuito: " + PROVIDER_NAMES[route[index + 1]] + ".")
+                    notices.append(notice)
+                    event(notice)
+                    continue
+                if isinstance(exc, NoSearchResults) and any(a["status"] == "unavailable" for a in attempts):
+                    failure = SearchUnavailable("Nessun motore gratuito ha fornito risultati: " +
+                                                "; ".join(a["message"] for a in attempts))
+                    failure.fallback_attempts = list(attempts)
+                    raise failure from exc
+                raise
+            await checkpoint()
+            attempts.append({"provider": selected, "status": "completed"})
+            result = {**data, "provider": PROVIDER_NAMES[selected], "provider_id": selected,
+                      "requested_provider": provider, "fallback_used": index > 0,
+                      "fallback_attempts": attempts, "warnings": notices + data.get("warnings", [])}
+            # Keep the original timestamp if the single-provider cache was reused.
+            cache.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
+            return result
+
+    async def _collect_single(self, pid, query, limit, refresh, event, checkpoint, provider="wikipedia",
                       endpoint="http://127.0.0.1:8080"):
         query = query.strip()
         if not query or len(query) > 200 or not 3 <= limit <= 5:
@@ -374,8 +457,7 @@ class WebResearch:
                 event("Web: riuso delle fonti in cache (massimo un'ora)")
                 return {**data, "cache_used": True}
         await checkpoint()
-        name = {"wikipedia": "Wikipedia diretta", "searxng": "SearXNG locale",
-                "duckduckgo": "DuckDuckGo gratuito"}.get(provider, provider)
+        name = PROVIDER_NAMES[provider]
         event("Ricerca " + name + ": " + query)
         connector = aiohttp.TCPConnector(resolver=PublicResolver(), use_dns_cache=False)
         async with aiohttp.ClientSession(connector=connector, trust_env=False,
@@ -431,14 +513,21 @@ async def wikipedia_api(session, language, **params):
         {"action": "query", "format": "json", **params})
     try:
         status, _, raw, _ = await bounded_get(session, url, before_request=wikipedia_only)
+        if 500 <= status < 600:
+            if any(marker in raw.casefold() for marker in
+                   ("captcha", "access denied", "too many requests", "rate limit")):
+                raise ValueError("Wikipedia segnala un blocco o un limite del servizio: riprova più tardi")
+            raise SearchUnavailable(f"Wikipedia HTTP {status}: servizio temporaneamente non disponibile")
         if status != 200:
             raise ValueError(f"Wikipedia HTTP {status}: riprova più tardi o cambia motore")
         data = json.loads(raw)
         if not isinstance(data, dict) or "error" in data:
             raise ValueError("Wikipedia non ha completato la ricerca")
         return data
-    except (aiohttp.ClientError, OSError, TimeoutError, json.JSONDecodeError) as exc:
-        raise ValueError("Wikipedia non raggiungibile o risposta non valida: controlla Internet o riprova") from exc
+    except (aiohttp.ClientError, OSError, TimeoutError) as exc:
+        raise SearchUnavailable("Wikipedia non raggiungibile: controlla Internet o riprova") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError("Wikipedia ha restituito una risposta non valida") from exc
 
 
 async def read_wikipedia(session, candidate):

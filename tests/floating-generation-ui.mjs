@@ -102,7 +102,7 @@ async function testViewport(viewport){
       }
     });
     await page.addInitScript(()=>localStorage.setItem('h3slides-project','floating-ui'));
-    await page.goto(origin+'/');
+    await page.goto(origin+'/create?project=floating-ui');
     await page.waitForFunction(()=>document.querySelector('#sources').textContent.includes('Testo mock.md')&&
       document.querySelector('#connection').textContent.includes('Locale'));
     await waitFloating(false);

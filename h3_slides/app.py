@@ -14,6 +14,7 @@ import zipfile
 from aiohttp import web
 from pydantic import ValidationError
 from .ingest import ingest, MAX_BYTES
+from .url_import import UrlSourceRequest, import_url
 from .llm import ChildGuard, LlamaManager
 from .models import Generation, LibraryInput, ProjectInput, ReuseSource, SlideContent, SlideEdit
 from .storage import Store, uid
@@ -99,6 +100,7 @@ def create_app(root=None, data_root=None):
     app["document_image_search"] = document_image_search = DocumentImageSearch()
     app["stop_event"] = asyncio.Event()
     picker_lock = asyncio.Lock()
+    app["theme_design_lock"] = theme_design_lock = asyncio.Lock()
     slidev_state = {"process": None, "project_id": None, "log": None}
 
     def sync_slidev(p):
@@ -157,6 +159,8 @@ def create_app(root=None, data_root=None):
                                   "gpu_layers": config["gpu_layers"], "context_size": config["context_size"]})
 
     async def local_model(request):
+        if theme_design_lock.locked():
+            raise ValueError("Attendi la fine della progettazione del tema AI")
         if worker.active() or manager.lock.locked():
             raise ValueError("Attendi o annulla la generazione prima di cambiare la configurazione dei modelli")
         if picker_lock.locked():
@@ -171,7 +175,7 @@ def create_app(root=None, data_root=None):
                 path = body.get("path") if isinstance(body, dict) else None
             else:
                 raise ValueError("Azione non valida")
-            if worker.active():
+            if worker.active() or theme_design_lock.locked():
                 raise ValueError("Generazione avviata durante la scelta: riprova quando termina")
             model_id = manager.local_files.register(path)
             return web.json_response({"model": model_id, "cancelled": False})
@@ -186,22 +190,30 @@ def create_app(root=None, data_root=None):
         if worker.active():
             raise ValueError("Attendi o annulla il job attivo prima di cambiare il runtime LLM")
         body = await request.json()
-        if request.match_info["action"] == "stop":
-            await manager.stop()
-        elif request.match_info["action"] == "start":
-            await manager.start(body.get("model", ""))
-        else:
-            raise ValueError("Azione non valida")
+        if theme_design_lock.locked():
+            raise ValueError("Attendi la fine della progettazione del tema AI")
+        if worker.active():
+            raise ValueError("Attendi o annulla il job attivo prima di cambiare il runtime LLM")
+        async with theme_design_lock:
+            if request.match_info["action"] == "stop":
+                await manager.stop()
+            elif request.match_info["action"] == "start":
+                await manager.start(body.get("model", ""))
+            else:
+                raise ValueError("Azione non valida")
         return web.json_response(manager.status())
 
     async def admin_llm(request):
         from .runtime_settings import LoadingSettings, InferenceSettings
         if request.method == "POST":
+            body = await request.json()
+            if theme_design_lock.locked():
+                raise ValueError("Attendi la fine della progettazione del tema AI")
             if manager.lock.locked():
                 raise ValueError("Attendi il completamento del caricamento prima di salvare un profilo")
             if worker.active():
                 raise ValueError("Attendi o annulla la generazione prima di modificare i profili LLM")
-            return web.json_response(manager.save_profile(await request.json()))
+            return web.json_response(manager.save_profile(body))
         catalog = manager.catalog()
         return web.json_response({"models": catalog, "profiles": {m["id"]: manager.profile(m["id"]) for m in catalog},
                                   "status": manager.status(),
@@ -224,6 +236,18 @@ def create_app(root=None, data_root=None):
         if request.method == "POST":
             return web.json_response(library.save(await request.json()))
         return web.json_response(library.list())
+
+    async def theme_design(request):
+        from .theme_designer import ThemeDesignRequest, design_theme
+        choice = ThemeDesignRequest.model_validate(await request.json())
+        if choice.provider.mode == "remote" and not choice.provider.remote_consent:
+            raise ValueError("Conferma l'invio della descrizione del tema al provider remoto")
+        if worker.active() or manager.lock.locked() or picker_lock.locked() or theme_design_lock.locked():
+            raise web.HTTPConflict(text="Il modello è occupato: attendi la fine della generazione prima di creare un tema AI. Puoi scegliere un tema predefinito nel frattempo.")
+        async with theme_design_lock:
+            result = await design_theme(worker.clients(choice.provider, manager), choice)
+        # Preview only. Applying or saving remains an explicit separate action.
+        return web.json_response(result)
 
     async def projects(request):
         if request.method == "POST":
@@ -293,6 +317,7 @@ def create_app(root=None, data_root=None):
                     "project_title": source.get("library_origin_title") or p["title"],
                     "name": source["name"],
                     "kind": source["kind"],
+                    "source_url": source.get("source_url", ""),
                     "page_count": source.get("page_count", 0),
                     "image_count": len(source.get("images", [])),
                     "viewable": bool(source.get("pdf_file") or source.get("images") or source.get("text")),
@@ -355,6 +380,34 @@ def create_app(root=None, data_root=None):
         if source is None:
             raise ValueError("Nessun file allegato")
         return web.json_response(public_project(store.project(pid)))
+
+    async def upload_url(request):
+        pid = request.match_info["pid"]
+        store.project(pid)
+        if worker.active():
+            raise ValueError("Aggiungi nuove fonti prima della generazione o dopo averla annullata")
+        choice = UrlSourceRequest.model_validate(await request.json())
+
+        def already_imported(project, urls):
+            return any(urls & {item.get("source_url"), item.get("requested_url")}
+                       for item in project["sources"])
+
+        if already_imported(store.project(pid), {choice.url}):
+            raise ValueError("Questa pagina è già presente nel progetto")
+        source = await import_url(choice.url)
+        # A fetch yields to other requests: do not overwrite their project edits
+        # or attach a new source to an in-flight generation.
+        if worker.active():
+            raise ValueError("Generazione avviata durante l'importazione. Attendi e riprova ad aggiungere la fonte.")
+        p = store.project(pid)
+        if already_imported(p, {source["source_url"], choice.url}):
+            raise ValueError("Questa pagina è già presente nel progetto")
+        source["library_id"] = source["id"]
+        source["library_origin_title"] = p["title"]
+        p["sources"].append(source)
+        p["revision"] += 1
+        store.save_project(p)
+        return web.json_response(public_project(p))
 
     async def reuse_source(request):
         pid = request.match_info["pid"]
@@ -672,6 +725,8 @@ def create_app(root=None, data_root=None):
 
     async def generate(request):
         payload = await request.json()
+        if theme_design_lock.locked():
+            raise web.HTTPConflict(text="Attendi la fine della progettazione del tema AI prima di generare la presentazione")
         if not isinstance(payload, dict):
             raise ValueError("Richiesta di generazione non valida")
         new_version = payload.pop("new_version", False)
@@ -809,8 +864,9 @@ def create_app(root=None, data_root=None):
         import time
         while True:
             await asyncio.sleep(15)
-            if not worker.active() and manager.status()["running"] and time.time()-manager.last_used > config["idle_unload_seconds"]:
-                await manager.stop()
+            if not worker.active() and not theme_design_lock.locked() and manager.status()["running"] and time.time()-manager.last_used > config["idle_unload_seconds"]:
+                async with theme_design_lock:
+                    await manager.stop()
 
     async def startup(app):
         app["idle_task"] = asyncio.create_task(idle())
@@ -828,6 +884,9 @@ def create_app(root=None, data_root=None):
 
     app.router.add_get("/", index)
     app.router.add_get("/create", index)
+    app.router.add_get("/new", index)
+    app.router.add_get("/import", index)
+    app.router.add_get("/brief", index)
     app.router.add_get("/editor", index)
     app.router.add_get("/library", index)
     app.router.add_get("/library/", index)
@@ -844,6 +903,7 @@ def create_app(root=None, data_root=None):
     app.router.add_post("/api/admin/search", search_settings)
     app.router.add_get("/api/themes", themes)
     app.router.add_post("/api/themes", themes)
+    app.router.add_post("/api/themes/design", theme_design)
     app.router.add_post("/api/llm/{action}", llm_control)
     app.router.add_get("/api/projects", projects)
     app.router.add_post("/api/projects", projects)
@@ -855,6 +915,7 @@ def create_app(root=None, data_root=None):
     app.router.add_patch("/api/projects/{pid}", project)
     app.router.add_delete("/api/projects/{pid}", delete_project)
     app.router.add_post("/api/projects/{pid}/sources", upload)
+    app.router.add_post("/api/projects/{pid}/sources/url", upload_url)
     app.router.add_post("/api/projects/{pid}/sources/reuse", reuse_source)
     app.router.add_delete("/api/projects/{pid}/sources/{source_id}", remove_source)
     app.router.add_patch("/api/projects/{pid}/slides/{sid}", slide)

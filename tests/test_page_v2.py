@@ -47,14 +47,16 @@ def test_invalid_tree_or_active_content_rejected(change):
         PageSpec.model_validate(data)
 
 
-def test_incremental_parser_never_exposes_half_a_node():
+def test_incremental_parser_exposes_valid_nodes_and_growing_text():
     text = json.dumps(page_data())
     parser = PageStream(); counts = []
     for char in text:
         draft = parser.feed(char)
         if draft:
+            PageSpec.model_validate(draft)
             counts.append(len(draft["nodes"]))
-    assert counts == list(range(1, 10))
+    assert counts == sorted(counts) and set(counts) == set(range(1, 10))
+    assert len(counts) > 9
     assert parser.nodes == PageSpec.model_validate(page_data()).nodes
 
 
@@ -126,6 +128,7 @@ async def test_worker_drafts_commit_recovery_and_revision(tmp_path, failure):
         assert result["content"].get("page") is None
     else:
         assert result["status"] == "ready" and len(result["content"]["page"]["nodes"]) == 9
+        assert "page_stream" not in result
         assert "page_draft" not in result and store.job("job")["status"] == "completed"
 
 

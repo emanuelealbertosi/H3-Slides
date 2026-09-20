@@ -155,6 +155,9 @@ class Worker:
         self.search_config = SearchConfig(store.root)
         self.renderer = ManimRenderer(store, getattr(manager, "guard", None))
         self.web_images = WebImages()
+        # Unit-test managers without a runtime root can inject a layout probe.
+        from .page_layout import PageMeasurer
+        self.page_measurer = PageMeasurer(manager.root, store) if getattr(manager, "root", None) else None
 
     def active(self):
         return any(not task.done() for task in self.tasks.values())
@@ -188,6 +191,8 @@ class Worker:
         if self.active():
             raise ValueError("Una generazione è già attiva. Puoi modificarne le slide, metterla in pausa o annullarla.")
         project = self.store.project(pid)
+        if project.get("engine") != "v2" and project.get("slide_format", "16:9") != "16:9":
+            raise ValueError("I formati diversi da 16:9 richiedono il motore V2. Scegli V2 oppure il formato 16:9 nel brief.")
         if request.slide_id and not any(s["id"] == request.slide_id for s in project["slides"]):
             raise ValueError("Slide non trovata")
         if request.diagram_only and not project.get("use_manim_diagrams"):
@@ -200,6 +205,7 @@ class Worker:
                 raise ValueError("Conferma l'invio della query al motore di ricerca e la lettura delle pagine web")
             query = project.get("web_query", "").strip()
             search_options = {"query": query, "provider": project.get("web_provider", "wikipedia"),
+                              "fallback": project.get("web_fallback", True) and request.web_fallback_consent,
                               "source_priority": project.get("source_priority", "documents"),
                               "always_search": project.get("web_always_search", False),
                               "limit": project.get("web_max_sources", 3),
@@ -358,7 +364,7 @@ class Worker:
         return metadata
 
     async def collect_research(self, jid, pid, request, search_options, client=None):
-        """One faithful query simplification; unavailable web can only fall back to attachments."""
+        """Search the consented route; if it fails, use attachments, never fabricated web sources."""
         research, failure = None, None
         attempted, warnings = [], []
         options = dict(search_options)
@@ -402,7 +408,7 @@ class Worker:
                 # Do not reformulate queries after CAPTCHA, HTTP denial or network errors.
                 if not isinstance(exc, NoSearchResults) or attempt:
                     break
-                self.store.event(jid, "Nessun risultato: provo una query più semplice sullo stesso motore")
+                self.store.event(jid, "Nessun risultato: provo una query più semplice con i motori autorizzati")
                 await checkpoint()
                 if client is None:
                     self.store.event(jid, "Preparazione LLM " + request.provider.mode + " · semplificazione query")
@@ -445,6 +451,14 @@ class Worker:
                 "attempted_queries": attempted, "created_at": now(), "sources": [],
                 "warnings": warnings + [notice, reason], "cache_used": False,
             }
+            provider_attempts = getattr(failure, "fallback_attempts", [])
+            metadata.update(requested_provider=options["provider"], fallback_attempts=provider_attempts,
+                            fallback_used=len(provider_attempts) > 1)
+            if provider_attempts:
+                actual_provider = provider_attempts[-1]["provider"]
+                metadata.update(provider_id=actual_provider,
+                    provider={"wikipedia": "Wikipedia diretta", "searxng": "SearXNG locale",
+                              "duckduckgo": "DuckDuckGo gratuito"}[actual_provider])
             self.store.event(jid, "Avviso · " + notice + " Motivo: " + reason)
             if coverage:
                 metadata["coverage"] = coverage
@@ -536,6 +550,14 @@ class Worker:
                     content = SlideContent.model_validate(slide["content"])
                     brief = (request.prompt if request.slide_id else
                              content.diagram.brief or slide.get("purpose", "") or content.title)
+                    checkpoint_failed = False
+                    async def diagram_checkpoint():
+                        nonlocal checkpoint_failed
+                        try:
+                            await self.checkpoint(jid)
+                        except BaseException:
+                            checkpoint_failed = True
+                            raise
                     try:
                         if content.diagram.kind == "manim" and content.diagram.scene and not request.replace_diagrams:
                             diagram = content.diagram.model_dump()
@@ -545,8 +567,11 @@ class Worker:
                             instructions = brief + "\nRichiesta generale del progetto: " + request.prompt[:2000]
                             diagram, rendered = await design_diagram(
                                 client, self.renderer, pid, project, content, context, instructions,
-                                lambda message: self.store.event(jid, message), lambda: self.checkpoint(jid))
-                    except ValueError as exc:
+                                lambda message: self.store.event(jid, message), diagram_checkpoint)
+                    except (ValueError, RuntimeError, OSError, TimeoutError) as exc:
+                        if checkpoint_failed:
+                            raise
+                        await self.checkpoint(jid)
                         # Do not count an unchanged cached scene as a successful
                         # redesign. No write occurred: the user's slide is intact.
                         message = "Riprogettazione non completata; versione precedente conservata · " + str(exc)[:300]
@@ -555,6 +580,7 @@ class Worker:
                         self.store.event(jid, f"Diagramma {index + 1}/{len(targets)} · " + message,
                                          progress=(index + 1) / len(targets))
                         continue
+                    await self.checkpoint(jid)
                     project = self.store.project(pid)
                     current = next((s for s in project["slides"] if s["id"] == sid), None)
                     if not current or current["revision"] != expected_revision:
@@ -875,13 +901,24 @@ class Worker:
                 rendered, diagram_error = None, ""
                 if content.diagram.kind == "manim":
                     content.diagram.scene = None
+                    checkpoint_failed = False
+                    async def diagram_checkpoint():
+                        nonlocal checkpoint_failed
+                        try:
+                            await self.checkpoint(jid)
+                        except BaseException:
+                            checkpoint_failed = True
+                            raise
                     try:
                         diagram, rendered = await design_diagram(
                             client, self.renderer, pid, project, content, context,
                             content.diagram.brief or slide.get("purpose", ""),
-                            lambda message: self.store.event(jid, message), lambda: self.checkpoint(jid))
+                            lambda message: self.store.event(jid, message), diagram_checkpoint)
                         content.diagram = type(content.diagram).model_validate(diagram)
-                    except ValueError as exc:
+                    except (ValueError, RuntimeError, OSError, TimeoutError) as exc:
+                        if checkpoint_failed:
+                            raise
+                        await self.checkpoint(jid)
                         self.store.event(jid, "Progetto Manim non valido; verifico se esiste una scena recuperabile · " +
                                          str(exc)[:220])
                         try:
@@ -891,11 +928,13 @@ class Worker:
                             rendered = await self.renderer.render(pid, diagram, project)
                             content.diagram = type(content.diagram).model_validate(diagram)
                             self.store.event(jid, "Scena precedente valida recuperata; nessun riepilogo sostitutivo")
-                        except ValueError as fallback_exc:
+                        except (ValueError, RuntimeError, OSError, TimeoutError) as fallback_exc:
+                            rendered = None
                             self.store.event(jid, "Diagramma Manim non completato; testi e richiesta conservati per riprovare · " +
                                              str(fallback_exc)[:220])
                             content.diagram.scene = None
                             diagram_error = "Diagramma non completato: nessun riepilogo sostitutivo. Usa Progetta Manim per riprovare."
+                        await self.checkpoint(jid)
                 if content.image_id and content.image_id not in valid_images:
                     raise ValueError("Il modello ha indicato un'immagine inesistente")
                 acquired = None

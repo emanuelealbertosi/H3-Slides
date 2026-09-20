@@ -53,7 +53,7 @@ try{
   await page.addInitScript(()=>{
     localStorage.setItem('h3slides-project','consent-ui');
     if(!localStorage.getItem('h3slides-settings'))localStorage.setItem('h3slides-settings',
-      JSON.stringify({remote_consents:{'https://remote.example/v1':true}}));
+      JSON.stringify({remote_consents:{'https://remote.example/v1':true},web_consents:{'searxng|http://127.0.0.1:8080':true}}));
   });
   const ready=()=>page.waitForFunction(()=>document.querySelector('#sources').textContent.includes('Manuale.md'));
   const save=async()=>{
@@ -62,8 +62,18 @@ try{
   };
   const consent=page.locator('#web-consent'),engine=page.locator('#web-provider');
   const reload=async()=>{await page.reload();await ready()};
+  const submitFromBrief=async()=>{
+    const response=page.waitForResponse(value=>value.url().endsWith('/generate'));
+    await page.locator('#generate-top').click();await response;
+    await page.waitForFunction(()=>!document.querySelector('#generate-top').disabled);
+    const sent=generated.at(-1);
+    await page.goto('http://127.0.0.1:9876/create?project=consent-ui');await ready();
+    return sent;
+  };
   await page.goto('http://127.0.0.1:9876/create');await ready();
   assert.equal(await consent.isChecked(),false,'First use needs explicit consent');
+  assert.equal(await page.locator('#web-fallback').isChecked(),true,'Legacy project default enables the optional fallback');
+  assert.equal(await page.locator('#web-fallback-option').isVisible(),false,'Wikipedia direct does not show SearXNG fallback');
   assert.equal(await page.locator('#web-always-search').isChecked(),false,'Legacy projects do not force web search');
   await consent.check();
   await page.locator('#web-always-search').check();
@@ -87,8 +97,10 @@ try{
   await page.locator('#generate-top').click();await submission;
   await page.waitForFunction(()=>!document.querySelector('#generate-top').disabled);
   assert.equal(generated.length,1);assert.equal(generated[0].web_consent,true);
+  assert.equal(generated[0].web_fallback_consent,false,'Direct Wikipedia consent does not authorize SearXNG fallback');
   assert.equal(await consent.isChecked(),true,'Successful generation does not reset consent');
   await page.locator('#open-create').click();
+  await page.locator('[data-start-method="prompt"]').click();
   assert.equal(await page.locator('#web-enabled').isChecked(),false,'Consent never enables web for a new project');
   assert.equal(await page.locator('#web-always-search').isChecked(),true,'New projects remember the option without enabling web');
   assert.equal(await consent.isChecked(),true);
@@ -96,8 +108,27 @@ try{
   assert.equal(await consent.isChecked(),true,'Opening a project restores engine-specific consent');
   await engine.selectOption('searxng');
   await page.waitForFunction(()=>!document.querySelector('#web-consent').disabled);
-  assert.equal(await consent.isChecked(),false,'SearXNG needs its own consent');
+  const fallback=page.locator('#web-fallback');
+  assert.equal(await page.locator('#web-fallback-option').isVisible(),true);
+  assert.equal(await consent.isChecked(),false,'Old SearXNG-only consent must not authorize new fallback providers');
+  await fallback.uncheck();
+  assert.equal(await consent.isChecked(),true,'Old consent still applies to SearXNG-only searches');
+  await fallback.check();
+  assert.equal(await consent.isChecked(),false,'Enabling fallback requires explicit extended consent');
+  assert.match(await page.locator('#web-consent-hint').textContent(),/Wikipedia diretta e DuckDuckGo/);
   await consent.check();
+  await fallback.uncheck();await save();await reload();
+  assert.equal(await fallback.isChecked(),false,'Fallback opt-out survives project save and reload');
+  assert.equal(project.web_fallback,false);
+  const onlySearxng=await submitFromBrief();
+  assert.equal(onlySearxng.web_consent,true);
+  assert.equal(onlySearxng.web_fallback_consent,false,'Old SearXNG-only scope sends no extended consent to the server');
+  await fallback.check();
+  assert.equal(await consent.isChecked(),true,'Returning to an approved fallback scope restores its consent');
+  assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('h3slides-settings'))['web-fallback']),true);
+  const withFallback=await submitFromBrief();
+  assert.equal(withFallback.web_consent,true);
+  assert.equal(withFallback.web_fallback_consent,true,'Explicitly approved fallback scope is included in generation request');
   await page.getByText('Configura SearXNG su questo computer',{exact:true}).click();
   await page.locator('#searxng-url').fill('HTTP://127.0.0.1:8080///');
   assert.equal(await consent.isChecked(),true,'Equivalent normalized endpoint retains consent');
@@ -108,6 +139,7 @@ try{
   await page.waitForFunction(()=>!document.querySelector('#web-consent').disabled);
   assert.equal(await consent.isChecked(),false);
   await consent.check();await save();
+  assert.equal(project.web_fallback,true);
   holdSettings=true;
   await reload();
   assert.equal(await consent.isChecked(),false,'Wait for actual endpoint settings before restore');
@@ -123,18 +155,21 @@ try{
   const preferences=await page.evaluate(()=>JSON.parse(localStorage.getItem('h3slides-settings')));
   assert.deepEqual(preferences.remote_consents,{'https://remote.example/v1':true});
   assert.deepEqual(preferences.web_consents,{wikipedia:true,'searxng|http://127.0.0.1:8080':true,
-    'searxng|http://127.0.0.1:9090':true});
+    'searxng-fallback|http://127.0.0.1:8080':true,'searxng-fallback|http://127.0.0.1:9090':true});
   assert.equal(Object.hasOwn(preferences,'api-key'),false);
   await page.locator('#web-always-search').uncheck();
   await save();await reload();
   assert.equal(await page.locator('#web-always-search').isChecked(),false,'Forced search can be revoked persistently');
   delete project.web_always_search;
+  delete project.web_fallback;
   await page.evaluate(()=>{
     const value=JSON.parse(localStorage.getItem('h3slides-settings'));
     value['web-always-search']=true;localStorage.setItem('h3slides-settings',JSON.stringify(value));
+    value['web-fallback']=false;localStorage.setItem('h3slides-settings',JSON.stringify(value));
   });
   await reload();
   assert.equal(await page.locator('#web-always-search').isChecked(),false,'Legacy project default wins over browser forced-search preference');
+  assert.equal(await fallback.isChecked(),true,'Legacy project fallback default wins over browser preference');
   assert.deepEqual(errors,[]);
-  console.log('Web consent UI: persistence, revocation, generation, engine/endpoint isolation, async restore and no automatic web activation passed.');
+  console.log('Web consent UI: persistence, revocation, generation, engine/endpoint isolation, fallback scope migration, async restore and no automatic web activation passed.');
 }finally{await page.unrouteAll({behavior:'wait'});await browser.close()}

@@ -128,6 +128,7 @@ class Generation(BaseModel):
     regenerate_all: bool = False
     rebuild_outline: bool = False
     web_consent: bool = False
+    web_fallback_consent: bool = False
     web_refresh: bool = False
 
     @model_validator(mode="after")
@@ -167,6 +168,7 @@ class ProjectInput(BaseModel):
     web_enabled: bool = False
     web_always_search: bool = False
     web_provider: Literal["wikipedia", "searxng", "duckduckgo"] = "wikipedia"
+    web_fallback: bool = True
     web_query: str = Field(default="", max_length=200)
     web_max_sources: int = Field(default=3, ge=3, le=5)
     template: Literal["auto", "editorial", "cards", "steps", "split", "minimal"] = "auto"
@@ -176,6 +178,7 @@ class ProjectInput(BaseModel):
     accent_color: str = Field(default="", pattern=r"^(#[0-9a-fA-F]{6})?$")
     theme_design: ThemeDesign = Field(default_factory=ThemeDesign)
     canvas_mode: Literal["fixed", "adaptive"] = "fixed"
+    slide_format: Literal["16:9", "4:3", "16:10", "1:1"] = "16:9"
     graphic_style: Literal["classic", "studio", "editorial", "vivid"] = "classic"
     theme_preset: str = Field(default="", max_length=60)
 

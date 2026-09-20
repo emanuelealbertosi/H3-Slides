@@ -4,10 +4,14 @@ import {createRemoteModelSelector} from './remote-models.mjs';
 import {createApiSettings} from './api-settings.mjs';
 import {createImageSearch} from './image-search.mjs';
 import {installStudioShell} from './studio-shell.mjs';
+import {installCreationFlow} from './creation-flow.mjs';
+import {createLibraryHome} from './library-home.mjs';
 import {fitEditedContent,layoutUpdatesFor} from './layout-editing.mjs';
 import {createMtpSettings} from './mtp-settings.mjs';
 import {createGenerationLog} from './generation-log.mjs';
+import {themeV2PreviewHTML} from './theme-v2.mjs';
 installStudioShell();
+const creationFlow=installCreationFlow();
 const $=id=>document.getElementById(id);
 const generationLog=createGenerationLog($('events'));
 const mtpSettings=createMtpSettings({root:$('admin-loading'),status:$('admin-mtp-status'),model:$('admin-model'),
@@ -16,8 +20,9 @@ const layoutOptions=value=>'<option value="content">Automatico adattivo</option>
 $('edit-layout').innerHTML=layoutOptions('content');
 const style=document.createElement('style');style.textContent=slideCSS;document.head.append(style);
 let current=null,projects=[],documents=[],jobs=[],editing=null,job=null,busy=false,dragged=null;
-let selectedSlideElement=null;
+let selectedSlideElement=null,editorFormatSaving=false;
 let projectSelectionRevision=0;
+let sourceBriefMode=false;
 let libraryJobSignature='',recoverySignature='',activeGenerationSignature='';
 const recoverableStatus=status=>['failed','interrupted','cancelled'].includes(status);
 const latestProjectJob=id=>jobs.find(item=>item.project_id===id)||null;
@@ -76,6 +81,12 @@ let imageUploadTarget=null;
 const projectImages=()=>[...(current?.sources||[]).flatMap(source=>source.images),...(current?.visual_assets||[])];
 const layoutEditors=new Set();
 let libraryState={folders:[],order:[],assignments:{}},libraryDragged=null;
+const libraryHome=createLibraryHome({root:$('library'),sidebar:document.querySelector('.studio-sidebar'),esc,
+  onNew:()=>newProject(),onImport:async()=>{if(await newProject())navigatePage('import')},
+  onMove:async(pid,folderId)=>{if(folderId)libraryState.assignments[pid]=folderId;else delete libraryState.assignments[pid];await saveLibrary()}});
+creationFlow.bind({navigate:navigatePage,toast,files:uploadSources,url:importSourceUrl,loading:()=>updateGenerationButtons(),
+  continue:async()=>{await saveProject();navigatePage('create');window.scrollTo(0,0)},
+  start:method=>{creationFlow.mode(method==='paste'?'paste':'file');navigatePage(['import','paste'].includes(method)?'import':'create');window.scrollTo(0,0);if(method==='theme')document.querySelector('.theme-picker-panel').scrollIntoView({block:'start',behavior:'smooth'});else if(method==='prompt')$('prompt').focus({preventScroll:true})}});
 function setSidebarCollapsed(collapsed){
   document.body.classList.toggle('sidebar-collapsed',collapsed);
   $('toggle-sidebar').textContent=collapsed?'›':'‹';
@@ -87,32 +98,46 @@ function setSidebarCollapsed(collapsed){
 }
 setSidebarCollapsed(localStorage.getItem('h3slides-sidebar-collapsed')==='1');
 $('toggle-sidebar').onclick=()=>setSidebarCollapsed(!document.body.classList.contains('sidebar-collapsed'));
-let polling=false;
+let polling=false,pollTimer=null;
 let modelInfo=null;
 let apiSettings=null,adminData=null,adminDirty=false,adminLoading=null;
 const modelNotices=new Set();
 const themeColors={text_color:'Testo principale',title_color:'Titoli',box_text_color:'Testo nei box',
   explanation_color:'Box spiegazione',example_color:'Box esempio',key_color:'Box da ricordare',
-  quote_color:'Box citazione',border_color:'Bordi dei box'};
+  quote_color:'Box citazione',border_color:'Bordi dei box',secondary_color:'Secondo colore del tema'};
 const themeNumbers={title_size:['Dimensione titolo · 0 automatica',0,76],
   body_size:['Dimensione testo · 0 automatica',0,32],border_width:['Spessore bordo',0,5],box_radius:['Raggio angoli',18,32]};
-let themePresets=[];
+const themeChoices={
+  visual_family:['Identità visiva','classic',{classic:'Classica',editorial:'Editoriale',modern:'Moderna',playful:'Giocosa',technical:'Tecnica',minimal:'Essenziale'}],
+  background_style:['Sfondo pagina','flat',{flat:'Tinta unita',gradient:'Sfumato'}],
+  heading_font:['Font dei titoli','',{'':'Automatico dal tema',Arial:'Arial',Calibri:'Calibri','Segoe UI':'Segoe UI',Georgia:'Georgia',Verdana:'Verdana',Consolas:'Consolas'}],
+  shadow_style:['Ombre','soft',{none:'Nessuna',soft:'Delicate',lifted:'In rilievo'}],
+  decoration:['Accento decorativo','none',{none:'Nessuno',stripe:'Fascia',corner:'Angolo'}],
+};
+let themePresets=[],themeDesignBase={},themePreviewSignature='',themeAiCandidate=null,themeAiBusy=false;
 $('theme-editor').innerHTML=Object.entries(themeColors).map(([key,label])=>
   '<div class="theme-color"><label>'+label+'<input type="color" data-theme-color="'+key+'" value="#ffffff"></label>'+
   '<label class="check"><input type="checkbox" data-theme-auto="'+key+'" checked>Automatico</label></div>').join('')+
   Object.entries(themeNumbers).map(([key,[label,value,max]])=>'<label>'+label+
-  '<input type="number" data-theme-number="'+key+'" min="0" max="'+max+'" value="'+value+'"></label>').join('');
+  '<input type="number" data-theme-number="'+key+'" min="0" max="'+max+'" value="'+value+'"></label>').join('')+
+  Object.entries(themeChoices).map(([key,[label,,options]])=>'<label>'+label+'<select data-theme-choice="'+key+'">'+Object.entries(options).map(([value,name])=>'<option value="'+value+'">'+name+'</option>').join('')+'</select></label>').join('')+
+  '<label class="theme-design-note">Direzione visiva<textarea data-theme-note maxlength="400" rows="3" placeholder="Es. Titoli editoriali, toni caldi, esempi in evidenza"></textarea><small>Una nota di stile, fino a 400 caratteri.</small></label>';
 function readThemeDesign(){
-  const d={};for(const key of Object.keys(themeColors))d[key]=$('theme-editor').querySelector('[data-theme-auto="'+key+'"]').checked?'':$('theme-editor').querySelector('[data-theme-color="'+key+'"]').value;
+  const d={...themeDesignBase};for(const key of Object.keys(themeColors))d[key]=$('theme-editor').querySelector('[data-theme-auto="'+key+'"]').checked?'':$('theme-editor').querySelector('[data-theme-color="'+key+'"]').value;
   for(const input of $('theme-editor').querySelectorAll('[data-theme-number]'))d[input.dataset.themeNumber]=Number(input.value);
+  for(const input of $('theme-editor').querySelectorAll('[data-theme-choice]'))d[input.dataset.themeChoice]=input.value;
+  d.design_note=$('theme-editor').querySelector('[data-theme-note]').value.slice(0,400);
   return d;
 }
 function fillThemeDesign(value={}){
+  value=value||{};themeDesignBase={...value};
   for(const key of Object.keys(themeColors)){
     const input=$('theme-editor').querySelector('[data-theme-color="'+key+'"]'),auto=$('theme-editor').querySelector('[data-theme-auto="'+key+'"]');
     auto.checked=!value[key];input.value=value[key]||'#ffffff';input.disabled=auto.checked;
   }
   for(const [key,[,fallback]]of Object.entries(themeNumbers))$('theme-editor').querySelector('[data-theme-number="'+key+'"]').value=value[key]??fallback;
+  for(const [key,[,fallback]]of Object.entries(themeChoices))$('theme-editor').querySelector('[data-theme-choice="'+key+'"]').value=value[key]??fallback;
+  $('theme-editor').querySelector('[data-theme-note]').value=value.design_note||'';
 }
 fillThemeDesign();
 const exporting=new Set();
@@ -124,11 +149,11 @@ async function finishInlineEdits(){
   await Promise.all([...inlineSaves]);
   if($('slides').querySelector('[contenteditable]'))throw new Error('Salva o annulla il testo ancora in modifica.');
 }
-const designFields={'creation-engine':'engine','template':'template','font':'font','text-density':'text_density','background-color':'background_color','accent-color':'accent_color','source-images':'use_source_images','web-images':'use_web_images','openverse-images':'use_openverse_images','manim-diagrams':'use_manim_diagrams','pdf-scope':'pdf_scope',
-  'web-enabled':'web_enabled','web-provider':'web_provider','web-query':'web_query','web-max-sources':'web_max_sources','source-priority':'source_priority','web-always-search':'web_always_search'};
+const designFields={'creation-engine':'engine','slide-format':'slide_format','template':'template','font':'font','text-density':'text_density','background-color':'background_color','accent-color':'accent_color','source-images':'use_source_images','web-images':'use_web_images','openverse-images':'use_openverse_images','manim-diagrams':'use_manim_diagrams','pdf-scope':'pdf_scope',
+  'web-enabled':'web_enabled','web-provider':'web_provider','web-fallback':'web_fallback','web-query':'web_query','web-max-sources':'web_max_sources','source-priority':'source_priority','web-always-search':'web_always_search'};
 // Source priority belongs to the project: a previous web-first choice must not
 // silently make new projects web-first as well.
-const preferenceIds=['provider','model','api-url','api-model','vision',...Object.keys(designFields).filter(id=>!['web-query','web-enabled','source-priority'].includes(id))];
+const preferenceIds=['provider','model','api-url','api-model','vision','canvas-mode',...Object.keys(designFields).filter(id=>!['web-query','web-enabled','source-priority'].includes(id))];
 const pref=JSON.parse(localStorage.getItem('h3slides-settings')||'{}');
 const remoteConsents={...(pref.remote_consents||{})};
 const webConsents={...(pref.web_consents||{})};
@@ -144,14 +169,15 @@ function webConsentKey(){
   const engine=$('web-provider').value;
   if(['wikipedia','duckduckgo'].includes(engine))return engine;
   const saved=normalizedSearchEndpoint(searchSettingsEndpoint);
-  return engine==='searxng'&&saved&&saved===normalizedSearchEndpoint($('searxng-url').value)?'searxng|'+saved:'';
+  return engine==='searxng'&&saved&&saved===normalizedSearchEndpoint($('searxng-url').value)?($('web-fallback').checked?'searxng-fallback|':'searxng|')+saved:'';
 }
 function restoreWebConsent(){
   const key=webConsentKey();
   $('web-consent').checked=Boolean(key&&webConsents[key]===true);
   $('web-consent').disabled=!key;
   $('web-consent-hint').textContent=key?
-    'Scelta ricordata in questo browser per questo motore e, con SearXNG, per questo indirizzo. Deseleziona per revocarla. Non attiva la ricerca nei nuovi progetti.':
+    (key.startsWith('searxng-fallback|')?'Autorizzi SearXNG a questo indirizzo e, se non disponibile o senza risultati, Wikipedia diretta e DuckDuckGo. Ricevono solo la query breve. ': 'Autorizzi solo il motore scelto e, con SearXNG, questo indirizzo. ')+
+    'Scelta ricordata in questo browser. Deseleziona per revocarla. Non attiva la ricerca nei nuovi progetti.':
     'Carica o salva l’indirizzo SearXNG prima di autorizzarlo. Ogni nuova destinazione richiede una scelta esplicita.';
 }
 const remoteConsentKey=()=>String($('api-url').value||'').trim().replace(/\/+$/,'');
@@ -180,6 +206,7 @@ async function api(url,method='GET',data,signal){
   return result;
 }
 const design=()=>({...Object.fromEntries(Object.entries(designFields).map(([id,key])=>[key,$(id).type==='checkbox'?$(id).checked:$(id).value])),theme_design:readThemeDesign(),
+  slide_format:$('creation-engine').value==='classic'?'16:9':$('slide-format').value,
   canvas_mode:$('canvas-mode').value,graphic_style:$('graphic-style').value,theme_preset:$('theme-preset-name').value});
 const brief=()=>({title:$('title').value,prompt:$('prompt').value,count:Number($('count').value),theme:$('theme').value,...design()});
 const provider=()=>({mode:$('provider').value,model:$('provider').value==='local'?$('model').value:remoteModels.value(),
@@ -202,6 +229,7 @@ function updateModelSummary(){
   const remote=$('provider').value==='remote';
   const name=remote?remoteModels.value():$('model').selectedOptions[0]?.textContent;
   $('active-model').textContent=(remote?'Server API':'llama.cpp integrato')+' · '+(name||'Da configurare in Admin');
+  $('theme-ai-model').textContent=$('active-model').textContent;
 }
 function fields(){
   const remote=$('provider').value==='remote';
@@ -243,7 +271,8 @@ $('web-consent').addEventListener('change',()=>{
 $('searxng-url').addEventListener('input',restoreWebConsent);
 for(const id of ['title','prompt','count','theme'])$(id).addEventListener('input',()=>{drafts.add('brief');$('save-status').textContent='Brief non salvato'});
 for(const id of Object.keys(designFields))$(id).addEventListener('input',()=>{
-  if(id==='web-provider')restoreWebConsent();
+  if(['web-provider','web-fallback'].includes(id))restoreWebConsent();
+  if(id==='creation-engine')syncFormatControls(true);
   drafts.add('brief');$('save-status').textContent='Stile in anteprima · salva per conservarlo';savePrefs();render();
 });
 $('theme').addEventListener('change',()=>{const t=themes[$('theme').value];$('background-color').value=t.bg;$('accent-color').value=t.accent;render()});
@@ -279,25 +308,7 @@ function renderDocumentLibrary(){
 function renderLibrary(){
   renderRecovery();
   $('restore-delete-confirmation').hidden=localStorage.getItem('h3slides-skip-delete-confirmation')!=='1';
-  const byId=new Map(projects.map(project=>[project.id,project]));
-  const ordered=[...libraryState.order,...projects.map(project=>project.id)]
-    .filter((id,index,all)=>byId.has(id)&&all.indexOf(id)===index).map(id=>byId.get(id));
-  const card=p=>{
-    const last=latestProjectJob(p.id),recover=last&&recoverableStatus(last.status);
-    const when=new Date(p.updated_at),date=Number.isNaN(when.getTime())?'':when.toLocaleString('it-IT',{dateStyle:'medium',timeStyle:'short'});
-    return '<article class="project-card" data-project="'+esc(p.id)+'" draggable="true"><div class="project-card-tools"><div class="project-card-mark">H3 / '+p.slide_count+'</div>'+
-      '<button class="project-delete" type="button" data-delete-project="'+esc(p.id)+'" title="Elimina progetto" aria-label="Elimina '+esc(p.title)+'">🗑</button></div>'+
-      '<h2>'+esc(p.title)+'</h2><p>'+p.slide_count+' slide'+(recover?' · <strong class="project-recovery-status">'+({failed:'Fallito',interrupted:'Interrotto',cancelled:'Annullato'})[last.status]+'</strong>':'')+'</p><small>Aggiornato '+esc(date)+'</small>'+
-      '<button class="secondary" type="button" data-open-project="'+esc(p.id)+'">'+(recover?'Recupera progetto':'Apri progetto')+' →</button></article>';
-  };
-  const groups=[...libraryState.folders,{id:'',name:'Senza cartella'}];
-  $('library-grid').innerHTML=(projects.length||libraryState.folders.length)?groups.map(folder=>{
-    const items=ordered.filter(project=>(libraryState.assignments[project.id]||'')===folder.id);
-    return '<section class="project-folder" data-folder-id="'+esc(folder.id)+'"><div class="project-folder-head"><h2>'+esc(folder.name)+
-      '</h2><span>'+items.length+'</span>'+(folder.id?'<button class="quiet" type="button" data-rename-folder="'+esc(folder.id)+'">Rinomina</button>'+
-      '<button class="quiet danger" type="button" data-delete-folder="'+esc(folder.id)+'">Elimina cartella</button>':'')+'</div>'+
-      '<div class="folder-projects">'+(items.length?items.map(card).join(''):'<div class="folder-empty">Trascina qui un progetto</div>')+'</div></section>';
-  }).join(''):'<section class="library-empty"><div class="empty-mark">H3 /</div><h2>Nessun progetto salvato.</h2><p>Inizia da un argomento, un PDF o un’immagine.</p></section>';
+  libraryHome.update({projects,libraryState,jobs});
 }
 function confirmProjectDeletion(project){
   if(localStorage.getItem('h3slides-skip-delete-confirmation')==='1')return Promise.resolve(true);
@@ -323,18 +334,18 @@ async function selectProject(id){
   const selection=++projectSelectionRevision;
   const selected=await api('/api/projects/'+id);
   if(selection!==projectSelectionRevision)return false;
-  current=selected;drafts.clear();
+  current=selected;sourceBriefMode=false;drafts.clear();
   $('project-list').value=id;
   for(const key of ['title','prompt','count','theme'])$(key).value=current[key];
-  const defaults={engine:'classic',template:'auto',font:'Arial',text_density:'detailed',background_color:themes[current.theme].bg,accent_color:themes[current.theme].accent,use_source_images:true,use_web_images:false,use_openverse_images:false,use_manim_diagrams:false,pdf_scope:'auto',
-    web_enabled:false,web_provider:'wikipedia',web_query:'',web_max_sources:3,source_priority:'documents',web_always_search:false};
+  const defaults={engine:'classic',slide_format:'16:9',template:'auto',font:'Arial',text_density:'detailed',background_color:themes[current.theme].bg,accent_color:themes[current.theme].accent,use_source_images:true,use_web_images:false,use_openverse_images:false,use_manim_diagrams:false,pdf_scope:'auto',
+    web_enabled:false,web_provider:'wikipedia',web_fallback:true,web_query:'',web_max_sources:3,source_priority:'documents',web_always_search:false};
   for(const [id,key] of Object.entries(designFields)){const value=current[key]??defaults[key];if($(id).type==='checkbox')$(id).checked=value;else $(id).value=value||defaults[key]}
   restoreWebConsent();$('web-refresh').checked=false;
   fillThemeDesign(current.theme_design);$('theme-presets').value='';
   $('canvas-mode').value=current.canvas_mode||'fixed';$('graphic-style').value=current.graphic_style||'classic';
   $('theme-preset-name').value=current.theme_preset||'';
   localStorage.setItem('h3slides-project',id);$('save-status').textContent='Salvato sul PC';render();
-  if(!['/admin','/library','/create'].includes(location.pathname))navigatePage(location.pathname==='/editor'||current.slides.length?'editor':'create');
+  creationFlow.update(current);
   return true;
 }
 async function saveProject(){
@@ -358,18 +369,20 @@ async function saveProject(){
   localStorage.setItem('h3slides-project',saved.id);await loadProjects();
   if(selection!==projectSelectionRevision||current?.id!==saved.id)
     throw new Error('Impostazioni salvate nel progetto di origine; il progetto ora aperto non è stato modificato.');
-  render();return saved;
+  syncProjectLocation();render();return saved;
 }
 $('save-project').onclick=()=>saveProject().catch(e=>toast(e.message));
 async function newProject(){
+  if(creationFlow.loading){toast('Attendi che il documento sia stato caricato.');return false}
   try{await finishInlineEdits()}catch(error){toast(error.message);return}
   if(drafts.size&&!confirm('Lasciare le modifiche non salvate?'))return;
   projectSelectionRevision++;
-  current=null;drafts.clear();$('title').value='Nuova presentazione';$('prompt').value='';$('project-list').value='';
-  $('canvas-mode').value='adaptive';$('graphic-style').value='studio';localStorage.removeItem('h3slides-project');
+  current=null;sourceBriefMode=false;drafts.clear();$('title').value='Nuova presentazione';$('prompt').value='';$('project-list').value='';
+  $('canvas-mode').value=JSON.parse(localStorage.getItem('h3slides-settings')||'{}')['canvas-mode']||'adaptive';$('graphic-style').value='studio';localStorage.removeItem('h3slides-project');
   $('creation-engine').value=JSON.parse(localStorage.getItem('h3slides-settings')||'{}')['creation-engine']||'v2';
+  $('slide-format').value=JSON.parse(localStorage.getItem('h3slides-settings')||'{}')['slide-format']||'16:9';
   $('web-enabled').checked=false;$('web-query').value='';$('source-priority').value='documents';restoreWebConsent();$('web-refresh').checked=false;render();
-  navigatePage('create');
+  creationFlow.reset();navigatePage('new');return true;
 }
 $('new').onclick=$('library-new').onclick=newProject;
 $('project-list').onchange=e=>e.target.value&&selectProject(e.target.value).then(()=>navigatePage(current?.slides.length?'editor':'create')).catch(e=>toast(e.message));
@@ -450,8 +463,42 @@ $('library-grid').ondragend=()=>{
 };
 $('files').onchange=async e=>{
   const files=[...e.target.files];e.target.value='';if(!files.length)return;
-  try{await saveProject();for(const file of files){const form=new FormData();form.append('file',file);toast('Lettura di '+file.name+'…');current=await api('/api/projects/'+current.id+'/sources','POST',form)}await loadDocuments();render();toast('Fonti aggiunte')}catch(error){toast(error.message)}
+  await creationFlow.run(()=>uploadSources(files));
 };
+function uploadFile(url,file,position,total){
+  return new Promise((resolve,reject)=>{
+    const xhr=new XMLHttpRequest();xhr.open('POST',url);xhr.setRequestHeader('X-H3-Slides','1');xhr.responseType='json';xhr.timeout=300000;
+    xhr.upload.onprogress=event=>creationFlow.progress('Caricamento '+position+'/'+total+' · '+file.name,event.lengthComputable?Math.round(event.loaded/event.total*100):null,'Trasferimento al server di H3-Slides.');
+    xhr.upload.onload=()=>creationFlow.progress('Lettura '+position+'/'+total+' · '+file.name,null,'Indicizzazione del contenuto. I documenti grandi possono richiedere qualche minuto.');
+    xhr.onload=()=>xhr.status>=200&&xhr.status<300?resolve(xhr.response):reject(Error(xhr.response?.error||'Caricamento non riuscito ('+xhr.status+').'));
+    xhr.onerror=()=>reject(Error('Connessione interrotta durante il caricamento. Controlla lo storico prima di riprovare.'));
+    xhr.ontimeout=()=>reject(Error('Il caricamento richiede troppo tempo. Controlla lo storico prima di riprovare.'));
+    const form=new FormData();form.append('file',file);xhr.send(form);
+  });
+}
+async function uploadSources(files){
+  if(!files.length)return;navigatePage('import');creationFlow.progress('Preparazione del caricamento…');
+  if(!$('title').value.trim()||$('title').value==='Nuova presentazione')$('title').value=files[0].name.replace(/\.[^.]+$/,'').slice(0,140);
+  const saved=await saveProject(),pid=saved.id,selection=projectSelectionRevision;
+  try{
+    for(const [index,file] of files.entries()){
+      const updated=await uploadFile('/api/projects/'+pid+'/sources',file,index+1,files.length);
+      if(current?.id!==pid||selection!==projectSelectionRevision)throw Error('File salvato nel progetto di origine. Riaprilo dalla Home.');
+      current=updated;render();
+    }
+  }finally{await Promise.all([loadDocuments(),loadProjects()]);syncProjectLocation();render()}
+  toast('Fonti aggiunte. Puoi continuare al briefing.');
+}
+async function importSourceUrl(url){
+  if(!url)throw Error('Inserisci il link della pagina.');creationFlow.progress('Importazione della pagina…',null,'Lettura del testo pubblico e salvataggio nella libreria locale.');
+  const saved=await saveProject(),pid=saved.id,selection=projectSelectionRevision;
+  const updated=await api('/api/projects/'+pid+'/sources/url','POST',{url});
+  if(current?.id!==pid||selection!==projectSelectionRevision)throw Error('Link salvato nel progetto di origine. Riaprilo dalla Home.');
+  current=updated;
+  if($('title').value==='Nuova presentazione'){$('title').value=updated.sources.at(-1).name.slice(0,140);drafts.add('brief');await saveProject()}
+  await Promise.all([loadDocuments(),loadProjects()]);syncProjectLocation();render();toast('Pagina importata.');
+}
+function syncProjectLocation(){if(current&&['create','import','editor'].includes(document.body.dataset.view))history.replaceState({},'',location.pathname+'?project='+encodeURIComponent(current.id))}
 function openModelSetup(reason='Scegli un modello GGUF gia presente sul disco.'){
   navigatePage(true);
   $('model-setup-reason').textContent=reason;$('model-setup-status').textContent='';
@@ -522,20 +569,21 @@ for(const element of [$('create-page'),$('generate-top'),$('generate'),document.
 function updateGenerationButtons(){
   const active=jobs.some(item=>['queued','running','paused'].includes(item.status));
   const regenerate=Boolean(current?.slides.length);
-  const recovery=recoveryMode();
+    const recovery=sourceBriefMode?'':recoveryMode();
   for(const button of document.querySelectorAll('[data-generate-presentation]')){
-    button.disabled=busy||active;
-    const label=active?'Generazione in corso…':busy?'Preparazione…':
+    button.disabled=busy||active||themeAiBusy||creationFlow.loading;
+    const label=themeAiBusy?'Creazione tema in corso…':active?'Generazione in corso…':busy?'Preparazione…':
       recovery==='resume'?'Riprendi generazione →':recovery?'Riprova generazione →':regenerate?'Rigenera presentazione ↻':'Genera presentazione →';
     button.textContent=button.id==='generate-floating'?
-      (active?'In corso…':busy?'Preparazione…':recovery==='resume'?'Riprendi →':recovery?'Riprova →':regenerate?'Rigenera ↻':'Genera →'):label;
+      (themeAiBusy?'Creazione tema…':active?'In corso…':busy?'Preparazione…':recovery==='resume'?'Riprendi →':recovery?'Riprova →':regenerate?'Rigenera ↻':'Genera →'):label;
     button.setAttribute('aria-label',label);
-    button.setAttribute('aria-busy',String(busy||active));
+    button.setAttribute('aria-busy',String(busy||active||themeAiBusy));
     button.title=label;
   }
   scheduleFloatingGeneration();
 }
 async function generate(slideId=null,diagramOnly=false,regenerateAll=false,replaceDiagrams=false,providedInstructions=null,rebuildOutline=false,recoverExisting=false,pageNodeId=''){
+  if(themeAiBusy){toast('Attendi la fine dell’anteprima del tema, poi genera la presentazione.');return}
   if(busy)return;busy=true;updateGenerationButtons();
   try{
     await finishInlineEdits();
@@ -566,6 +614,8 @@ async function generate(slideId=null,diagramOnly=false,regenerateAll=false,repla
       diagram_only:diagramOnly,replace_diagrams:replaceDiagrams,regenerate_all:regenerateAll,rebuild_outline:rebuildOutline,
       ...(pageNodeId?{page_node_id:pageNodeId}:{}),
       new_version:regenerateAll&&!recoverExisting,project_settings:regenerateAll&&!recoverExisting?brief():null,
+      web_fallback_consent:Boolean(!diagramOnly&&$('web-enabled').checked&&$('web-provider').value==='searxng'&&
+        $('web-fallback').checked&&$('web-consent').checked&&webConsentKey().startsWith('searxng-fallback|')&&webConsents[webConsentKey()]===true),
       web_consent:diagramOnly?false:$('web-consent').checked,web_refresh:diagramOnly?false:$('web-refresh').checked});
     $('web-refresh').checked=false;
     if(job.project_id&&job.project_id!==current.id){drafts.clear();await selectProject(job.project_id);await loadProjects()}
@@ -574,6 +624,7 @@ async function generate(slideId=null,diagramOnly=false,regenerateAll=false,repla
   }catch(e){toast(e.message)}finally{busy=false;updateGenerationButtons()}
 }
 for(const button of document.querySelectorAll('[data-generate-presentation]'))button.onclick=()=>{
+  if(sourceBriefMode&&current)return generate(null,false,true,false,null,true,false);
   const recovery=recoveryMode(),regenerate=recovery==='retry-all'||(!recovery&&Boolean(current?.slides.length));
   return generate(null,false,regenerate,false,null,regenerate,recovery==='retry-all');
 };
@@ -616,11 +667,14 @@ function sourceHTML(s){
 }
 $('sources').onclick=async event=>{
   const button=event.target.closest('[data-remove-source]');if(!button||!current)return;
+  if(creationFlow.loading){toast('Attendi il completamento del caricamento.');return}
   const source=current.sources.find(item=>item.id===button.dataset.removeSource);if(!source)return;
   if(!confirm('Rimuovere «'+source.name+'» dal progetto? Le slide già create resteranno; le immagini di questo documento verranno scollegate.'))return;
   button.disabled=true;
   try{
-    current=await api('/api/projects/'+current.id+'/sources/'+encodeURIComponent(source.id),'DELETE');
+    const pid=current.id,selection=projectSelectionRevision;
+    const updated=await api('/api/projects/'+pid+'/sources/'+encodeURIComponent(source.id),'DELETE');
+    if(current?.id===pid&&selection===projectSelectionRevision)current=updated;
     await loadDocuments();render();toast('Documento rimosso dal progetto');
   }catch(error){
     toast(error.message);if(button.isConnected)button.disabled=false;
@@ -628,18 +682,23 @@ $('sources').onclick=async event=>{
 };
 $('document-library').onclick=async event=>{
   const button=event.target.closest('[data-reuse-source]');if(!button)return;
+  if(creationFlow.loading){toast('Attendi il completamento del caricamento.');return}
   button.disabled=true;
-  try{
+  await creationFlow.run(async()=>{
+    creationFlow.progress('Aggiunta del documento dallo storico…');
     if(!current||drafts.has('brief'))await saveProject();
-    current=await api('/api/projects/'+current.id+'/sources/reuse','POST',{
+    const pid=current.id,selection=projectSelectionRevision;
+    const updated=await api('/api/projects/'+pid+'/sources/reuse','POST',{
       project_id:button.dataset.reuseProject,source_id:button.dataset.reuseSource});
-    await loadDocuments();render();toast('Documento aggiunto al progetto dalla libreria locale');
-  }catch(error){toast(error.message);if(button.isConnected)button.disabled=false}
+    if(current?.id!==pid||selection!==projectSelectionRevision)throw Error('Documento salvato nel progetto di origine. Riaprilo dalla Home.');
+    current=updated;syncProjectLocation();await loadDocuments();render();toast('Documento aggiunto al progetto dalla libreria locale');
+  });
+  renderDocumentLibrary();
 };
 const resize=new ResizeObserver(entries=>{for(const entry of entries){
   entry.target.style.setProperty('--slide-scale',entry.contentRect.width/1280);
   const v2=entry.target.querySelector('.page-v2');
-  if(v2){const r=fitSlide(v2);v2.style.transform='scale('+(entry.contentRect.width/1280)+')';entry.target.style.height=(r.height*entry.contentRect.width/1280)+'px'}
+  if(v2){const card=entry.target.closest('.slide-card');if(card?.v2Fit)card.v2Fit();else{const r=fitSlide(v2);v2.style.transform='scale('+(entry.contentRect.width/1280)+')';entry.target.style.height=((r.overflow?Math.max(r.height,r.neededHeight||0):r.height)*entry.contentRect.width/1280)+'px'}}
   const card=entry.target.closest('.slide-card');positionVisualActions(card);positionFreeformHandles(card);
 }});
 function elementDeleteButton(kind,index,label){
@@ -752,20 +811,41 @@ function installElementControls(card,slide){
   frame.append(actions);requestAnimationFrame(()=>positionVisualActions(card));
   }
 }
+function syncFormatControls(announce=false){
+  const classic=$('creation-engine').value==='classic';
+  if(classic&&$('slide-format').value!=='16:9'){
+    $('slide-format').value='16:9';
+    if(announce)toast('Il motore Classico usa il formato di base 16:9. Il formato del brief è stato riportato a 16:9; salva per conservarlo.');
+  }
+  $('slide-format').disabled=classic;
+  $('canvas-mode').querySelector('[value="adaptive"]').textContent=classic?'Adattivo · layout classico':'Adattivo · massimo +15%';
+  $('slide-format-help').textContent=classic?'Il motore Classico usa solo il formato di base 16:9 e conserva il suo adattamento di altezza. Scegli V2 per gli altri formati e il limite di crescita del 15%.':
+    'V2 mantiene il formato scelto. Adattivo consente al massimo il 15% di altezza in più; se serve spazio, la generazione può aggiungere fino a 2 slide.';
+  $('slide-count-help').textContent=classic?'Numero richiesto per la generazione classica.':'Obiettivo indicativo: V2 può aggiungere fino a 2 slide per mantenere contenuti leggibili nel formato scelto.';
+  const editorClassic=current?.engine!=='v2';
+  $('editor-slide-format').value=editorClassic?'16:9':current?.slide_format||'16:9';
+  $('editor-slide-format').disabled=!current||editorClassic||editorFormatSaving;
+  $('editor-canvas-mode').querySelector('[value="adaptive"]').textContent=editorClassic?'Adattivo · layout classico':'Adattivo · massimo +15%';
+  $('editor-slide-format-help').textContent=editorClassic?'Il motore Classico usa il formato di base 16:9. Gli altri formati richiedono una nuova generazione con V2.':'V2 · formato fisso, oppure fino al 15% di altezza in più con Adattivo. Le pagine incompatibili vanno ridotte o rigenerate prima di esportare.';
+}
 function render(){
+  syncFormatControls();
   renderJobPanel();
+  $('editor-project-name').textContent=current?.title||'Presentazione';
+  $('editor-project-meta').textContent=current?(current.slides.length+' slide'+(current.engine==='v2'?' · obiettivo '+current.count+' · '+(current.slide_format||'16:9'):' · base 16:9')+' · Versione '+(current.version_number||1)):'Apri un progetto dalla Home';
   $('editor-canvas-mode').value=$('canvas-mode').value;
-  $('editor-canvas-mode').disabled=!current;
+  $('editor-canvas-mode').disabled=!current||editorFormatSaving;
   $('setup-back').hidden=!current;
   const display=current?{...current,...design(),theme:$('theme').value}:null;
   const preview=display||brief(),t=themeFor(preview),box=blockColors(preview,{kind:'explanation'});
   const low=contrast(t.bg,t.fg)<4.5||contrast(t.bg,t.heading)<4.5||
     ['explanation','example','key','quote'].some(kind=>{const b=blockColors(preview,{kind});return contrast(b.bg,b.fg)<4.5});
   $('theme-contrast').textContent=low?'Attenzione: una combinazione manuale ha poco contrasto. Riattiva Automatico per migliorarla.':'Contrasto del testo verificato · anteprima immediata.';
-  const autoValues={text_color:t.fg,title_color:t.heading,box_text_color:box.fg,border_color:box.border,
+  const autoValues={text_color:t.fg,title_color:t.heading,box_text_color:box.fg,border_color:box.border,secondary_color:t.accent,
     ...Object.fromEntries(['explanation','example','key','quote'].map(kind=>[kind+'_color',blockColors(preview,{kind}).bg]))};
   for(const key of Object.keys(themeColors))if($('theme-editor').querySelector('[data-theme-auto="'+key+'"]').checked)
     $('theme-editor').querySelector('[data-theme-color="'+key+'"]').value=autoValues[key];
+  renderThemePreview(preview);
   $('deck-title').textContent=current?.title||'Spazio alle idee.';
   $('sources').innerHTML=current?current.sources.map(sourceHTML).join(''):'';
   renderDocumentLibrary();
@@ -773,6 +853,7 @@ function render(){
   $('openverse-images').disabled=!$('web-images').checked;
   $('source-priority-option').hidden=!current?.sources.length;
   $('wikipedia-hint').hidden=$('web-provider').value!=='wikipedia';
+  $('web-fallback-option').hidden=$('web-provider').value!=='searxng';
   const research=current?.web_research;
   const documentFallback=research?.status==='document_fallback',researchFailed=research?.status==='failed';
   const researchSkipped=research?.status==='skipped',coverageUncertain=research?.skipped_reason==='coverage_uncertain';
@@ -812,7 +893,7 @@ function render(){
     '<small>'+(researchSkipped?'Valutazione dell’ultima generazione: modificare il brief richiede Rigenera per valutarlo di nuovo.':
       documentFallback||researchFailed?'Esito dell’ultimo tentativo. Rigenera per riprovare la ricerca.':
       'Fonti lette in quella generazione: modificare la query non aggiorna le slide già pronte.')+'</small></details>':'';
-  $('empty').hidden=Boolean(current?.slides.length);$('slide-count').textContent=(current?.slides.length||0)+' slide';
+  $('empty').hidden=Boolean(current?.slides.length);$('slide-count').textContent=(current?.slides.length||0)+' slide'+(current?.engine==='v2'?' · obiettivo '+current.count:'');
   const container=$('slides'),ids=new Set();
   for(const [index,slide] of (current?.slides||[]).entries()){
     ids.add(slide.id);let card=document.getElementById('slide-'+slide.id);
@@ -820,9 +901,8 @@ function render(){
     const arranging=layoutEditors.has(slide.id);
     card.className='slide-card '+slide.status+(arranging?' layout-editing':'');card.dataset.id=slide.id;card.draggable=!arranging;
     const signature=JSON.stringify([slide,display.theme,design(),index,arranging]);
-    if(slide.content.page||slide.page_draft){
+    if(slide.content.page||slide.page_draft||(current.engine==='v2'&&slide.status==='generating')){
       if(card.dataset.signature!==signature&&!card.dataset.saving&&!card.querySelector('[contenteditable]')){
-        card.dataset.signature=signature;
         renderPageCard(card,display,slide,index,{toast,observe:element=>resize.observe(element),
           refresh:()=>{delete card.dataset.signature;render()},
           upload:nodeId=>chooseSlideImage(slide.id,nodeId),search:nodeId=>searchSlideImage(slide.id,nodeId),
@@ -835,6 +915,7 @@ function render(){
             if(current?.id!==display.id)throw Error('Riapri il progetto prima di salvare questa modifica');
             return saveContentChange(slide.id,mutate,message);
           }});
+        card.dataset.signature=signature;
       }
       if(container.children[index]!==card)container.insertBefore(card,container.children[index]||null);
       continue;
@@ -915,6 +996,7 @@ function render(){
   $('redesign-diagrams').hidden=!current?.use_manim_diagrams||current?.engine==='v2';
   $('redesign-diagrams').disabled=!diagramSlides||busy;
   $('redesign-diagrams').textContent='✦ Riprogetta tutti i diagrammi'+(diagramSlides?' · '+diagramSlides:'');
+  creationFlow.update(current);
 }
 async function rerenderDiagram(id){
   if(busy)throw new Error('Attendi la generazione in corso');
@@ -1708,31 +1790,50 @@ for(const action of ['pause','cancel'])$(action).onclick=async()=>{
 };
 document.querySelectorAll('[data-export]').forEach(button=>button.onclick=async()=>{
   if(!current)return;const old=button.textContent;exporting.add(button.dataset.export);button.disabled=true;button.textContent='Preparazione…';
-  try{await finishInlineEdits();if(drafts.has('brief'))await saveProject();const result=await api('/api/projects/'+current.id+'/export/'+button.dataset.export,'POST',{});
+  try{await finishInlineEdits();if(drafts.has('brief'))await saveProject();await document.fonts.ready;
+    for(const [index,slide]of current.slides.entries()){
+      if(!slide.content?.page)continue;
+      const frame=document.getElementById('slide-'+slide.id)?.querySelector('.page-v2');
+      if(frame&&fitSlide(frame).overflow)throw Error('La slide '+(index+1)+' supera il formato '+(current.slide_format||'16:9')+'. Riduci i contenuti o usa Rigenera pagina prima di esportare: nessun contenuto verrà tagliato in silenzio.');
+    }
+    const result=await api('/api/projects/'+current.id+'/export/'+button.dataset.export,'POST',{});
     const a=document.createElement('a');a.href=result.url;a.download=result.filename;a.click();toast('Esportazione pronta');
   }catch(error){toast(error.message)}finally{exporting.delete(button.dataset.export);button.textContent=old;button.disabled=false}
 });
+function schedulePoll(){
+  clearTimeout(pollTimer);
+  const streaming=current?.engine==='v2'&&jobs.some(item=>item.project_id===current.id&&['queued','running'].includes(item.status));
+  pollTimer=setTimeout(poll,streaming?500:1500);
+}
 async function poll(){
-  if(polling)return;polling=true;
+  if(polling)return;polling=true;clearTimeout(pollTimer);
+  let reading=true;
   try{
-    jobs=await api('/api/jobs');$('connection').textContent='● Locale · salvato sul PC';
+    jobs=await api('/api/jobs');reading=false;$('connection').textContent='● Locale · salvato sul PC';
     const statusSignature=JSON.stringify(jobs.map(item=>[item.id,item.status]));
     if(!libraryDragged&&statusSignature!==libraryJobSignature){libraryJobSignature=statusSignature;renderLibrary()}
     updateGenerationButtons();
     if(current){
       const requested=current.id;
+      reading=true;
       const fresh=await api('/api/projects/'+requested);
+      reading=false;
       if(current?.id!==requested)return;
       current=fresh;render();
     }
     renderJobPanel();
-  }catch(error){$('connection').textContent='● App non raggiungibile'}finally{polling=false}
+  }catch(error){
+    $('connection').textContent=reading?'● App non raggiungibile':'● Errore nell’anteprima · riprovo';
+    if(!reading)console.error('Aggiornamento anteprima non riuscito',error);
+  }finally{polling=false;schedulePoll()}
 }
 async function init(){
-  try{await Promise.all([loadProjects(),loadLibrary(),loadDocuments(),models()]);const id=new URLSearchParams(location.search).get('project')||localStorage.getItem('h3slides-project');
-    if(projects.some(p=>p.id===id))await selectProject(id);await poll();
+  try{await Promise.all([loadProjects(),loadLibrary(),loadDocuments(),models()]);const id=new URLSearchParams(location.search).get('project')||(['create','editor','import','admin'].includes(routeView())?localStorage.getItem('h3slides-project'):null);
+    if(projects.some(p=>p.id===id))await selectProject(id);
+    else if(routeView()==='editor'){navigatePage('library');toast('Apri una presentazione dalla Home oppure crea un nuovo progetto.');}
+    await poll();
   }catch(error){toast(error.message)}
-  setInterval(poll,1500);
+  schedulePoll();
 }
 init();
 
@@ -1772,17 +1873,18 @@ async function loadAdmin(){
 function navigatePage(page,push=true){
   document.body.classList.remove('navigation-away');
   if(typeof page==='boolean')page=page?'admin':'create';
-  if(page==='create'&&current?.slides.length&&location.pathname!=='/create')page='editor';
+  if(creationFlow.loading&&page==='new'){toast('Attendi il completamento del caricamento.');return}
   const admin=page==='admin',library=page==='library';
   document.body.dataset.view=page;
-  $('admin').hidden=!admin;$('library').hidden=!library;$('create-page').hidden=admin||library;
+  $('admin').hidden=!admin;$('library').hidden=!library;$('create-page').hidden=!['create','editor'].includes(page);
+  creationFlow.show(page);
   updateFloatingGeneration();
   $('open-admin').setAttribute('aria-current',admin?'page':'false');
   $('open-library').setAttribute('aria-current',library?'page':'false');
   $('open-create').setAttribute('aria-current',!admin&&!library?'page':'false');
   document.title=admin?'Admin · H3-slides':library?'Progetti · H3-slides':'H3-slides · Studio';
-  const path=admin?'/admin':library?'/library':page==='editor'?'/editor':'/create';
-  const query=current?'?project='+encodeURIComponent(current.id):'';
+  const path=admin?'/admin':library?'/':page==='editor'?'/editor':page==='new'?'/new':page==='import'?'/import':'/create';
+  const query=current&&['create','editor','import'].includes(page)?'?project='+encodeURIComponent(current.id):'';
   if(push&&location.pathname+location.search!==path+query)history.pushState({},'',path+query);
   if(admin)loadAdmin();else if(library){Promise.all([loadProjects(),loadLibrary()]).catch(error=>toast(error.message))}else{render();requestAnimationFrame(()=>window.dispatchEvent(new Event('resize')))}
 }
@@ -1791,25 +1893,41 @@ $('open-library').onclick=()=>navigatePage('library');
 $('configure-model').onclick=()=>navigatePage('admin');
 $('open-create').onclick=$('close-admin').onclick=()=>navigatePage('create');
 $('open-create').onclick=newProject;
-$('editor-settings').onclick=()=>{history.pushState({},'','/create?project='+current.id);navigatePage('create',false);$('editor-menu').open=false;window.scrollTo(0,0)};
+$('editor-settings').onclick=async()=>{
+  if(!current){navigatePage('library');return}
+  try{await finishInlineEdits()}catch(error){toast(error.message);return}
+  if(drafts.has('brief')&&!confirm('Riaprire il brief usato per la generazione? Le modifiche al brief non salvate saranno sostituite.'))return;
+  const saved=current.generation_settings?.project||current;
+  for(const key of ['title','prompt','count','theme'])if(saved[key]!==undefined)$(key).value=saved[key];
+  for(const [id,key] of Object.entries(designFields))if(saved[key]!==undefined){if($(id).type==='checkbox')$(id).checked=saved[key];else $(id).value=saved[key]}
+  $('web-fallback').checked=saved.web_fallback??true;
+  $('canvas-mode').value=saved.canvas_mode||current.canvas_mode||'fixed';$('graphic-style').value=saved.graphic_style||'classic';
+  $('slide-format').value=saved.slide_format||'16:9';
+  $('theme-preset-name').value=saved.theme_preset||'';fillThemeDesign(saved.theme_design);restoreWebConsent();
+  sourceBriefMode=true;drafts.add('brief');$('save-status').textContent='Brief della fonte · genera per creare una nuova versione';
+  navigatePage('create');$('editor-menu').open=false;window.scrollTo(0,0);
+};
 $('editor-back').onclick=()=>navigatePage('editor');
 $('setup-back').onclick=()=>navigatePage('editor');
-for(const id of ['canvas-mode','graphic-style'])$(id).onchange=()=>{drafts.add('brief');render()};
-$('editor-canvas-mode').onchange=async()=>{
-  if(!current)return;
-  const control=$('editor-canvas-mode'),mode=control.value,pid=current.id;
-  control.disabled=true;
+for(const id of ['canvas-mode','graphic-style'])$(id).onchange=()=>{drafts.add('brief');$('save-status').textContent='Stile in anteprima · salva per conservarlo';savePrefs();render()};
+async function saveEditorFormat(){
+  if(!current||editorFormatSaving)return;editorFormatSaving=true;
+  const mode=$('editor-canvas-mode').value,format=current.engine==='v2'?$('editor-slide-format').value:'16:9',pid=current.id;
+  $('editor-canvas-mode').disabled=true;$('editor-slide-format').disabled=true;
   try{
     await finishInlineEdits();await document.fonts.ready;
-    const slide_layouts=layoutUpdatesFor({...current,canvas_mode:mode});
-    const updated=await api('/api/projects/'+pid,'PATCH',{canvas_mode:mode,slide_layouts});
-    if(current?.id===pid){current=updated;$('canvas-mode').value=mode;render()}
-    toast('Formato applicato e salvato. Nessun testo o immagine rigenerati.');
-  }catch(error){control.value=current?.canvas_mode||'fixed';toast(error.message)}
-  finally{control.disabled=!current}
-};
-document.querySelector('.brand').onclick=event=>{event.preventDefault();navigatePage('create')};
-window.addEventListener('popstate',()=>navigatePage(location.pathname.replace(/\/$/,'')==='/admin'?'admin':location.pathname.replace(/\/$/,'')==='/library'?'library':'create',false));
+    const slide_layouts=current.engine==='v2'?[]:layoutUpdatesFor({...current,canvas_mode:mode});
+    const updated=await api('/api/projects/'+pid,'PATCH',{canvas_mode:mode,slide_format:format,slide_layouts});
+    if(current?.id===pid){current=updated;$('canvas-mode').value=mode;$('slide-format').value=format;savePrefs();render()}
+    toast('Formato applicato e salvato · '+format+'. Nessun contenuto rigenerato. Le eventuali pagine fuori formato sono segnalate e vanno ridotte o rigenerate.');
+  }catch(error){$('editor-canvas-mode').value=current?.canvas_mode||'fixed';$('editor-slide-format').value=current?.slide_format||'16:9';toast(error.message)}
+  finally{editorFormatSaving=false;$('editor-canvas-mode').disabled=!current;$('editor-slide-format').disabled=!current||current.engine!=='v2'}
+}
+$('editor-canvas-mode').onchange=saveEditorFormat;
+$('editor-slide-format').onchange=saveEditorFormat;
+document.querySelector('.brand').onclick=event=>{event.preventDefault();navigatePage('library')};
+function routeView(){return ({'/admin':'admin','/library':'library','/new':'new','/import':'import','/brief':'create','/create':'create','/editor':'editor'})[location.pathname.replace(/\/$/,'')]||'library'}
+window.addEventListener('popstate',async()=>{const page=routeView(),id=new URLSearchParams(location.search).get('project');try{if(id&&id!==current?.id&&!await selectProject(id))return;navigatePage(page,false)}catch(error){toast(error.message)}});
 $('admin-form').addEventListener('input',event=>{
   if(event.target.dataset.setting){adminDirty=true;$('admin-status').textContent='Profilo modificato · premi Salva profilo prima di generare.'}
 });
@@ -1818,7 +1936,7 @@ $('admin-model').onchange=()=>{
   if(adminDirty&&!confirm('Scartare le modifiche non salvate a questo profilo?')){$('admin-model').value=$('admin-model').dataset.previous;return}
   fillAdmin();
 };
-navigatePage(location.pathname.replace(/\/$/,'')==='/admin'?'admin':location.pathname.replace(/\/$/,'')==='/library'?'library':'create',false);
+navigatePage(routeView(),false);
 async function saveAdmin(){
   const profile={model:$('admin-model').value,loading:{},inference:{}};
   for(const input of $('admin').querySelectorAll('[data-setting]')){
@@ -1833,44 +1951,94 @@ async function saveAdmin(){
 }
 $('admin-form').onsubmit=async e=>{e.preventDefault();try{await saveAdmin()}catch(error){$('admin-status').textContent=error.message}};
 $('admin-load').onclick=async()=>{
+  if(themeAiBusy){toast('Attendi la fine della creazione del tema prima di cambiare il modello.');return}
   $('admin-load').disabled=true;
   try{const p=await saveAdmin();$('admin-status').textContent='Caricamento del modello…';const state=await api('/api/llm/start','POST',{model:p.model});await models();$('admin-status').textContent='Modello caricato con il profilo scelto.'+(state.mtp?' '+state.mtp.reason:'')}
   catch(error){$('admin-status').textContent=error.message}finally{$('admin-load').disabled=false}
 };
-$('admin-stop').onclick=async()=>{try{await api('/api/llm/stop','POST',{});await models();$('admin-status').textContent='Modello di H3-slides scaricato.'}catch(error){$('admin-status').textContent=error.message}};
+$('admin-stop').onclick=async()=>{if(themeAiBusy){toast('Attendi la fine della creazione del tema prima di scaricare il modello.');return}try{await api('/api/llm/stop','POST',{});await models();$('admin-status').textContent='Modello di H3-slides scaricato.'}catch(error){$('admin-status').textContent=error.message}};
 $('theme-editor').oninput=e=>{
   if(e.target.dataset.themeAuto){
     $('theme-editor').querySelector('[data-theme-color="'+e.target.dataset.themeAuto+'"]').disabled=e.target.checked;
   }
-  drafts.add('brief');$('theme-presets').value='';$('save-status').textContent='Tema in anteprima · salva il brief';render();
+  drafts.add('brief');$('theme-presets').value='';$('theme-preset-name').value='';$('save-status').textContent='Tema in anteprima · salva il brief';render();
 };
+function currentThemeValues(){return {theme:$('theme').value,font:$('font').value,template:$('template').value,graphic_style:$('graphic-style').value,
+  background_color:$('background-color').value,accent_color:$('accent-color').value,theme_design:readThemeDesign()}}
+function renderThemePreview(project){
+  const signature=JSON.stringify(currentThemeValues());
+  if(signature!==themePreviewSignature){themePreviewSignature=signature;$('theme-current-preview').innerHTML=themeV2PreviewHTML(project)}
+  $('theme-current-name').textContent=$('theme-preset-name').value||'Il tuo tema personalizzato';
+  for(const button of $('theme-gallery').children)button.setAttribute('aria-pressed',String(button.dataset.themeName===$('theme-preset-name').value));
+}
 async function loadThemes(){
   const [builtins,personal]=await Promise.all([fetch('/static/theme-presets.json').then(r=>r.json()),api('/api/themes')]);
   themePresets=[...builtins,...personal];
   $('theme-gallery').replaceChildren(...themePresets.map((preset,index)=>{
     const button=document.createElement('button');button.type='button';button.className='theme-swatch';
-    const t=themeFor(preset.values);button.style.setProperty('--preview-bg',t.bg);button.style.setProperty('--preview-fg',t.fg);button.style.setProperty('--preview-accent',t.accent);
-    button.innerHTML='<span class="theme-mini theme-mini-'+index%3+'" aria-hidden="true"><i></i><b></b><em></em><strong></strong></span><span>'+esc(preset.name)+'</span>';
-    button.onclick=()=>{$('theme-presets').value=String(index);$('theme-presets').onchange();for(const other of $('theme-gallery').children)other.setAttribute('aria-pressed',String(other===button))};return button;
+    button.dataset.themeName=preset.name;button.setAttribute('aria-label','Applica tema '+preset.name);
+    button.innerHTML=themeV2PreviewHTML(preset.values)+'<span class="theme-swatch-name">'+esc(preset.name)+'</span><span class="theme-swatch-kind">'+(index>=builtins.length?'Tema personale':esc(themeChoices.visual_family[2][preset.values.theme_design?.visual_family]||'Classica'))+'</span>';
+    button.onclick=()=>{$('theme-presets').value=String(index);applyThemePreset(preset)};return button;
   }));
   $('theme-presets').innerHTML='<option value="">Personalizzato / tema corrente</option>'+themePresets.map((p,i)=>
     '<option value="'+i+'">'+esc(p.name)+(i>=builtins.length?' · personale':'')+'</option>').join('');
+  const selected=themePresets.findIndex(p=>p.name===$('theme-preset-name').value);$('theme-presets').value=selected<0?'':String(selected);
+  renderThemePreview(currentThemeValues());
 }
 $('theme-presets').onchange=()=>{
   const preset=themePresets[Number($('theme-presets').value)];if(!preset||$('theme-presets').value==='')return;
-  for(const key of ['theme','font','template'])$(key).value=preset.values[key];
-  $('background-color').value=preset.values.background_color;$('accent-color').value=preset.values.accent_color;
+  applyThemePreset(preset);
+};
+function applyThemePreset(preset){
+  for(const key of ['theme','font','template'])if(preset.values[key])$(key).value=preset.values[key];
+  if(preset.values.background_color)$('background-color').value=preset.values.background_color;
+  if(preset.values.accent_color)$('accent-color').value=preset.values.accent_color;
   fillThemeDesign(preset.values.theme_design);$('theme-name').value=preset.name;
   $('theme-preset-name').value=preset.name;$('graphic-style').value=preset.values.graphic_style||(preset.values.template==='editorial'?'editorial':preset.values.template==='cards'?'vivid':'studio');
   drafts.add('brief');$('save-status').textContent='Tema applicato in anteprima · salva il brief';render();
-};
+}
 $('save-theme').onclick=async()=>{
   try{
-    const values={theme:$('theme').value,font:$('font').value,template:$('template').value,
-      graphic_style:$('graphic-style').value,
-      background_color:$('background-color').value,accent_color:$('accent-color').value,theme_design:readThemeDesign()};
+    const values=currentThemeValues();
     await api('/api/themes','POST',{name:$('theme-name').value,values});
     await loadThemes();$('theme-status').textContent='Tema salvato sul PC, riutilizzabile negli altri progetti. Salva il brief per applicarlo al progetto corrente.';
   }catch(e){$('theme-status').textContent=e.message}
+};
+$('theme-ai-configure').onclick=()=>navigatePage('admin');
+$('theme-ai-generate').onclick=async()=>{
+  if(themeAiBusy)return;
+  const prompt=$('theme-ai-prompt').value.trim();
+  try{
+    if(prompt.length<2)throw Error('Descrivi l’atmosfera che vuoi creare, per esempio colori, pubblico e stile.');
+    if(busy||jobs.some(item=>['queued','running','paused'].includes(item.status)))throw Error('Il modello sta già lavorando a una presentazione. Attendi la fine per creare un tema AI; i temi pronti restano disponibili.');
+    if($('provider').value==='local'&&adminDirty){navigatePage('admin');throw Error('Salva prima il profilo del modello modificato in Admin.')}
+    themeAiBusy=true;$('theme-ai-generate').disabled=true;$('theme-ai-prompt').disabled=true;updateGenerationButtons();
+    if($('provider').value==='local')await models();
+    else try{remoteModels.requireSelection();apiSettings.value()}catch(error){navigatePage('admin');throw error}
+    const selected=provider();
+    if(!selected.model){navigatePage('admin');throw Error('Scegli un modello in Admin prima di creare il tema.')}
+    if(selected.mode==='local'&&modelInfo?.runtime_available===false){navigatePage('admin');throw Error($('model-warning').textContent)}
+    if(selected.mode==='remote'&&!selected.remote_consent){navigatePage('admin');$('consent').focus();throw Error('In Admin autorizza l’invio al server scelto, poi torna al tema AI. Il consenso è lo stesso della generazione.')}
+    $('admin').inert=true;
+    $('theme-ai-generate').textContent='Creazione anteprima…';$('theme-ai-status').textContent='Il modello sta preparando il tema. Puoi continuare a esplorare i temi pronti; il risultato non verrà applicato da solo.';updateGenerationButtons();
+    const candidate=await api('/api/themes/design','POST',{prompt,provider:selected});
+    themeAiCandidate=candidate;$('theme-ai-name').textContent=candidate.name;
+    $('theme-ai-preview').innerHTML=themeV2PreviewHTML(candidate.values);
+    $('theme-ai-note').textContent=candidate.values.theme_design?.design_note||'Controlla l’anteprima e scegli se applicare o conservare questo tema.';
+    $('theme-ai-result').hidden=false;$('theme-ai-status').textContent='Anteprima pronta. Il tema corrente non è cambiato: scegli Applica per usarla.';
+  }catch(error){
+    const message=/409|occupat|già.*(corso|attiv|lavor)|busy|another.*(running|active)/i.test(error.message)?'Il modello è occupato. Attendi la fine del lavoro in corso e riprova; puoi sempre scegliere un tema pronto.':error.message;
+    $('theme-ai-status').textContent=message;toast(message);
+  }finally{themeAiBusy=false;$('theme-ai-generate').disabled=false;$('theme-ai-prompt').disabled=false;$('admin').inert=false;$('theme-ai-generate').textContent='Crea anteprima con AI';updateGenerationButtons()}
+};
+$('theme-ai-apply').onclick=()=>{
+  if(!themeAiCandidate)return;applyThemePreset(themeAiCandidate);
+  $('theme-presets').value='';$('theme-ai-status').textContent='Tema applicato in anteprima. Salva il brief per conservarlo in questo progetto.';
+};
+$('theme-ai-save').onclick=async()=>{
+  if(!themeAiCandidate)return;$('theme-ai-save').disabled=true;
+  try{await api('/api/themes','POST',themeAiCandidate);await loadThemes();$('theme-ai-status').textContent='Tema salvato sul PC, disponibile nella galleria. Applicarlo al progetto resta una scelta separata.'}
+  catch(error){$('theme-ai-status').textContent=error.message}
+  finally{$('theme-ai-save').disabled=false}
 };
 loadThemes().catch(e=>{$('theme-status').textContent=e.message});

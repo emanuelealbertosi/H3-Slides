@@ -5,14 +5,22 @@ const browser=await chromium.launch({headless:true});
 const page=await browser.newPage({viewport:{width:1440,height:1000}});
 const errors=[];
 page.on('pageerror',error=>errors.push(error.message));
+const openBrief=async()=>{
+  if(await page.locator('body').getAttribute('data-view')==='create')return;
+  const accept=dialog=>dialog.accept();page.on('dialog',accept);
+  try{
+    await page.locator('#editor-menu>summary').click();await page.locator('#editor-settings').click();
+    await page.waitForFunction(()=>document.body.dataset.view==='create');
+  }finally{page.off('dialog',accept)}
+};
 try{
-  await page.goto(url);
+  await page.goto(new URL('/create?project='+encodeURIComponent(pid),url).href);
   await page.locator('#project-list option[value="'+pid+'"]').waitFor({state:'attached'});
   await page.locator('#project-list').selectOption(pid);
   await page.locator('.slide-card').waitFor();
   await page.locator('#open-library').click();
   await page.locator('#library').waitFor();
-  assert.equal(new URL(page.url()).pathname,'/library');
+  assert.equal(new URL(page.url()).pathname,'/');
   assert.equal(await page.locator('.project-card[data-project="'+pid+'"]').count(),1);
   await page.locator('.project-card[data-project="'+pid+'"] [data-open-project]').click();
   await page.locator('.slide-card').waitFor();
@@ -135,7 +143,7 @@ try{
   await page.reload();
   await page.locator('.prose-box p').first().waitFor();
   assert.deepEqual(await page.locator('.prose-box p').allTextContents(),paragraphs);
-  await page.locator('#editor-menu>summary').click();await page.locator('#editor-settings').click();
+  await openBrief();
   await page.locator('#prompt').fill('Una modifica al brief ancora non salvata');
   await page.waitForTimeout(1800);
   assert.equal(await page.locator('#prompt').inputValue(),'Una modifica al brief ancora non salvata');
@@ -146,7 +154,7 @@ try{
   assert.ok(await page.locator('#local-fields').isVisible());
   await page.locator('#close-admin').click();
   assert.equal(await page.locator('.slide-card').count(),1);
-  await page.locator('#editor-menu>summary').click();await page.locator('#editor-settings').click();
+  await openBrief();
   await page.getByText('Personalizzazione avanzata · layout, font e colori',{exact:true}).click();
   await page.locator('#template').selectOption('steps');
   await page.locator('#font').selectOption('Georgia');
@@ -184,11 +192,12 @@ try{
   await page.locator('#open-admin').click();
   assert.equal(await page.locator('[data-setting="inference.temperature"]').inputValue(),'0.44');
   await page.locator('#close-admin').click();
+  await page.locator('#setup-back').click();
   await page.reload();
   await page.getByRole('heading',{name:'Titolo inline verificato',exact:true}).waitFor();
-  await page.locator('#editor-menu>summary').click();await page.locator('#editor-settings').click();
+  await openBrief();
   await page.getByText('Personalizzazione avanzata · layout, font e colori',{exact:true}).click();
-  await page.getByText('Creatore di temi',{exact:true}).click();
+  await page.locator('.theme-details>summary').click();
   await page.locator('#theme-presets option', {hasText:'Notte'}).waitFor({state:'attached'});
   await page.locator('#theme-presets').selectOption({label:'Notte · blu e corallo'});
   assert.equal(await page.locator('#background-color').inputValue(),'#111d35');
@@ -212,7 +221,7 @@ try{
   assert.equal(await page.locator('#background-color').inputValue(),'#111d35');
   assert.equal(await page.locator('[data-theme-number="body_size"]').inputValue(),'21');
   await page.locator('#theme-presets option').filter({hasText:'Tema test browser'}).waitFor({state:'attached'});
-  await page.locator('#editor-menu>summary').click();await page.locator('#editor-settings').click();
+  await openBrief();
   await page.locator('#web-enabled').check();
   await page.locator('#web-query').fill('Query visibile prima del consenso');
   await page.locator('#web-consent').check();

@@ -48,32 +48,115 @@ export function visualAnchorAt(x,y,width,height){
 // Self-contained: same measured-fit code in preview, PDF, PPTX and Slidev.
 export function fitSlide(frame,options={}){
   if(frame?.dataset.engine==='v2'){
+    // Bounded, derived layout only. Never write fitting decisions into the page JSON.
+    const baseHeight=[720,960,800,1280].includes(Number(frame.dataset.pageBaseHeight))?Number(frame.dataset.pageBaseHeight):720;
+    const maxHeight=frame.dataset.canvasMode==='fixed'?baseHeight:Math.min(Math.ceil(baseHeight*1.15),Math.max(baseHeight,Number(frame.dataset.pageMaxHeight)||Math.ceil(baseHeight*1.15)));
+    const requested=Number(options?.targetHeight),target=Number.isFinite(requested)&&requested>0?Math.min(maxHeight,Math.max(baseHeight,Math.ceil(requested))):baseHeight;
+    const nodes=[...frame.querySelectorAll('.v2-node')];
+    if(!frame.offsetWidth)return {...(frame.__v2FitReport||{layout:'ai-page',height:baseHeight,neededHeight:baseHeight,baseHeight,maxHeight,fontScale:1,nodes:nodes.length,overflow:false,adjusted:false}),deferred:true};
+    const properties=['height','min-height','max-height','padding-top','padding-right','padding-bottom','padding-left','gap','row-gap','column-gap','font-size','line-height','grid-template-columns','grid-column'];
+    const elements=[frame,...frame.querySelectorAll('.v2-root,.v2-node,.v2-text,.v2-media,.v2-media img,.footer')];
+    for(const element of elements){
+      if(!element.__v2FitBaseline)element.__v2FitBaseline=Object.fromEntries(properties.map(key=>[key,[element.style.getPropertyValue(key),element.style.getPropertyPriority(key)]]));
+      for(const [key,[value,priority]] of Object.entries(element.__v2FitBaseline))if(value)element.style.setProperty(key,value,priority);else element.style.removeProperty(key);
+    }
     const controls=[...frame.querySelectorAll('.v2-tools')];
     const saved=controls.map(e=>e.style.display);controls.forEach(e=>e.style.display='none');
     try{
-      // A model may request too many columns around a detailed visual. Preserve
-      // its content/aspect ratio, enlarging the containing grid span as needed.
-      let mediaAdjusted=false;
-      for(const media of frame.querySelectorAll('.v2-media')){
-        const image=media.querySelector('img'),aspect=image?.naturalWidth&&image?.naturalHeight?image.naturalWidth/image.naturalHeight:1.5;
-        const minimum=media.dataset.visualKind==='diagram'?600:Math.min(720,Math.max(280,Math.sqrt(90000*aspect)));
-        let cell=media.closest('.v2-node');
-        while(cell&&media.clientWidth+1<minimum){
-          cell.style.gridColumn='1 / -1';mediaAdjusted=true;
-          cell=cell.parentElement?.closest('.v2-node');
+      const read=element=>{const s=getComputedStyle(element);return {element,gap:parseFloat(s.rowGap)||0,padding:['Top','Right','Bottom','Left'].map(side=>parseFloat(s['padding'+side])||0)}};
+      const spacing=[frame,...frame.querySelectorAll('.v2-root,.v2-node,.footer')].map(read);
+      const texts=[...frame.querySelectorAll('.v2-text')].map(element=>{
+        const s=getComputedStyle(element),node=element.closest('.v2-node'),role=node?.dataset.v2Role;
+        const caption=element.matches('.v2-caption,.v2-source')||['caption','eyebrow'].includes(role),code=element.matches('.v2-code');
+        const heading=element.matches('h2')||['title','subtitle','stat'].includes(role),minimum=caption?14:code?18:heading?32:20;
+        const size=Math.max(minimum,parseFloat(s.fontSize)||24),line=(parseFloat(s.lineHeight)||size*1.4)/(parseFloat(s.fontSize)||size);
+        element.style.fontSize=size+'px';return {element,size,minimum,line,heading,code};
+      });
+      const media=[...frame.querySelectorAll('.v2-media')].map(element=>{
+        const image=element.querySelector('img'),aspect=image?.naturalWidth&&image?.naturalHeight?image.naturalWidth/image.naturalHeight:1.5;
+        const diagram=element.dataset.visualKind==='diagram',minimumWidth=diagram?600:Math.min(720,Math.max(280,Math.sqrt(90000*aspect)));
+        return {element,image,aspect,minimumWidth,minimumHeight:diagram?Math.max(220,600/aspect):Math.max(160,minimumWidth/aspect)};
+      });
+      let compact=0,reflowed=false,mediaAdjusted=false,fontScale=1;
+      const protectMedia=()=>{
+        for(const item of media){
+          let cell=item.element.closest('.v2-node');
+          while(cell&&item.element.clientWidth+1<item.minimumWidth){cell.style.gridColumn='1 / -1';mediaAdjusted=true;cell=cell.parentElement?.closest('.v2-node')}
+        }
+      };
+      const inspect=()=>{
+        frame.style.height='auto';frame.style.minHeight='0px';protectMedia();
+        const neededHeight=Math.ceil(frame.offsetHeight),bounds=frame.getBoundingClientRect(),scale=bounds.width/1280||1;
+        const horizontal=nodes.filter(element=>{const r=element.getBoundingClientRect();return r.right>bounds.right+2*scale||r.left<bounds.left-2*scale||element.scrollWidth>element.clientWidth+2});
+        const mediaOverflow=media.some(item=>{
+          if(!item.image?.complete||!item.image.naturalWidth)return false;
+          const r=item.image.getBoundingClientRect(),w=Math.min(r.width/scale,r.height/scale*item.aspect),h=w/item.aspect;
+          return w+2<item.minimumWidth||h+2<item.minimumHeight;
+        });
+        return {neededHeight,horizontal,mediaOverflow};
+      };
+      const fits=state=>state.neededHeight<=target+1&&!state.horizontal.length&&!state.mediaOverflow;
+      const applySpacing=level=>{
+        compact=level;
+        for(const item of spacing){
+          const outer=item.element===frame,factor=level===1?.75:.5;
+          if(item.gap)item.element.style.gap=Math.max(outer?14:8,item.gap*factor)+'px';
+          for(let side=0;side<4;side++)if(item.padding[side])item.element.style.setProperty('padding-'+['top','right','bottom','left'][side],Math.min(item.padding[side],Math.max(outer?(side%2?32:20):8,item.padding[side]*factor))+'px');
+        }
+        for(const item of texts)item.element.style.lineHeight=Math.max(item.heading?1.08:item.code?1.2:1.18,Math.min(item.line,level===1?1.3:1.2));
+        for(const item of media)if(item.image){
+          const maximum=Math.max(item.minimumHeight,baseHeight*(level===1?.62:.52));
+          item.image.style.maxHeight=Math.floor(maximum)+'px';mediaAdjusted=true;
+        }
+      };
+      let state=inspect();
+      if(!fits(state)){applySpacing(1);state=inspect()}
+      const tryReflow=()=>{
+        // Independent siblings can share columns. Headings, introductions, code
+        // and media keep their complete row; the DOM/read/edit order never moves.
+        for(const group of [...frame.querySelectorAll('.v2-group'),frame.querySelector('.v2-root')].filter(Boolean)){
+          const children=[...group.children].filter(child=>child.matches('.v2-node'));
+          const eligible=children.filter(child=>!['title','subtitle','lead','eyebrow','caption'].includes(child.dataset.v2Role)&&
+            !child.matches('[data-node-kind="heading"],[data-node-kind="code"],[data-node-kind="image"],[data-node-kind="diagram"]')&&
+            !child.querySelector('[data-node-kind="code"],[data-node-kind="image"],[data-node-kind="diagram"]'));
+          if(eligible.length<2||group.clientWidth<700)continue;
+          const previous=[group,...children].map(element=>({element,columns:element.style.gridTemplateColumns,column:element.style.gridColumn}));
+          const columns=group.clientWidth>=1100&&eligible.length>=6&&eligible.every(child=>(child.textContent||'').length<220)?3:2;
+          group.style.gridTemplateColumns='repeat('+columns+',minmax(0,1fr))';
+          for(const child of children)child.style.gridColumn=eligible.includes(child)?'auto':'1 / -1';
+          let candidate=inspect();
+          // A lone final cell wastes a full half-row. Expand only independent
+          // trailing content and keep the change only after measuring a gain.
+          let trailing=0;for(let i=children.length-1;i>=0&&eligible.includes(children[i]);i--)trailing++;
+          if(columns===2&&trailing%2===1){
+            const last=children.at(-1),column=last.style.gridColumn;last.style.gridColumn='1 / -1';
+            const expanded=inspect();
+            if(expanded.neededHeight<candidate.neededHeight&&!expanded.horizontal.length&&!expanded.mediaOverflow)candidate=expanded;
+            else last.style.gridColumn=column;
+          }
+          if(candidate.neededHeight<state.neededHeight&&!candidate.horizontal.length&&!candidate.mediaOverflow){state=candidate;reflowed=true}
+          else for(const entry of previous){entry.element.style.gridTemplateColumns=entry.columns;entry.element.style.gridColumn=entry.column}
+        }
+      };
+      if(!fits(state))tryReflow();
+      if(!fits(state)){applySpacing(2);state=inspect()}
+      if(!fits(state)&&texts.length){
+        const minimum=Math.min(...texts.map(item=>item.minimum/item.size));
+        const scales=[.94,.88,.82,.76,.70,.64,.58,.52,.46,.40].filter(value=>value>minimum);scales.push(minimum);
+        for(const scale of scales){
+          for(const item of texts)item.element.style.fontSize=Math.max(item.minimum,Math.round(item.size*scale*10)/10)+'px';
+          fontScale=Math.min(...texts.map(item=>parseFloat(item.element.style.fontSize)/item.size));state=inspect();if(!fits(state))tryReflow();if(fits(state))break;
         }
       }
-      frame.style.height='auto';
-      frame.style.minHeight='720px';
-      const needed=frame.offsetHeight;
-      const height=Math.max(720,frame.dataset.canvasMode==='fixed'?720:needed,Number(options?.targetHeight)||0);
-      frame.style.height=height+'px';
-      const bounds=frame.getBoundingClientRect();
-      const overflow=needed>height+2||height>8192||[...frame.querySelectorAll('.v2-node,.v2-text')].some(e=>{
-        const r=e.getBoundingClientRect();return r.right>bounds.right+2||r.left<bounds.left-2||r.bottom>bounds.bottom+2||e.scrollWidth>e.clientWidth+2;
-      });
-      frame.dataset.overflow=String(overflow);
-      return {layout:'ai-page',height,overflow,adjusted:height>720||mediaAdjusted};
+      const height=Math.min(maxHeight,Math.max(target,state.neededHeight)),overflow=state.neededHeight>height+1||Boolean(state.horizontal.length)||state.mediaOverflow;
+      frame.style.height=height+'px';frame.style.minHeight=baseHeight+'px';
+      const bounds=frame.getBoundingClientRect(),scale=bounds.width/1280||1;
+      const overflowNodes=nodes.filter(element=>{const r=element.getBoundingClientRect();return r.bottom>bounds.bottom+2*scale||state.horizontal.includes(element)}).map(element=>element.dataset.pageNode);
+      frame.dataset.overflow=String(overflow);frame.dataset.neededHeight=String(state.neededHeight);frame.dataset.fontScale=String(Math.round(fontScale*1000)/1000);
+      frame.dataset.mediaOverflow=String(state.mediaOverflow);frame.dataset.canvasHeight=String(height);
+      const report={layout:'ai-page',height,neededHeight:state.neededHeight,baseHeight,maxHeight,fontScale:Math.round(fontScale*1000)/1000,nodes:nodes.length,overflow,overflowNodes,
+        adjusted:compact>0||reflowed||mediaAdjusted||height>baseHeight,compact,reflowed,mediaOverflow:state.mediaOverflow};
+      frame.__v2FitReport=report;return report;
     }finally{controls.forEach((e,i)=>e.style.display=saved[i])}
   }
   // Keep every helper inside this function: preview/export serialize it with evaluate().

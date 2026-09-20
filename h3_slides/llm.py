@@ -359,11 +359,11 @@ class LLM:
                 for attempt in range(4):
                     attempts, status = attempt + 1, None
                     outcome = "error"
-                    logging.info("LLM richiesta: id=%s tentativo=%s mode=%s prompt_chars=%s immagini=%s json=%s max_tokens=%s timeout=%s",
+                    logging.info("LLM richiesta: id=%s tentativo=%s mode=%s prompt_chars=%s immagini=%s json=%s stream=%s max_tokens=%s timeout=%s",
                                  request_id, attempt + 1, self.provider.mode,
                                  len(SYSTEM) + sum(len(item["text"]) for item in content if item["type"] == "text"),
                                  sum(item["type"] == "image_url" for item in content),
-                                 "response_format" in body, body.get("max_tokens"), timeout)
+                                 "response_format" in body, body["stream"], body.get("max_tokens"), timeout)
                     async with session.post(self.url + "/chat/completions", json=body, headers=headers,
                                             allow_redirects=False) as response:
                         status = response.status
@@ -403,9 +403,13 @@ class LLM:
                                 body["max_tokens"] = 1600
                                 continue
                             raise RuntimeError(message)
-                        if on_text is not None and "text/event-stream" in response.headers.get("Content-Type", ""):
-                            result = await _read_completion_stream(response, on_text)
+                        if on_text is not None and "text/event-stream" in response.headers.get("Content-Type", "").lower():
+                            self.notify("LLM · connessione streaming aperta; attendo il contenuto della pagina")
+                            result = await _read_completion_stream(response, on_text, notify=self.notify)
                         else:
+                            if on_text is not None:
+                                self.notify("LLM · questo server restituisce una risposta unica nonostante la richiesta streaming. "
+                                            "La pagina apparirà quando la risposta sarà completa.")
                             result = await response.json()
                             if on_text is not None:
                                 await on_text(result["choices"][0]["message"]["content"])
@@ -459,9 +463,10 @@ class LLM:
             raise ValueError("Il modello non ha restituito JSON valido; cambia modello o riduci il prompt") from exc
 
 
-async def _read_completion_stream(response, on_text):
+async def _read_completion_stream(response, on_text, notify=None):
     """One bounded SSE completion. Never retry a partially delivered response."""
     text, finish, metadata, size = [], None, {}, 0
+    announced_content, announced_thinking = False, False
     async for raw in response.content:
         if len(raw) > 500000:
             raise ValueError("Evento streaming LLM troppo grande")
@@ -480,7 +485,15 @@ async def _read_completion_stream(response, on_text):
         for choice in event.get("choices", []):
             if choice.get("index", 0) != 0:
                 continue
-            delta = choice.get("delta", {}).get("content") or ""
+            payload = choice.get("delta", {})
+            # Reasoning is never rendered, stored or logged. A fixed status is
+            # enough to distinguish an active model from a stalled connection.
+            if not announced_content and not announced_thinking and (
+                    payload.get("reasoning_content") or payload.get("reasoning")):
+                announced_thinking = True
+                if notify:
+                    notify("LLM · elaborazione in corso; il modello non ha ancora inviato il testo della pagina")
+            delta = payload.get("content") or ""
             if delta:
                 if not isinstance(delta, str):
                     raise ValueError("Formato streaming LLM non supportato")
@@ -488,6 +501,10 @@ async def _read_completion_stream(response, on_text):
                 if size > 400000:
                     raise ValueError("Risposta streaming troppo grande")
                 text.append(delta)
+                if not announced_content:
+                    announced_content = True
+                    if notify:
+                        notify("LLM · ricezione del contenuto in streaming")
                 await on_text(delta)
             finish = choice.get("finish_reason") or finish
     if not finish:

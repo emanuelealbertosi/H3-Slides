@@ -1,12 +1,12 @@
 <!doctype html>
 <html lang="it"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>H3-slides · Studio</title><link rel="stylesheet" href="/static/vendor/katex/katex.min.css"><link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/studio.css"></head>
+<title>H3-slides · Studio</title><link rel="stylesheet" href="/static/vendor/katex/katex.min.css"><link rel="stylesheet" href="/static/style.css"><link rel="stylesheet" href="/static/studio.css"><link rel="stylesheet" href="/static/creation-flow.css"><link rel="stylesheet" href="/static/library-home.css"><link rel="stylesheet" href="/static/theme-studio.css"><link rel="stylesheet" href="/static/format-studio.css"></head>
 <body>
 <header class="studio-sidebar"><a class="brand" href="/">H3<span>slides</span><small>STUDIO</small></a>
 <button id="toggle-sidebar" class="sidebar-toggle" type="button" aria-label="Comprimi menu" aria-expanded="true" title="Comprimi menu">‹</button>
 <nav aria-label="Navigazione principale">
   <button id="open-create" class="nav-item" type="button" title="Crea"><span>◇</span>Crea</button>
-  <button id="open-library" class="nav-item" type="button" title="Progetti"><span>▤</span>Progetti</button>
+  <button id="open-library" class="nav-item" type="button" title="Home · Progetti"><span>▤</span>Home</button>
   <button id="open-admin" class="nav-item" type="button" title="Admin · LLM"><span>⚙</span>Admin · LLM</button>
 </nav>
 <div class="sidebar-status"><i></i><span id="connection">Connessione…</span><small>Dati e file restano sul tuo PC</small></div></header>
@@ -22,17 +22,17 @@
   <label>Titolo<input id="title" value="Nuova presentazione" maxlength="140"></label>
   <label>Argomento o istruzioni<textarea id="prompt" rows="5" placeholder="Es. La rivoluzione francese. Puoi aggiungere pubblico, obiettivo e tono, oppure istruzioni sui documenti allegati."></textarea></label>
   <p id="source-mode" class="muted hint">Nessun allegato: genera dalla conoscenza del modello. Nessuna ricerca web; verifica fatti e date importanti.</p>
-  <div class="row"><label>Slide<input id="count" type="number" min="1" max="30" value="6"></label>
+  <div class="row"><label>Obiettivo di slide<input id="count" type="number" min="1" max="30" value="6"><small id="slide-count-help">V2 può aggiungere fino a 2 slide per mantenere contenuti leggibili nel formato scelto.</small></label>
   <label>Tema<select id="theme"><option value="ink">Inchiostro</option><option value="paper">Carta</option><option value="forest">Foresta</option></select></label></div>
   <details class="model-panel" open><summary>Layout e stile</summary>
   <label>Template<select id="template"><option value="auto">Automatico, in base ai contenuti</option><option value="editorial">Editoriale</option><option value="cards">Schede</option><option value="steps">Sequenza numerata</option><option value="split">Due colonne</option><option value="minimal">Essenziale</option></select></label>
   <div class="row"><label>Sfondo<input id="background-color" type="color" value="#141b2c"></label><label>Accento<input id="accent-color" type="color" value="#b1f1ce"></label></div>
   <label>Font<select id="font"><option>Arial</option><option>Calibri</option><option>Segoe UI</option><option>Georgia</option><option>Verdana</option><option>Consolas</option></select></label>
   <label>Quantità di testo da generare<select id="text-density"><option value="brief">Accenni · 3 punti essenziali</option><option value="detailed" selected>Approfondito · paragrafi in box</option><option value="complete">Completo · paragrafi estesi ed esempi</option></select></label>
-  <small>Da 1 a 4 paragrafi, impaginati secondo il contenuto. Automatico alterna composizioni pertinenti: confronti, sequenze, griglie, approfondimenti e immagini. Il composer misura lo spazio senza cancellare i tuoi testi.</small>
+  <small>V2 progetta sezioni libere secondo il contenuto, senza il limite di quattro blocchi. Il motore classico usa fino a quattro paragrafi e composizioni predefinite.</small>
   <small>Template, font e colori aggiornano subito l’anteprima. Salva per conservarli. La quantità di testo vale per nuove slide e rigenerazioni; non elimina i testi già modificati.</small>
   </details>
-  <details class="model-panel"><summary>Creatore di temi</summary>
+  <details class="model-panel theme-details"><summary>Dettagli del tema · personalizza e salva</summary>
   <label>Combinazioni pronte<select id="theme-presets"><option value="">Personalizzato / tema corrente</option></select></label>
   <div id="theme-editor"></div><p id="theme-contrast" class="hint"></p>
   <small>Automatico sceglie testo chiaro/scuro per contrasto, anche sui box. Le dimensioni sono in pixel: 0 lascia il layout adattivo. Testi più grandi possono richiedere meno contenuto.</small>
@@ -53,10 +53,11 @@
   <small>Con la ricerca web attiva, cerca anche se i documenti bastano. Non cambia la priorità delle fonti e richiede il consenso sotto. Scelta ricordata nel progetto e nel browser.</small>
   <label id="source-priority-option" hidden>Priorità delle fonti<select id="source-priority"><option value="documents">Documenti allegati (predefinito)</option><option value="web">Web (scelta esplicita)</option></select><small>Prima i documenti: il web cerca solo gli argomenti mancanti. Se i documenti bastano, la ricerca viene saltata. Cambia priorità solo se vuoi partire dal web. Scelta salvata in questo progetto.</small></label>
   <label>Motore<select id="web-provider"><option value="wikipedia">Wikipedia diretta · nessun server o API key</option><option value="searxng">SearXNG locale</option><option value="duckduckgo">DuckDuckGo · sperimentale, senza installazioni</option></select></label>
+  <div id="web-fallback-option" hidden><label class="check"><input id="web-fallback" type="checkbox" checked>Se SearXNG non è disponibile o non trova risultati, prova Wikipedia diretta, poi DuckDuckGo.</label><small>Solo servizi gratuiti: ricevono la query breve, mai allegati o prompt completo. Non aggira CAPTCHA, rifiuti o limiti del servizio.</small></div>
   <label>Query di ricerca · facoltativa<input id="web-query" maxlength="200" placeholder="Vuota: il modello la ricava da argomento e istruzioni"></label>
   <label>Numero massimo di fonti<select id="web-max-sources"><option value="3">3 · più rapido</option><option value="4">4</option><option value="5">5 · più fonti</option></select></label>
   <small id="wikipedia-hint">Wikipedia diretta cerca e legge voci in italiano, con estensione all’inglese se necessario. Non cerca tutto il web: le voci appartengono alla stessa enciclopedia. Non richiede installazioni; serve Internet.</small>
-  <small>Con zero risultati prova una query più semplice; non ritenta CAPTCHA o rifiuti del servizio. Se non acquisisce fonti web, usa solo i documenti allegati e lo segnala. Senza allegati si ferma.</small>
+  <small>Se anche i motori autorizzati non trovano risultati, prova una query più semplice. Non ritenta CAPTCHA o rifiuti del servizio. Se non acquisisce fonti web, usa solo i documenti allegati e lo segnala. Senza allegati si ferma.</small>
   <small>Al motore di ricerca inviamo solo una query breve, scritta da te o ricavata dal modello: mai allegati o prompt completo. La query effettiva appare nei log. L'app legge pagine pubbliche, conserva gli estratti sul PC e li passa al modello scelto, che usa il prompt con il consenso previsto per il provider. SearXNG è locale ma consulta motori online. Nessuna API a pagamento; CAPTCHA e limiti vengono rispettati.</small>
   <label class="check"><input id="web-consent" type="checkbox">Autorizzo l'invio della query, anche automatica, e la lettura delle pagine trovate.</label>
   <small id="web-consent-hint">Scelta ricordata in questo browser per il motore scelto. Deseleziona per revocarla; non attiva la ricerca nei nuovi progetti.</small>
@@ -75,8 +76,9 @@
   <small>Openverse interviene solo se la ricerca immagini è attiva e Commons/Wikipedia non trovano una foto valida. Riceve solo il soggetto breve, mai allegati. Gratuito, senza API key o installazioni; limiti rispettati. Licenze ammesse: CC0, Public domain, CC BY e CC BY-SA, con riscontro sulla pagina originale. Verifica i diritti prima dell’uso. Se non disponibile o senza riscontri, resta il segnaposto.</small>
   <small>Foto e diagramma possono convivere nella stessa slide, con comandi e posizioni indipendenti. Le figure del documento vengono proposte secondo il contesto della pagina. La ricerca internet invia a Wikimedia Commons solo il soggetto visivo della slide e cerca una foto con licenza libera quando manca una figura selezionata, anche in presenza di Manim. Se non ne trova, lascia un segnaposto: passa sopra con il mouse per caricare la tua immagine. Nessun servizio a pagamento.</small>
   <input id="slide-image-file" type="file" accept=".jpg,.jpeg,.png,.webp" hidden>
-  <label class="check"><input id="manim-diagrams" type="checkbox">Crea un vero diagramma Manim in ogni slide di contenuto</label>
-  <small>L’opzione richiede una scena per ogni slide di contenuto, lasciando libera la copertina. Sono disponibili flowchart, Venn, Gantt, timeline, alberi, grafi anche orientati, barre, istogrammi, dispersione e funzioni. Manim costruisce la scena a 1800 × 1200 e verifica dati, leggibilità e ingombri; eventuali errori restano nel log, senza sostituire un grafico specifico con semplici riquadri. Per i progetti esistenti usa “Crea diagrammi mancanti” o “Riprogetta tutti”. Non viene eseguito codice prodotto dal modello.</small>
+  <label class="check"><input id="manim-diagrams" type="checkbox" aria-describedby="manim-diagrams-help">Diagrammi Manim automatici</label>
+  <small id="manim-diagrams-help">Se attivo, il modello può includere diagrammi Manim anche senza citarli nel prompt. Se disattivo, la generazione non crea diagrammi Manim.</small>
+  <small>Nel motore classico è richiesta una scena per ogni slide di contenuto, lasciando libera la copertina. Sono disponibili flowchart, Venn, Gantt, timeline, alberi, grafi anche orientati, barre, istogrammi, dispersione e funzioni. Manim costruisce la scena a 1800 × 1200 e verifica dati, leggibilità e ingombri; eventuali errori restano nel log, senza sostituire un grafico specifico con semplici riquadri. Per i progetti esistenti usa “Crea diagrammi mancanti” o “Riprogetta tutti”. Non viene eseguito codice prodotto dal modello.</small>
   </details>
 </aside>
 <section class="workspace">

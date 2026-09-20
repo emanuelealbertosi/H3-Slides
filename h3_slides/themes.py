@@ -20,6 +20,13 @@ class ThemeDesign(BaseModel):
     box_radius: int = Field(default=18, ge=0, le=32)
     title_size: int = Field(default=0, ge=0, le=76)
     body_size: int = Field(default=0, ge=0, le=32)
+    visual_family: Literal["classic", "editorial", "modern", "playful", "technical", "minimal"] = "classic"
+    background_style: Literal["flat", "gradient"] = "flat"
+    secondary_color: str = Field(default="", pattern=COLOR)
+    heading_font: Literal["", "Arial", "Calibri", "Segoe UI", "Georgia", "Verdana", "Consolas"] = ""
+    shadow_style: Literal["none", "soft", "lifted"] = "soft"
+    decoration: Literal["none", "stripe", "corner"] = "none"
+    design_note: str = Field(default="", max_length=400)
 
     @field_validator("title_size", "body_size")
     @classmethod

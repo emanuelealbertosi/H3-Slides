@@ -102,7 +102,7 @@ try{
   };
   const saved=async revision=>page.waitForFunction(value=>document.querySelector('#slide-dual-slide')?.dataset.saving===undefined&&
     JSON.parse(document.querySelector('#slide-dual-slide').dataset.signature)[0].revision>value,revision);
-  await page.goto(origin);await ready();
+  await page.goto(origin+'/editor?project=dual-ui');await ready();
   assert.equal(await frame.locator('.visual').count(),2);
   await media('diagram').hover();
   await page.waitForFunction(()=>getComputedStyle(document.querySelector('.visual-actions[data-visual-kind="diagram"]')).opacity==='1');

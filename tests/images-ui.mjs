@@ -9,7 +9,7 @@ try{
   const page=await browser.newPage({viewport:{width:1600,height:1000}});
   const errors=[];page.on('pageerror',error=>errors.push(error.message));
   await page.addInitScript(id=>localStorage.setItem('h3slides-project',id),pid);
-  await page.goto(url);
+  await page.goto(new URL('/editor?project='+encodeURIComponent(pid),url).href);
   await page.waitForFunction(()=>document.querySelector('#model').options[0].textContent!=='Caricamento catalogo…');
   if(await page.locator('#model-setup').isVisible())await page.locator('#close-model-setup').click();
   if(await page.locator('#admin').isVisible())await page.locator('#close-admin').click();

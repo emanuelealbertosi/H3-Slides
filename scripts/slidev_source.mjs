@@ -1,16 +1,18 @@
-import {slideHTML,slideCSS,visualFor,fitSlide} from '../static/deck.mjs';
+import {slideHTML,slideCSS,visualFor} from '../static/deck.mjs';
 import {pageAssets} from '../static/page-v2.mjs';
 import {fileURLToPath} from 'node:url';
 let input='';for await(const chunk of process.stdin)input+=chunk;
 const project=JSON.parse(input);
 process.env.PLAYWRIGHT_BROWSERS_PATH ||= fileURLToPath(new URL('../runtime/browsers',import.meta.url));
 const {chromium}=await import('playwright-chromium');
-const {loadMathStyles}=await import('./export.mjs');
+const {loadMathStyles,measureLayouts,exportPageFormat,exportCanvasHeight}=await import('./export.mjs');
+const canvas=exportPageFormat(project);
 const sharedCSS=await loadMathStyles()+slideCSS;
 const browser=await chromium.launch({headless:true});
-let rendered,overflow=[],canvasHeight=720;
+let rendered,overflow=[],canvasHeight=canvas.height;
 try{
-  const page=await browser.newPage({viewport:{width:1280,height:720}});
+  const page=await browser.newPage({viewport:{width:canvas.width,height:canvas.height}});
+  await page.route('**/*',route=>route.abort());
   // Measure using the actual image proportions supplied by the asset packager.
   // A square 1px placeholder changes object-fit and gives the wrong layout.
   const placeholder=(id,kind)=>{
@@ -27,14 +29,13 @@ try{
     project.slides.map((s,i)=>slideHTML(project,s,i,urls[i])).join(''));
   await page.evaluate(()=>document.fonts.ready);
   await page.evaluate(()=>Promise.all([...document.images].map(i=>i.decode())));
-  for(const frame of await page.locator('.slide-frame').all())await frame.evaluate(fitSlide);
-  rendered=await page.locator('.slide-frame').evaluateAll(nodes=>nodes.map(n=>({html:n.outerHTML,height:n.offsetHeight,overflow:n.dataset.overflow==='true'})));
-  canvasHeight=Math.max(720,...rendered.map(r=>r.height));
+  let measured=await measureLayouts(page);
+  canvasHeight=exportCanvasHeight(project,measured);
   // Slidev has one canvas for the whole deck. Reflow shorter cards to its
   // full height before freezing HTML, including their footer and freeform boxes.
-  for(const frame of await page.locator('.slide-frame').all())await frame.evaluate(fitSlide,{targetHeight:canvasHeight});
+  measured=await measureLayouts(page,{targetHeight:canvasHeight});
   rendered=await page.locator('.slide-frame').evaluateAll(nodes=>nodes.map(n=>({html:n.outerHTML,height:n.offsetHeight,overflow:n.dataset.overflow==='true'})));
-  overflow=rendered.flatMap((r,i)=>r.overflow?[i+1]:[]);
+  overflow=measured.flatMap((r,i)=>r.overflow?[i+1]:[]);
   if(overflow.length)throw new Error('Testo fuori dallo spazio nelle slide '+overflow.join(', ')+'. Dividi o modifica il contenuto prima di esportare; nessuna parte viene nascosta.');
   rendered=rendered.map((r,i)=>{
     const media=visualFor(project,project.slides[i].content,project.slides[i]);

@@ -88,6 +88,7 @@ try{
   await page.locator('#web-sources [data-research-status="completed"]').waitFor();
   assert.equal(await page.locator('#source-priority').inputValue(),'web','Explicit project choice survives reload');
   await page.locator('#new').click();
+  await page.locator('[data-start-method="prompt"]').click();
   assert.equal(await page.locator('#source-priority').inputValue(),'documents','New projects reset priority');
   await page.locator('#project-list').selectOption('research-ui');
   await page.locator('#web-sources [data-research-status="completed"]').waitFor();

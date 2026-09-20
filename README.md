@@ -3,6 +3,30 @@
 Studio locale per trasformare PDF, Markdown e immagini in presentazioni modificabili.
 Progetto indipendente da H3-Comics: non ne modifica file, processi o configurazioni.
 
+## Home e creazione guidata
+
+- **Home** mostra tutte le creazioni, le cartelle e i progetti da recuperare.
+  Cerca per titolo, passa da griglia a elenco e trascina i progetti nelle cartelle.
+- **Crea** propone quattro partenze: idea, testo incollato, file/link oppure tema.
+  Non è necessario allegare un documento per creare una presentazione.
+- **Importazione** ha una pagina dedicata con avanzamento del caricamento,
+  fonti selezionate e storico dei documenti riutilizzabili. I file ammessi restano
+  PDF, Markdown/testo, immagini e codice. I link importano solo testo di pagine
+  pubbliche HTML/testo: niente accessi privati o Drive; i PDF si caricano dal disco.
+- **Briefing** raccoglie a sinistra prompt guida, numero di slide, titolo e motore;
+  al centro le fonti; a destra temi, immagini, Manim e ricerca facoltativa.
+  Le impostazioni vengono salvate con il progetto. La selezione delle pagine dei
+  PDF avviene durante la generazione seguendo il prompt, non durante l’upload.
+- **Genera** apre l’editor live con navigatore delle slide, avanzamento e log.
+  Le presentazioni già create si aprono direttamente nell’editor.
+- Nel menu **Presentazione → Visualizza richiesta della fonte** si riaprono
+  prompt e impostazioni salvati alla generazione (per progetti più vecchi senza
+  questa registrazione, quelli del progetto). La rigenerazione da qui crea una
+  nuova versione senza sovrascrivere la presentazione di partenza. Le fonti sono
+  quelle ancora allegate al progetto. Lo stesso menu raccoglie le esportazioni.
+
+Test del percorso desktop/mobile: `node tests/creation-flow-ui.mjs`.
+
 ## Motore V2 · pagine progettate dall'AI (anteprima)
 
 In **Crea → Motore di creazione** scegli **V2**. I nuovi progetti lo propongono
@@ -13,15 +37,41 @@ nuova versione, senza sostituire l'originale.
 - Il modello progetta contenuti **e composizione** di ciascuna pagina: gruppi
   annidati, colonne con proporzioni diverse, sequenze, titoli, paragrafi, codice,
   immagini e diagrammi. Non passa dal contratto classico dei quattro blocchi.
-- Gli elementi completi appaiono progressivamente durante lo streaming. Il
+- I testi appaiono mentre arrivano dal modello, senza aspettare la chiusura di
+  tutto il blocco o della slide. L'editor aggiorna la bozza circa ogni mezzo
+  secondo durante una generazione V2; i salvataggi parziali sono limitati per
+  non rallentare il modello. Identità e struttura dei nodi vengono validate
+  anche nelle bozze, e la pagina definitiva mantiene la validazione completa. Il
   formato è un albero dichiarativo reso in HTML, non HTML/JavaScript eseguibile
   del modello. Restano limiti tecnici anti-abuso (200 elementi, 8 livelli),
   non un numero di riquadri imposto dal template.
 - Il percorso è comune a llama.cpp integrato e API compatibili OpenAI.
-  Se un provider restituisce solo JSON completo, la pagina appare a fine risposta.
+  Attesa del contenuto, scrittura e preparazione di immagini/diagrammi hanno
+  stati distinti. Il ragionamento interno del modello non viene mostrato:
+  finché il server non invia il contenuto della risposta, l'editor segnala attesa.
+  Se un provider restituisce solo JSON completo nonostante la richiesta streaming,
+  viene indicato esplicitamente nei log e la pagina appare a fine risposta.
+  L'anteprima Slidev esterna si sincronizza al salvataggio completo: la scrittura
+  live è nell'editor di H3-Slides.
   Le metriche dipendono dai dati comunicati dal server; non vengono inventate.
-- In formato **Adattivo** l'altezza segue il contenuto. Il formato **Fisso**
-  segnala il testo che non entra; l'export non lo taglia silenziosamente.
+- **Formato pagina** offre **16:9**, **4:3**, **16:10** e **1:1**. A larghezza
+  nominale di 1280 px le altezze sono rispettivamente 720, 960, 800 e 1280 px.
+  **Fisso** mantiene esattamente queste dimensioni; **Adattivo** può aumentare
+  l'altezza al massimo del **15%** (828, 1104, 920 e 1472 px). La scelta si salva
+  nel brief, nelle preferenze e nelle nuove versioni; i progetti precedenti
+  senza questo campo usano 16:9.
+- Prima di confermare una pagina, V2 la misura con HTML, font e proporzioni
+  effettive dei media. Può compattare gli spazi e ridistribuire elementi
+  indipendenti in colonne, mantenendo ordine e contenuti. Adatta i caratteri
+  entro minimi leggibili: titoli 32 px, corpo 20 px, codice 18 px, didascalie e
+  riferimenti 14 px, sulla pagina nominale larga 1280 px. Codice e media
+  mantengono uno spazio adeguato; le immagini conservano le proporzioni.
+- Il **numero di slide è un obiettivo**. Se la pagina non entra neppure dopo
+  la ricomposizione misurata, la generazione può dividerla senza perdere testo,
+  codice, citazioni, fonti, note o media. Sono consentite al massimo **2 slide extra
+  nell'intera presentazione**, non due per ogni pagina. La verifica viene
+  ripetuta dopo l'inserimento dei media; l'obiettivo e il conteggio effettivo
+  restano visibili nell'editor.
 - Doppio clic modifica i testi. I comandi al passaggio del mouse modificano o
   eliminano un elemento. Trascina la maniglia per riordinarlo; Maiusc lo inserisce
   dentro una sezione. **Struttura pagina** e la matita delle sezioni permettono
@@ -29,15 +79,34 @@ nuova versione, senza sostituire l'originale.
   testi, immagini e sezioni senza il limite di quattro blocchi.
 - Ogni immagine mantiene upload e ricerca nei documenti o su Internet.
   Manim conserva progettazione e riprogettazione mirata dei diagrammi.
+  **Diagrammi Manim automatici** autorizza il modello a inserirli anche se non
+  sono nominati nel prompt; deselezionandola non viene avviata la progettazione
+  Manim. La scelta viene conservata nel progetto e nella rigenerazione: controlla
+  questa casella quando riparti dalle impostazioni di una versione precedente.
+  Se un diagramma non riesce, resta un segnaposto vuoto e la generazione continua
+  con gli altri elementi e le altre pagine. Il log identifica l'elemento e conta
+  i diagrammi mancanti al termine. **Riprogetta** permette di riprovare soltanto
+  quel diagramma; se esisteva già un'immagine valida, un tentativo fallito non la
+  cancella. Gli errori dei diagrammi sono non bloccanti anche nel motore Classico.
   Documenti e preferenze di ricerca mantengono la priorità impostata.
 - Le bozze sopravvivono al ricaricamento. Un errore non trasforma la pagina in
   riquadri di ripiego: **Riprendi** riprogetta la pagina incompleta, conservando
   le altre. La pagina in generazione è bloccata per l'editing; le altre restano
   modificabili. Una modifica concorrente non viene sovrascritta dal modello.
-- Sono disponibili **PDF**, **PowerPoint modificabile** e **Slidev**. PDF e
-  anteprima usano lo stesso HTML; nel PowerPoint testi e superfici restano nativi,
-  mentre formule e diagrammi vengono inseriti come immagini. PowerPoint e Slidev
-  usano un'altezza comune per il deck.
+- Sono disponibili **PDF**, **PowerPoint modificabile** e **Slidev** nei quattro
+  formati scelti. PDF e anteprima usano lo stesso HTML; il PDF conserva l'altezza
+  misurata di ogni pagina. PowerPoint e Slidev usano un canvas comune, sempre
+  entro il limite V2 del 15%. Nel PowerPoint testi, superfici uniformi e
+  decorazioni restano nativi; formule, diagrammi e soli sfondi sfumati sono
+  immagini separate dal testo. Una pagina classica non può allungare un deck
+  misto oltre il limite V2; i rapporti diversi da 16:9 richiedono tutte pagine V2.
+
+Le vecchie pagine V2 troppo lunghe per questi limiti mostrano un avviso con
+**Rigenera**. Il contenuto originale rimane visibile e conservato: la sola apertura
+non taglia testi né riscrive la struttura. Rigenerare la pagina consente di
+ottenere una struttura misurata, ricomposta o suddivisa secondo il formato scelto,
+da esportare senza nascondere parti del contenuto. La rigenerazione completa
+dalle impostazioni crea una nuova versione, conservando la presentazione originale.
 
 Limiti dell'anteprima V2: il posizionamento libero a pixel con otto maniglie del
 motore classico non è ancora migrato; si modifica la struttura fluida a sezioni.
@@ -46,18 +115,22 @@ La qualità della regia grafica dipende dal modello: non equivale a una garanzia
 di qualità Gamma. La suite usa server LLM simulati; il modello reale va provato
 con i propri contenuti. Nessun servizio immagini a pagamento è stato aggiunto.
 
-Test dedicati: `npm run test:v2` e `python -m pytest tests/test_page_v2.py`.
+Test dedicati: `npm run test:v2` (geometria, media e veri export dei quattro
+formati), `npm run test:workflow` (brief, editor e versioni) e
+`python -m pytest tests/test_page_v2.py`.
 
 ## Studio, versioni e codice (motore classico)
 
-- **Crea** apre una pagina di impostazioni; la generazione passa all'editor live.
+- **Crea** apre la scelta iniziale, seguita dal briefing; la generazione passa all'editor live.
   I progetti esistenti si aprono direttamente nell'editor. Il menu superiore
   **Presentazione** raccoglie download e ritorno alle impostazioni.
 - Il log della generazione segue automaticamente le righe più recenti, anche
   quando viene riaperto. Risalire nello storico sospende lo scorrimento automatico;
   tornare in fondo lo riattiva, senza spostare l'intera pagina.
 - I temi hanno anteprime compatte e combinazioni pronte di colori, font e riquadri.
-  Le schede **Adattive** possono crescere fino a 1440 px; quelle **Fisse** restano 16:9.
+  Il motore **Classico** mantiene il rapporto nominale **16:9**, senza la scelta
+  dei quattro formati V2. Le schede **Adattive** possono crescere fino a 1440 px;
+  quelle **Fisse** restano 1280 × 720 px.
   Il PDF conserva l'altezza di ogni scheda; PowerPoint e Slidev usano il formato
   comune necessario a contenerle tutte. Contenuti ancora troppo grandi vengono
   segnalati, non tagliati silenziosamente.
@@ -90,7 +163,7 @@ Test dedicati: `npm run test:v2` e `python -m pytest tests/test_page_v2.py`.
   **Ricrea da zero in una nuova versione** serve invece a cambiare la scaletta.
   Se il tentativo fallito contiene solo slide pronte ereditate da una vecchia
   versione, **Riprova** chiede conferma prima di ricrearle nello stesso progetto.
-- La home **Crea** mostra anche **Generazione in corso**, con avanzamento e
+- La **Home** mostra anche **Generazione in corso**, con avanzamento e
   collegamento diretto a progetto e log, anche prima della prima slide.
   Tornare alla home o ricaricare la pagina non interrompe il lavoro.
 - Il modello puo mostrare blocchi di **Python, C, C++, JavaScript, Java e SQL**
@@ -260,9 +333,11 @@ Il prompt modificato e salvato durante il lavoro viene letto dalle slide success
 Un nuovo clic su Genera completa le slide ancora mancanti. **Rigenera** rifà una
 singola slide; **Rigenera tutte le slide** riscrive in sequenza tutti i contenuti
 di una presentazione terminata, dopo conferma. La rigenerazione completa conserva
-scaletta, ordine, numero di slide, brief, fonti, tema e impostazioni, ma sostituisce
-testi, immagini scelte e diagrammi delle slide. Per un progetto interamente nuovo
-usa Nuovo progetto.
+brief, fonti, tema e impostazioni, ma sostituisce testi, immagini scelte e diagrammi
+delle slide. Nel Classico conserva anche scaletta, ordine e numero di slide; V2
+mantiene il numero richiesto come obiettivo e può aggiungere fino a due pagine
+globali per distribuire contenuti dopo la misurazione. Per un progetto interamente
+nuovo usa Nuovo progetto.
 
 Se **Diagrammi Manim** è attivo, durante Genera o Rigenera ogni slide di contenuto
 riceve un diagramma pertinente; soltanto la copertina viene esclusa. L'opzione è
@@ -296,6 +371,13 @@ o un ricaricamento. Un altro motore o un nuovo indirizzo non eredita il consenso
 richiede la propria autorizzazione. Deselezionare la casella revoca e salva
 la scelta. Nessuna chiave API viene salvata da questa preferenza, che non
 attiva automaticamente la ricerca web nei nuovi progetti.
+Con SearXNG, **Ripiego gratuito se non disponibile** autorizza anche Wikipedia
+e DuckDuckGo. Questo ambito ha un consenso distinto: un vecchio consenso al solo
+SearXNG non autorizza automaticamente i servizi aggiuntivi. La scelta del ripiego
+si salva nel progetto e nelle preferenze; è attiva inizialmente, ma la ricerca
+richiede sempre la spunta di autorizzazione corrispondente.
+Anche il server richiede il consenso esteso nella richiesta: schede già aperte
+e client precedenti continuano a usare soltanto SearXNG finché non lo autorizzi.
 La ricerca funziona anche con il modello locale, senza API di ricerca a pagamento.
 
 **I documenti allegati hanno la priorità**, anche nei progetti già esistenti.
@@ -335,22 +417,33 @@ non abilita da sola la ricerca, nemmeno in un nuovo progetto.
 - **SearXNG locale**: indicare l'indirizzo del proprio servizio.
   Il JSON deve essere abilitato. Configurazione e launcher opzionali indipendenti
   dal PC sono in [deploy/searxng](deploy/searxng/README.md).
+  Con il ripiego gratuito attivo, se il servizio non è raggiungibile, risponde
+  con un errore temporaneo 5xx o non trova risultati, l'app prova **Wikipedia
+  diretta**, poi **DuckDuckGo**. Non serve avviare altri server né inserire API
+  key. Ogni servizio è provato al massimo una volta per query; il motivo del
+  passaggio e il motore effettivamente usato compaiono nei log e nei metadati.
+  Non vengono scelti server SearXNG pubblici casuali. Rifiuti, CAPTCHA, risposte
+  non valide e pagine che non consentono la lettura interrompono la catena.
 - **DuckDuckGo HTML**: non richiede un'app aggiuntiva, ma può bloccare richieste
   automatiche. CAPTCHA, rifiuti e limiti vengono segnalati; non sono aggirati.
-  Non c'è passaggio automatico a un altro provider, gratuito o a pagamento.
+  Se scelto direttamente, non passa automaticamente a un altro provider.
+  Non viene mai usato un servizio a pagamento.
 
 L'app legge pagine pubbliche rispettando robots.txt, scarta URL locali/privati,
 non esegue script delle pagine e usa gli estratti come dati non attendibili,
 non come istruzioni. Limiti di tempo, redirect e dimensione proteggono il recupero.
 Le fonti effettivamente lette, gli URL e la data di consultazione restano nel
 progetto e nelle note delle slide; il testo integrale della cache resta locale.
-La cache vale un'ora per progetto e query; **Aggiorna ricerca** la esclude.
+La cache vale un'ora per progetto, query e ambito di ricerca; **Aggiorna ricerca**
+la esclude e riprova il motore selezionato. La cache del ripiego non viene usata
+quando lo disattivi. Il motore effettivo rimane indicato anche riusando la cache.
 Gli estratti conservati sono limitati a 240.000 caratteri per fonte; per ogni
 slide vengono recuperati solo i passaggi pertinenti, senza inviare l'intero articolo
 al modello. Un eventuale troncamento viene segnalato negli avvisi della ricerca.
 Solo se una ricerca restituisce **zero risultati**, l'app chiede al modello una
-query più semplice. CAPTCHA, rifiuti del servizio ed errori di connessione non
-vengono aggirati con altri tentativi. Se non acquisisce fonti web, usa **solo
+query più semplice. CAPTCHA e rifiuti del servizio non vengono aggirati; un
+guasto di connessione può attivare solo il ripiego gratuito autorizzato, senza
+generare altre query. Se non acquisisce fonti web, usa **solo
 i documenti allegati**, quando presenti, e mostra **Documenti allegati · nessuna
 integrazione web**. Non li tratta come una fonte secondaria: sono già la scelta
 predefinita. Senza allegati il job si ferma: non presenta la conoscenza interna
@@ -470,7 +563,7 @@ di autenticazione o gestione utenti.
 
 ## Editor e materiale visivo
 
-Composer adattivo con 12 famiglie: copertina, editoriale asimmetrico, confronto,
+Il motore Classico usa un composer adattivo con 12 famiglie: copertina, editoriale asimmetrico, confronto,
 griglia, passaggi, cronologia, idea/approfondimento, citazione, immagine a
 sinistra/destra/panoramica e paragrafi a fasce. Il planner propone la composizione
 già nella scaletta. Il renderer misura il testo e prova disposizioni alternative
@@ -484,7 +577,8 @@ richiede conferma e rispetta il limite totale di 30 slide.
 Funziona anche sui progetti precedenti, senza rigenerare i contenuti.
 Sfondo, accento e sei font configurabili. Anteprima immediata,
 salvataggio nel progetto ed esportazioni coerenti (non identiche al pixel).
-Nel **Creatore di temi** sono disponibili Prisma, Aurora, Notte, Editoriale e Laboratorio:
+Nel **Creatore di temi** sono disponibili Oceano, Corallo, Viola, Prisma, Aurora,
+Notte, Editoriale e Laboratorio:
 combinano sfondo, accento, font, box colorati, bordi e angoli. Personalizzare
 colori del testo/titoli, riempimenti dei quattro tipi di box, bordi, raggio e
 dimensioni. Il testo automatico sceglie un colore con contrasto almeno 4,5:1;
@@ -496,6 +590,33 @@ Dimensione 0 significa automatica; aumentarla può far sforare testi lunghi.
 non occorre rigenerare i testi. Esportare di nuovo per aggiornare i file.
 I temi personali sono in data/themes.json; i preset distribuiti sono in
 static/theme-presets.json. Non contengono codice, URL remoti o percorsi del PC.
+
+### Temi HTML per il motore V2
+
+Gli otto preset includono identità visive distinte: famiglie editoriali, moderne,
+vivaci e tecniche, font dei titoli separato, sfumature, ombre e decorazioni.
+Il modello riceve la palette e la direzione visiva effettive, non solo il nome:
+sceglie liberamente gruppi, proporzioni, sezioni e ruoli (introduzione, esempio,
+citazione, dato chiave...) mantenendo l'identità scelta. Il tema non impone
+lo stesso schema a tutte le pagine. La pagina rispetta il formato e il limite
+adattivo scelti; i testi restano modificabili.
+Le anteprime nella raccolta sono miniature HTML, non immagini da scaricare.
+
+**Tema AI** crea una nuova identità da una descrizione usando il modello scelto
+in Admin, integrato o API. Genera prima un'anteprima: **Applica** cambia lo stile
+del brief; **Salva nella raccolta** lo rende riutilizzabile. La richiesta invia
+solo la descrizione estetica, senza documenti del progetto, e richiede il consenso
+per l'API remota. Non parte se una generazione occupa il modello. Il limite della
+sola richiesta tema è 4096 token e 180 secondi (240 includendo il caricamento);
+eventuali limiti utente inferiori restano rispettati. I profili Admin non cambiano.
+
+Il tema è composto da token validati, mai HTML/CSS eseguibile scritto dall'LLM.
+Le versioni già salvate conservano la loro identità: i progetti senza i nuovi
+campi non vengono convertiti automaticamente. Applicare un nuovo preset è una
+scelta esplicita; il brief e le nuove versioni conservano tutti i suoi parametri.
+Nel PDF vengono usati gli stili HTML; nel PPTX testi e contenuti restano editabili,
+con sfumature decorative esportate come sfondi e non come fotografie delle slide.
+
 Accenni / approfondito / completo guidano i prossimi testi generati senza
 cancellare quelli già presenti. Doppio clic sui testi per modificarli nella
 scheda, oppure Modifica per note, fonti, immagini e diagrammi.
@@ -546,10 +667,12 @@ il contenuto resta impossibile da impaginare, il feedback chiede all'LLM una
 riprogettazione che conservi informazioni e relazioni, non un render troncato.
 Il report comunica al composer una dimensione minima leggibile del diagramma.
 Anche le foto sono misurate sulla superficie realmente visibile, mantenendo
-le proporzioni senza ritagli o deformazioni: il composer può cambiare disposizione,
-separare foto e diagramma su righe diverse e allungare le schede adattive fino a
-1440 px. Il controllo è condiviso da anteprima ed esportazioni; il formato Fisso
-rimane 16:9 e segnala lo spazio insufficiente. Le posizioni libere scelte a mano
+le proporzioni senza ritagli o deformazioni. Nel motore Classico il composer può
+cambiare disposizione, separare foto e diagramma su righe diverse e allungare le
+schede adattive fino a 1440 px; il formato Fisso resta 16:9. V2 usa invece il
+rapporto selezionato, con altezza nominale fissa o estensione adattiva massima
+del 15%, e ricompone o suddivide il contenuto che non entra. Il controllo è
+condiviso da anteprima ed esportazioni. Le posizioni libere scelte a mano
 non vengono alterate al solo caricamento. Ingrandire una foto non aumenta la sua
 risoluzione originale. I vecchi render già abbreviati richiedono **Riprogetta Manim**:
 ridimensionarli non può recuperare parole mancanti nell'immagine.
@@ -688,8 +811,11 @@ pagine) e immagini possono essere letti tramite un modello vision.
 Le figure vettoriali non sono estratte separatamente. La sintesi a blocchi
 può perdere dettagli: la revisione rimane necessaria per materiali accurati.
 
-Una generazione alla volta, massimo 30 slide. Accenni genera fino a 3 punti
-essenziali; Approfondito e Completo scelgono da 1 a 4 paragrafi in box.
+Una generazione alla volta. Nel motore Classico il massimo è 30 slide; Accenni
+genera fino a 3 punti essenziali e Approfondito e Completo scelgono da 1 a 4
+paragrafi in box. In V2 il numero richiesto è un obiettivo, con al massimo due
+slide aggiuntive globali per dividere contenuti dopo la misurazione. Le regole
+sui quattro box e sui budget dei paragrafi che seguono riguardano il Classico.
 Budget complessivo rispettivamente 1300/1600 caratteri e massimo 650/800 per
 paragrafo. Con immagini/diagrammi diventano 740/960 complessivi e 370/480 per
 paragrafo. Più box significa distribuire il budget, non moltiplicare il testo.
@@ -705,15 +831,17 @@ Gli export PPTX/PDF/Slidev bloccano lo sforamento dopo il tentativo di ricomposi
 PDF e Slidev usano lo stesso HTML misurato; PPTX usa quelle posizioni per testi,
 riquadri e immagini. I diagrammi Manim rimangono modificabili nella struttura
 dentro H3-Slides e vengono inseriti negli export statici come render PNG.
-Il formato Fisso rimane 16:9. In Adattivo il PDF conserva l'altezza di ogni scheda;
-PPTX e Slidev ricompongono tutte le schede sul canvas comune più alto, con footer
-allineati al bordo. Le formule vengono misurate con gli stessi font usati nell'export.
+Nel Classico il formato Fisso rimane 16:9. V2 mantiene il rapporto scelto tra
+16:9, 4:3, 16:10 e 1:1: Fisso usa l'altezza nominale, Adattivo non supera il 15%
+in più. In Adattivo il PDF conserva l'altezza di ogni scheda; PPTX e Slidev usano
+un canvas comune entro i limiti del motore, con footer allineati al bordo.
+Le formule vengono misurate con gli stessi font usati nell'export.
 Le metriche tipografiche e le ombre di PowerPoint possono differire leggermente.
 Manim video usa gli stessi oggetti della scena e li presenta secondo le fasi
 definite, invece di ricostruire un diagramma semplificato separato.
 La scaletta pianifica anche il numero di paragrafi. Il budget viene diviso per
 paragrafo e accompagnato da indicazioni in parole, adatte anche a modelli piccoli.
-La generazione controlla lunghezza e conclusione dei paragrafi e prova fino a due
+La generazione classica controlla lunghezza e conclusione dei paragrafi e prova fino a due
 correzioni con limiti più stretti se il modello non rispetta il formato. Come ultima misura adatta
 solo spiegazioni generate a frasi complete, mantenendo la versione estesa
 nelle note e segnalando l'adattamento nel log. Le citazioni non vengono tagliate.
@@ -796,10 +924,12 @@ Il servizio è solo locale: Tailscale non è stato configurato per questo nuovo 
 
 ## Verifica e sviluppo
 
-Eseguire dalla cartella del progetto:
+Eseguire da PowerShell nella cartella del progetto. Il PATH qui aggiunto vale
+solo per la shell corrente e consente alle suite npm di usare il Node incluso:
 
     .venv\Scripts\python.exe -m pytest tests -q
-    runtime\node\node.exe --test tests/export.test.mjs tests/composer.test.mjs tests/dependency-security.test.mjs tests/remote-models.test.mjs
+    $env:PATH = "$PWD\runtime\node;$env:PATH"
+    runtime\node\npm.cmd test
     runtime\node\node.exe scripts/dependency-check.mjs
     .venv\Scripts\python.exe tests/smoke_llama.py --model "D:\Modelli\piccolo-modello.gguf"
 
@@ -808,6 +938,14 @@ incrementale, modifiche durante la generazione, annullamento, protezione dei per
 API, browser e veri export PPTX/PDF/Slidev/Manim. Il test smoke separato carica un
 piccolo GGUF già sul PC in CPU: prova l'integrazione llama.cpp, non la qualità
 editoriale del modello instruction/vision.
+
+`npm test` include automaticamente le suite V2, percorso di creazione e temi,
+poi le regressioni generali. I test V2 verificano i quattro rapporti, il limite
+adattivo del 15%, i minimi tipografici e l'assenza di contenuti nascosti; quelli
+di percorso coprono scelta e persistenza del formato nel brief, nell'editor e
+nelle nuove versioni. PDF, PPTX modificabile e Slidev vengono esportati davvero
+per confrontarne dimensioni e contenuti. Ogni file di test è agganciato a una
+sola suite.
 
 Per provare quattro slide con un proprio GGUF instruction già installato:
 

@@ -8,11 +8,20 @@ const browser=await chromium.launch({headless:true});
 const page=await browser.newPage({viewport:{width:1440,height:1000}});
 const errors=[];page.on('pageerror',error=>errors.push(error.message));
 const ready=()=>page.waitForFunction(()=>document.querySelector('#api-model').options.length===3);
+const openBrief=async()=>{
+  if(await page.locator('body').getAttribute('data-view')==='create')return;
+  const accept=dialog=>dialog.accept();page.on('dialog',accept);
+  try{
+    await page.locator('#editor-menu>summary').click();await page.locator('#editor-settings').click();
+    await page.waitForFunction(()=>document.body.dataset.view==='create');
+  }finally{page.off('dialog',accept)}
+};
 try{
   await page.goto(url);
   await page.waitForFunction(()=>document.querySelector('#model').options[0].textContent!=='Caricamento catalogo…');
   if(await page.locator('#model-setup').isVisible())await page.locator('#close-model-setup').click();
   await page.locator('#open-create').click();
+  await page.locator('[data-start-method="prompt"]').click();
   await page.locator('#prompt').fill('Brief ancora non salvato');
   await page.locator('#open-admin').click();
   assert.equal(new URL(page.url()).pathname,'/admin');
@@ -140,7 +149,7 @@ try{
   assert.equal(regeneratedPayload.project_settings.web_enabled,true);
   assert.equal(regeneratedPayload.project_settings.web_query,'');
   await page.waitForFunction(()=>document.body.dataset.view==='editor');
-  await page.locator('#editor-menu>summary').click();await page.locator('#editor-settings').click();
+  await openBrief();
   await page.locator('#web-enabled').uncheck();
   const again=new Promise(resolve=>resolveGeneration=resolve);
   page.once('dialog',dialog=>dialog.accept());
@@ -191,11 +200,12 @@ try{
       fits:document.documentElement.scrollWidth<=innerWidth};
   });
   assert.equal(positions.fits,true,'Editor fits a mobile viewport');
-  await page.locator('#editor-menu>summary').click();await page.locator('#editor-settings').click();
+  await openBrief();
   assert.equal(await page.locator('#generate-top').isVisible(),true);
   assert.equal(await page.locator('#generate').isVisible(),true);
   assert.equal(await page.locator('#generate').evaluate(e=>e.getBoundingClientRect().top>=document.querySelector('.settings').getBoundingClientRect().bottom),true);
   await page.locator('#open-create').click();
+  await page.locator('[data-start-method="prompt"]').click();
   assert.match(await page.locator('#generate-top').textContent(),/Genera presentazione/);
   assert.match(await page.locator('#generate').textContent(),/Genera presentazione/);
   assert.deepEqual(errors,[]);

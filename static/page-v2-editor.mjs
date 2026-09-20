@@ -16,21 +16,38 @@ export function movePageNode(page,id,target,inside=false){
 function descendants(page,id){const ids=new Set([id]);for(const n of page.nodes)if(ids.has(n.parent))ids.add(n.id);return ids}
 
 export function renderPageCard(card,project,slide,index,{save,toast,observe,upload,search,diagram,refresh}){
+  card.v2Fit=null;
   card.v2Controller?.abort();card.v2Controller=new AbortController();
   const events={signal:card.v2Controller.signal};
   const ready=slide.status==='ready',page=slide.page_draft||slide.content.page;
+  const phase=ready?'ready':slide.status==='failed'?'failed':slide.page_stream?.phase||(page?.nodes?.length?'writing':'waiting');
+  const state={ready:'Pronta',failed:'Bozza interrotta',waiting:'In attesa del testo…',writing:'Scrittura in corso…',media:'Preparazione immagini e diagrammi…',layout:'Impaginazione nel formato…'}[phase]||'Composizione AI…';
+  const streamingStatus=()=>state+(phase==='writing'&&slide.page_stream?.characters?' · '+slide.page_stream.characters+' caratteri ricevuti':'');
+  const format=project.engine==='classic'?'16:9':project.slide_format||'16:9';
+  card.dataset.streamPhase=phase;
   const urls={assets:Object.fromEntries(pageAssets(page).map(id=>[id,'/api/assets/'+project.id+'/'+id]))};
-  card.innerHTML='<div class="slide-top"><span class="slide-label">'+(index+1)+' · V2 · '+esc(ready?'Pronta':slide.status==='failed'?'Bozza interrotta':'Composizione AI…')+'</span>'+
-    '<button class="quiet" data-action="up">↑</button><button class="quiet" data-action="down">↓</button><button class="quiet" data-action="regenerate">Rigenera pagina</button></div>'+
-    '<div class="composition-tools"><span class="composition-status">Pagina progettata dall’AI</span>'+
+  card.innerHTML='<div class="slide-top"><span class="slide-label">'+(index+1)+' · V2 · '+esc(state)+'</span>'+
+    (ready?'<button class="quiet" data-action="up">↑</button><button class="quiet" data-action="down">↓</button>':'')+
+    (ready||slide.status==='failed'?'<button class="quiet" data-action="regenerate">Rigenera pagina</button>':'')+'</div>'+
+    '<div class="composition-tools"><span class="composition-status">'+esc(ready?'Pagina progettata dall’AI':streamingStatus())+'</span>'+
     (ready?'<button class="quiet" data-v2-add="text">＋ Testo</button><button class="quiet" data-v2-add="image">＋ Immagine</button><button class="quiet" data-v2-add="group">＋ Sezione</button><button class="quiet" data-v2-edit="root">Struttura pagina</button>':'')+'</div>'+
-    '<div class="slide-preview">'+slideHTML(project,slide,index,urls)+'</div>'+
+    '<div class="v2-format-warning" role="status" hidden><strong data-format-warning-title></strong><p data-format-warning-detail></p>'+(ready?'<button class="secondary" data-action="regenerate">Rigenera pagina per adattarla</button>':'')+'</div>'+
+    (page?.nodes?.length?'<div class="slide-preview">'+slideHTML(project,slide,index,urls)+'</div>':
+      '<div class="v2-waiting-preview" role="status"><strong>'+esc(slide.content.title||'Slide '+(index+1))+'</strong><p>'+esc(state)+'</p><span>La pagina apparirà qui mentre viene scritta.</span></div>')+
     (slide.page_error?'<p class="diagram-pending">'+esc(slide.page_error)+'</p>':'');
   card.draggable=false;
+  if(!page?.nodes?.length)return;
   const frame=card.querySelector('.slide-frame'),preview=card.querySelector('.slide-preview');
   const fit=()=>{if(!frame.isConnected)return;const r=fitSlide(frame);card.querySelector('.composition-status').textContent=
-    'V2 · '+page.nodes.length+' elementi · '+r.height+' px'+(r.overflow?' · contenuto oltre il formato, scegli Adattivo':'');
-    const scale=preview.clientWidth/1280;frame.style.transform='scale('+scale+')';frame.style.transformOrigin='top left';preview.style.height=r.height*scale+'px';};
+    (ready?'V2':streamingStatus())+' · '+format+' · '+page.nodes.length+' elementi'+(ready?' · '+r.height+' px'+(r.overflow?' · da adattare al formato':''):'');
+    const warning=card.querySelector('.v2-format-warning');warning.hidden=!r.overflow;
+    card.classList.toggle('v2-format-overflow',Boolean(r.overflow));
+    warning.querySelector('[data-format-warning-title]').textContent=ready?'Questa pagina non entra nel formato '+format:slide.status==='failed'?'Bozza da adattare al formato '+format:'Impaginazione in corso · '+format;
+    warning.querySelector('[data-format-warning-detail]').textContent=ready?'Il contenuto eccede lo spazio consentito. Il riquadro mostra il formato reale; il contenuto fuori misura resta visibile per la correzione. Riduci testo, spazi o elementi, oppure rigenera la pagina. L’esportazione resta bloccata finché non entra.':
+      'Tutto il testo ricevuto resta visibile. Il layout deve ancora essere adattato al formato: questa non è una pagina pronta per l’esportazione.';
+    const scale=preview.clientWidth/1280;frame.style.transform='scale('+scale+')';frame.style.transformOrigin='top left';
+    preview.style.height=(r.overflow?Math.max(r.height,r.neededHeight||r.height):r.height)*scale+'px';};
+  card.v2Fit=fit;
   observe(preview);requestAnimationFrame(fit);document.fonts.ready.then(fit);
   frame.querySelectorAll('img').forEach(img=>img.addEventListener('load',fit,{once:true}));
   if(!ready)return;
@@ -46,7 +63,10 @@ export function renderPageCard(card,project,slide,index,{save,toast,observe,uplo
     e.preventDefault();e.stopPropagation();
     try{
       if(button.dataset.v2Upload)await upload(button.dataset.v2Upload);
-      else if(button.dataset.v2Diagram)await diagram(button.dataset.v2Diagram);
+      else if(button.dataset.v2Diagram){
+        if(!project.use_manim_diagrams)throw Error('Attiva “Diagrammi Manim automatici” nel brief per riprovare questo diagramma.');
+        await diagram(button.dataset.v2Diagram);
+      }
       else if(button.dataset.v2Search)await search(button.dataset.v2Search);
       else if(button.dataset.v2Add){
         const kind=button.dataset.v2Add;
@@ -65,7 +85,8 @@ export function renderPageCard(card,project,slide,index,{save,toast,observe,uplo
       (node.kind==='image'?'<label>Immagine del progetto<select name="asset"><option value="">Segnaposto</option>'+images.map(a=>'<option value="'+esc(a.id)+'" '+(a.id===node.asset_id?'selected':'')+'>'+esc(a.label)+'</option>').join('')+'</select></label>':'')+
       (node.kind==='group'?'<label>Disposizione<select name="flow">'+['stack','columns','row'].map((v,i)=>'<option value="'+v+'" '+(v===(s.flow||'stack')?'selected':'')+'>'+['Verticale','Colonne con proporzioni','Riga uniforme'][i]+'</option>').join('')+'</select></label><label>Proporzioni colonne (es. 2, 1, 1)<input name="columns" value="'+esc((s.columns||[1,1]).join(', '))+'"></label>':'')+
       '<div class="row">'+[['font_size','Dimensione testo',s.font_size||24,18,80],['padding','Spazio interno',s.padding||0,0,100],['gap','Distanza elementi',s.gap??24,0,100],['span','Colonne occupate',s.span||1,1,12],['min_height','Altezza minima',s.min_height||0,0,1600]].map(([name,label,value,min,max])=>'<label>'+label+'<input name="'+name+'" type="number" min="'+min+'" max="'+max+'" value="'+value+'"></label>').join('')+'</div>'+
-      '<label>Sfondo<select name="surface">'+['none','soft','accent','dark','paper'].map((v,i)=>'<option value="'+v+'" '+(v===(s.surface||'none')?'selected':'')+'>'+['Trasparente','Tenue','Accento del tema','Scuro','Bianco'][i]+'</option>').join('')+'</select></label>'+
+      '<label>Sfondo<select name="surface">'+['none','plain','soft','accent','dark','paper','gradient','example','key','quote'].map((v,i)=>'<option value="'+v+'" '+(v===(s.surface||'none')?'selected':'')+'>'+['Automatico dal tema','Trasparente esplicito','Tenue','Accento del tema','Scuro','Bianco','Sfumato','Esempio','Da ricordare','Citazione'][i]+'</option>').join('')+'</select></label>'+
+      (id!=='root'?'<label>Ruolo visivo<select name="role">'+['auto','title','subtitle','eyebrow','lead','body','callout','example','quote','stat','step','caption'].map((v,i)=>'<option value="'+v+'" '+(v===(node.role||'auto')?'selected':'')+'>'+['Automatico','Titolo','Sottotitolo','Occhiello','Introduzione','Corpo testo','In evidenza','Esempio','Citazione','Dato chiave','Passaggio','Didascalia'][i]+'</option>').join('')+'</select></label>':'')+
       '<div class="row"><button value="cancel" class="quiet">Annulla</button><button value="save" class="primary">Salva</button></div></form>';
     document.body.append(dialog);dialog.showModal();
     dialog.addEventListener('close',async()=>{
@@ -78,6 +99,7 @@ export function renderPageCard(card,project,slide,index,{save,toast,observe,uplo
           if(values.has('flow')){target.style.flow=values.get('flow');target.style.columns=String(values.get('columns')).split(',').map(Number)}
           if(values.has('text'))target.text=String(values.get('text'));
           if(values.has('asset'))target.asset_id=String(values.get('asset'));
+          if(values.has('role'))target.role=String(values.get('role'));
         },'Pagina aggiornata')}catch(error){toast(error.message)}
       }dialog.remove();
     },{once:true});
